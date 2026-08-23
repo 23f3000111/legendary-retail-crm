@@ -1,0 +1,124 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-canvas text-ink font-sans antialiased;
+    /* A command deck: cool light, a faint plotted grid, and two distant
+       coloured lights bleeding in from the top corners. */
+    background-image:
+      radial-gradient(900px 420px at 12% -8%, rgba(99, 102, 241, 0.16), transparent 68%),
+      radial-gradient(760px 380px at 92% -6%, rgba(34, 211, 238, 0.14), transparent 66%),
+      linear-gradient(rgba(15, 27, 51, 0.032) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(15, 27, 51, 0.032) 1px, transparent 1px);
+    background-size: 100% 100%, 100% 100%, 34px 34px, 34px 34px;
+    background-attachment: fixed;
+  }
+
+  /* Telemetry never wobbles as it counts up or as a table sorts. */
+  .tnum {
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+
+  ::selection {
+    background: rgba(79, 70, 229, 0.2);
+    color: #0f1b33;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-primary/60 ring-offset-2 ring-offset-canvas;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #c6d1e8;
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #a9b8d8;
+    background-clip: content-box;
+  }
+
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type='number'] {
+    -moz-appearance: textfield;
+  }
+}
+
+@layer components {
+  /* An eyebrow labels a region; it never carries the region's only meaning. */
+  .eyebrow {
+    @apply font-sans text-[10px] font-semibold uppercase tracking-wide2 text-ink-3;
+  }
+
+  /* The one surface in the app: glass on the deck. */
+  .panel {
+    @apply rounded-2xl border border-line bg-surface/85 shadow-glass backdrop-blur-xl;
+  }
+
+  /* A hairline that fades out — closes a panel header without boxing it in. */
+  .rule {
+    background: linear-gradient(
+      90deg,
+      rgba(79, 70, 229, 0.28),
+      rgba(79, 70, 229, 0.06) 38%,
+      transparent
+    );
+    height: 1px;
+  }
+
+  /* Numeric readouts in the mono face, so columns read straight down. */
+  .readout {
+    @apply tnum font-mono;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media print {
+  body {
+    background: #fff;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .panel {
+    border: 1px solid #ccc;
+    box-shadow: none;
+    background: #fff;
+    backdrop-filter: none;
+    break-inside: avoid;
+  }
+}

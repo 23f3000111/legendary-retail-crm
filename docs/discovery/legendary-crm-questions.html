@@ -1,0 +1,637 @@
+<title>Legendary CRM — Questions Before We Build</title>
+
+<style>
+  /* ── Tokens ──────────────────────────────────────────────────────────
+     Light is complete on bare :root. Dark redefines only tokens — once for
+     the OS setting, once for an explicit toggle — so the un-stamped
+     "system" state resolves correctly too. */
+  :root {
+    color-scheme: light;
+
+    --page:      #FFFFFF;
+    --band:      #F4F7F7;
+    --card:      #FFFFFF;
+    --rule:      #E2E8E8;
+
+    --ink:       #22282B;
+    --ink-2:     #5C686C;
+
+    --accent:    #16697A;
+    --accent-bg: #E8F2F3;
+
+    --flag:      #A4541B;
+    --flag-bg:   #FCF3E9;
+    --flag-rule: #E8CBA9;
+
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) {
+      color-scheme: dark;
+      --page:      #14191A;
+      --band:      #1B2223;
+      --card:      #1B2223;
+      --rule:      #2E3839;
+      --ink:       #E8EDEC;
+      --ink-2:     #A0AFB0;
+      --accent:    #62BECD;
+      --accent-bg: #14312F;
+      --flag:      #E8A268;
+      --flag-bg:   #2C1E12;
+      --flag-rule: #5A4227;
+    }
+  }
+
+  :root[data-theme='dark'] {
+    color-scheme: dark;
+    --page:      #14191A;
+    --band:      #1B2223;
+    --card:      #1B2223;
+    --rule:      #2E3839;
+    --ink:       #E8EDEC;
+    --ink-2:     #A0AFB0;
+    --accent:    #62BECD;
+    --accent-bg: #14312F;
+    --flag:      #E8A268;
+    --flag-bg:   #2C1E12;
+    --flag-rule: #5A4227;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--ink);
+    font-family: var(--font);
+    font-size: 18px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 0 24px 90px;
+  }
+
+  a { color: var(--accent); }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 3px;
+  }
+
+  /* ── Top ───────────────────────────────────────────────────────────── */
+  header.top { padding: 60px 0 34px; }
+
+  .label {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 16px;
+  }
+
+  h1 {
+    font-size: clamp(31px, 5vw, 40px);
+    line-height: 1.18;
+    font-weight: 700;
+    letter-spacing: -.015em;
+    margin: 0 0 22px;
+    text-wrap: balance;
+  }
+
+  .lede {
+    font-size: 19px;
+    color: var(--ink-2);
+    margin: 0 0 18px;
+  }
+
+  /* ── Answer-first box ──────────────────────────────────────────────── */
+  .first {
+    background: var(--flag-bg);
+    border: 1px solid var(--flag-rule);
+    border-radius: 10px;
+    padding: 26px 26px 24px;
+    margin: 34px 0 44px;
+  }
+
+  .first h2 {
+    font-size: 21px;
+    font-weight: 700;
+    margin: 0 0 8px;
+    color: var(--ink);
+  }
+
+  .first > p {
+    color: var(--ink-2);
+    font-size: 16.5px;
+    margin: 0 0 18px;
+  }
+
+  .first ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: 13px;
+  }
+
+  .first li {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 12px;
+    font-size: 16.5px;
+    line-height: 1.5;
+  }
+
+  .first .num {
+    font-weight: 700;
+    color: var(--flag);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── Contents ──────────────────────────────────────────────────────── */
+  .contents {
+    background: var(--band);
+    border-radius: 10px;
+    padding: 22px 26px;
+    margin-bottom: 50px;
+  }
+  .contents h2 {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    margin: 0 0 12px;
+  }
+  .contents ol {
+    margin: 0; padding: 0; list-style: none;
+    display: grid; gap: 6px;
+  }
+  .contents a {
+    display: flex; gap: 10px;
+    text-decoration: none;
+    color: var(--ink);
+    font-size: 16.5px;
+  }
+  .contents a:hover { text-decoration: underline; }
+  .contents .range {
+    margin-left: auto;
+    color: var(--ink-2);
+    font-size: 15px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  /* ── Sections ──────────────────────────────────────────────────────── */
+  section.part {
+    margin-bottom: 54px;
+    scroll-margin-top: 20px;
+  }
+
+  section.part > h2 {
+    font-size: 25px;
+    font-weight: 700;
+    letter-spacing: -.012em;
+    margin: 0 0 6px;
+    padding-bottom: 12px;
+    border-bottom: 2px solid var(--ink);
+  }
+
+  .who {
+    font-size: 15.5px;
+    color: var(--ink-2);
+    margin: 12px 0 26px;
+  }
+  .who b { color: var(--ink); font-weight: 600; }
+
+  /* ── Questions ─────────────────────────────────────────────────────── */
+  .q {
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr);
+    gap: 14px;
+    padding: 16px 0;
+    border-top: 1px solid var(--rule);
+  }
+  .q:first-of-type { border-top: 0; padding-top: 4px; }
+
+  .q .n {
+    font-weight: 700;
+    color: var(--ink-2);
+    font-variant-numeric: tabular-nums;
+    font-size: 17px;
+  }
+
+  .q p { margin: 0; }
+
+  .q.must {
+    background: var(--flag-bg);
+    border-top: 0;
+    border-left: 4px solid var(--flag);
+    border-radius: 0 8px 8px 0;
+    padding: 18px 20px;
+    margin: 8px 0;
+  }
+  .q.must + .q { border-top: 0; }
+  .q.must .n { color: var(--flag); }
+
+  .tag {
+    display: inline-block;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--flag);
+    background: var(--page);
+    border: 1px solid var(--flag-rule);
+    border-radius: 20px;
+    padding: 1px 10px;
+    margin-bottom: 8px;
+  }
+
+  .why {
+    margin-top: 12px !important;
+    font-size: 16px;
+    color: var(--ink-2);
+    line-height: 1.6;
+  }
+  .why b { color: var(--ink); font-weight: 600; }
+
+  /* ── Closing ───────────────────────────────────────────────────────── */
+  .box {
+    background: var(--band);
+    border-radius: 10px;
+    padding: 26px;
+  }
+  .box h2 { font-size: 23px; font-weight: 700; margin: 0 0 8px; }
+  .box > p { color: var(--ink-2); font-size: 16.5px; margin: 0 0 20px; }
+
+  .send { margin: 0; padding: 0; list-style: none; display: grid; gap: 14px; }
+  .send li {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr);
+    gap: 12px;
+    font-size: 16.5px;
+    line-height: 1.5;
+  }
+  .send li::before {
+    content: '';
+    width: 15px; height: 15px;
+    margin-top: 6px;
+    border: 2px solid var(--accent);
+    border-radius: 3px;
+  }
+  .send small {
+    display: block;
+    color: var(--ink-2);
+    font-size: 15px;
+    margin-top: 2px;
+  }
+
+  .next {
+    margin-top: 30px;
+    padding: 24px 26px;
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    font-size: 16.5px;
+  }
+  .next h2 { font-size: 20px; font-weight: 700; margin: 0 0 10px; }
+  .next p { margin: 0 0 12px; color: var(--ink-2); }
+  .next p:last-child { margin-bottom: 0; }
+
+  @media print {
+    body { background: #fff; font-size: 12pt; }
+    .contents { display: none; }
+    section.part { break-inside: avoid; }
+  }
+</style>
+
+<div class="page">
+
+  <header class="top">
+    <p class="label">Before we build</p>
+    <h1>A few questions about how Legendary really works</h1>
+    <p class="lede">
+      You have seen the demo, so you know the shape of the system. Now we need to understand how
+      your business actually runs day to day, so the real system fits the way you work instead of
+      making you change to fit it.
+    </p>
+    <p class="lede">
+      There are 96 questions. Most take one line to answer. If you are not sure about something,
+      just write <b>“not sure yet”</b> — that is genuinely helpful, because it tells us what is
+      still to be decided.
+    </p>
+  </header>
+
+  <!-- ── Answer these first ──────────────────────────────────────────── -->
+  <div class="first">
+    <h2>Please answer these eight first</h2>
+    <p>
+      These eight change how the whole system is built, not just how a screen looks. If we guess
+      wrong on any of them, it means starting parts again rather than adjusting them — so we
+      would rather wait for these answers than assume.
+    </p>
+    <ol>
+      <li><span class="num">8</span><span>What cash register system do your shops use? Can it give us the sales figures automatically?</span></li>
+      <li><span class="num">9</span><span>Which accounting software do you use, and should approved orders go into it automatically?</span></li>
+      <li><span class="num">27</span><span>Do you want a record of each individual customer, or only a count of how many came from each country?</span></li>
+      <li><span class="num">29</span><span>Do you need to know exactly which nationality bought which perfume?</span></li>
+      <li><span class="num">35</span><span>Who owns the stock sitting in a shop — head office, or the shop?</span></li>
+      <li><span class="num">40</span><span>Do you record batch numbers or expiry dates on individual bottles?</span></li>
+      <li><span class="num">3</span><span>How many shops will you have in two years, and will any be run by partners?</span></li>
+      <li><span class="num">80</span><span>If the internet drops in a shop, must staff still be able to close the day?</span></li>
+    </ol>
+  </div>
+
+  <!-- ── Contents ────────────────────────────────────────────────────── -->
+  <nav class="contents" aria-label="Contents">
+    <h2>What is in here</h2>
+    <ol>
+      <li><a href="#s1">About your business <span class="range">1–7</span></a></li>
+      <li><a href="#s2">Software you already use <span class="range">8–15</span></a></li>
+      <li><a href="#s3">Closing the day <span class="range">16–26</span></a></li>
+      <li><a href="#s4">Customers and where they come from <span class="range">27–34</span></a></li>
+      <li><a href="#s5">Stock and how it moves <span class="range">35–44</span></a></li>
+      <li><a href="#s6">Orders and approvals <span class="range">45–52</span></a></li>
+      <li><a href="#s7">Products and prices <span class="range">53–60</span></a></li>
+      <li><a href="#s8">People, and who sees what <span class="range">61–67</span></a></li>
+      <li><a href="#s9">Targets and reports <span class="range">68–74</span></a></li>
+      <li><a href="#s10">Alerts and messages <span class="range">75–77</span></a></li>
+      <li><a href="#s11">Where it will be used <span class="range">78–84</span></a></li>
+      <li><a href="#s12">Your data, and the rules <span class="range">85–90</span></a></li>
+      <li><a href="#s13">Getting started <span class="range">91–96</span></a></li>
+      <li><a href="#send">Things to send us</a></li>
+    </ol>
+  </nav>
+
+  <!-- ── 1 ───────────────────────────────────────────────────────────── -->
+  <section class="part" id="s1">
+    <h2>About your business</h2>
+    <p class="who">Best answered by <b>Davy Lim or Vincent Lim</b></p>
+
+    <div class="q"><span class="n">1</span><div><p>Is Legendary one company, or several companies?</p></div></div>
+    <div class="q"><span class="n">2</span><div><p>How many shops are open now? Which ones do you own yourself, and which are counters inside a department store or run by someone else?</p></div></div>
+
+    <div class="q must"><span class="n">3</span><div>
+      <span class="tag">Answer first</span>
+      <p>How many shops do you expect to have in one year, and in two years? Will any of them be outside Malaysia?</p>
+      <p class="why"><b>Why we ask:</b> if other people run some of the shops, each of them must only ever see their own figures and nobody else’s. Shops in another country also bring another currency and different tax rules. That has to be built into the foundation, so we need to know before we start.</p>
+    </div></div>
+
+    <div class="q"><span class="n">4</span><div><p>Roughly how many people will use the system? And how many at the same time on a busy Saturday evening?</p></div></div>
+    <div class="q"><span class="n">5</span><div><p>Do you sell online as well — your own website, Shopee, Lazada, TikTok Shop? Should those sales appear in this system too?</p></div></div>
+    <div class="q"><span class="n">6</span><div><p>Do you sell to other shops, to distributors, or to companies for corporate gifts?</p></div></div>
+    <div class="q"><span class="n">7</span><div><p>What is the biggest daily headache you want this system to fix? If it solved only one problem, which one should it be?</p></div></div>
+  </section>
+
+  <!-- ── 2 ───────────────────────────────────────────────────────────── -->
+  <section class="part" id="s2">
+    <h2>Software you already use</h2>
+    <p class="who">Best answered by <b>Ms Kelly, with your IT person</b></p>
+
+    <div class="q must"><span class="n">8</span><div>
+      <span class="tag">Answer first</span>
+      <p>What cash register system does each shop use — which brand? Is it the same everywhere, or do the airport and department store counters use the building owner’s system?</p>
+      <p class="why"><b>Why we ask:</b> if the cash register can pass us the day’s sales, your staff simply check the figures and confirm. If it cannot, they must type every number by hand every night. This is the screen your staff will use most, so this one answer shapes the heart of the system.</p>
+    </div></div>
+
+    <div class="q must"><span class="n">9</span><div>
+      <span class="tag">Answer first</span>
+      <p>Which accounting software do you use — SQL Accounting, AutoCount, Xero, something else? When an order is approved, should it appear in your accounts automatically?</p>
+      <p class="why"><b>Why we ask:</b> linking the two means the account names, tax codes and document numbers have to line up exactly. It is far easier to plan that at the beginning than to add it afterwards.</p>
+    </div></div>
+
+    <div class="q"><span class="n">10</span><div><p>Do you use any software for stock at the moment, or is it spreadsheets and WhatsApp?</p></div></div>
+    <div class="q"><span class="n">11</span><div><p>Does the company use Google Workspace (Gmail) or Microsoft 365 (Outlook)? We would rather your staff sign in with an account they already have than remember another password.</p></div></div>
+    <div class="q"><span class="n">12</span><div><p>Do you already keep a customer or member list anywhere? What is in it, roughly how many people, and can it be exported?</p></div></div>
+    <div class="q"><span class="n">13</span><div><p>If you sell online, should the website and the shops share the same stock numbers?</p></div></div>
+    <div class="q"><span class="n">14</span><div><p>How do head office and the shops talk to each other day to day — WhatsApp group, email, phone calls?</p></div></div>
+    <div class="q"><span class="n">15</span><div><p>Is there anything that works well today which we should leave alone?</p></div></div>
+  </section>
+
+  <!-- ── 3 ───────────────────────────────────────────────────────────── -->
+  <section class="part" id="s3">
+    <h2>Closing the day</h2>
+    <p class="who">Best answered by <b>a shop supervisor</b> — and if possible, let us come and watch one closing in person</p>
+
+    <div class="q"><span class="n">16</span><div><p>Is the day closed once per shop, or once per shift? How many shifts does a shop work?</p></div></div>
+    <div class="q"><span class="n">17</span><div><p>Who is allowed to close the day — any staff member, or only a supervisor? Does a second person check it afterwards?</p></div></div>
+    <div class="q"><span class="n">18</span><div><p>What time must it be done by, and what should happen if a shop forgets?</p></div></div>
+    <div class="q"><span class="n">19</span><div><p>Can a closed day be corrected later? Who approves the correction, and how many days back is it allowed?</p></div></div>
+    <div class="q"><span class="n">20</span><div><p>Do staff count every perfume every night, or only the fast sellers, with a full count less often?</p></div></div>
+    <div class="q"><span class="n">21</span><div><p>Please walk us through how cash is handled: the opening float, the cash counted at the end, what gets banked, and what happens when it does not add up. Should the system handle all of that, or only record the total?</p></div></div>
+    <div class="q"><span class="n">22</span><div><p>How do you record refunds, exchanges and cancelled sales at the moment?</p></div></div>
+    <div class="q"><span class="n">23</span><div><p>Do staff purchases and staff discounts need to be recorded separately from normal sales?</p></div></div>
+    <div class="q"><span class="n">24</span><div><p>Do the sales figures you record include SST? Do you need tax reports out of this system?</p></div></div>
+    <div class="q"><span class="n">25</span><div><p>Do shops record testers used up, damaged bottles, or free samples given away? Who is allowed to write those off?</p></div></div>
+    <div class="q"><span class="n">26</span><div><p>Is anything else written down at closing time that we have not mentioned — how many people walked in, the weather, staff hours?</p></div></div>
+  </section>
+
+  <!-- ── 4 ───────────────────────────────────────────────────────────── -->
+  <section class="part" id="s4">
+    <h2>Customers and where they come from</h2>
+    <p class="who">Best answered by <b>Vincent Lim, with whoever handles marketing</b></p>
+
+    <div class="q must"><span class="n">27</span><div>
+      <span class="tag">Answer first</span>
+      <p>Do you want to keep a record of each customer — their name, contact, what they bought, when they came back? Or do you only want to count how many customers came from each country?</p>
+      <p class="why"><b>Why we ask:</b> this decides what we are actually building for you. Counting gives you very good reports, and that is what the demo showed. Keeping records of each person is a different thing: you could see who buys again, run a membership scheme, and send offers. That is a much bigger system, and it brings legal duties about looking after people’s personal details. Both are perfectly good choices — we just need to know which one you want, because it is difficult to switch later.</p>
+    </div></div>
+
+    <div class="q"><span class="n">28</span><div><p>How does a staff member know where a customer is from — do they ask, see the passport at tax refund, or judge it from the language spoken?</p></div></div>
+
+    <div class="q must"><span class="n">29</span><div>
+      <span class="tag">Answer first</span>
+      <p>Do you need to know exactly which nationality bought which perfume? Or is the daily total by country good enough?</p>
+      <p class="why"><b>Why we ask:</b> at the moment the system knows what was sold, and separately who walked in, and works out a sensible estimate from the two. To be exact, staff would have to record the customer’s country on every single sale, one at a time. Worth thinking honestly about whether a busy counter on a Saturday would really do that.</p>
+    </div></div>
+
+    <div class="q"><span class="n">30</span><div><p>Are your airport shops part of the tourist tax refund scheme? Does that create paperwork this system should produce or keep?</p></div></div>
+    <div class="q"><span class="n">31</span><div><p>Do you have a membership or loyalty scheme today, or would you like one? How would it work?</p></div></div>
+    <div class="q"><span class="n">32</span><div><p>Would you want to contact customers afterwards by email or WhatsApp? Do you ask their permission today, and how?</p></div></div>
+    <div class="q"><span class="n">33</span><div><p>Would you like to record which staff member served a customer, or how the customer heard about you?</p></div></div>
+    <div class="q"><span class="n">34</span><div><p>Should the system recognise a returning customer across different shops, or is each shop separate?</p></div></div>
+  </section>
+
+  <!-- ── 5 ───────────────────────────────────────────────────────────── -->
+  <section class="part" id="s5">
+    <h2>Stock and how it moves</h2>
+    <p class="who">Best answered by <b>Ravi Kumar or whoever runs the warehouse</b></p>
+
+    <div class="q must"><span class="n">35</span><div>
+      <span class="tag">Answer first</span>
+      <p>Who owns the stock sitting in a shop — does head office still own it until it sells, or does the shop buy it from head office? And do any department store counters only pay you after the perfume sells?</p>
+      <p class="why"><b>Why we ask:</b> this decides whether sending stock to a shop is simply moving your own goods around, or is a sale from one company to another. Those are recorded completely differently and they change what your accounts team sees.</p>
+    </div></div>
+
+    <div class="q"><span class="n">36</span><div><p>How many warehouses or store rooms do you have, and where are they? Do all shops receive stock from the same place?</p></div></div>
+    <div class="q"><span class="n">37</span><div><p>When should a perfume be reordered? A fixed number you set for each product, a different number for each shop, or worked out automatically from how fast it is selling?</p></div></div>
+    <div class="q"><span class="n">38</span><div><p>Do shops ever send stock directly to each other? Who allows that, and is it written down anywhere today?</p></div></div>
+    <div class="q"><span class="n">39</span><div><p>What happens when a delivery arrives short, damaged, or with the wrong items? Who sorts it out?</p></div></div>
+
+    <div class="q must"><span class="n">40</span><div>
+      <span class="tag">Answer first</span>
+      <p>Do you record batch numbers, production dates or expiry dates on individual bottles?</p>
+      <p class="why"><b>Why we ask:</b> this changes stock from a simple number — “31 bottles of Orchid” — into following each individual bottle through every step of its life. It is a much bigger piece of work, so it has to be planned from the beginning rather than added on.</p>
+    </div></div>
+
+    <div class="q"><span class="n">41</span><div><p>Do you use serial numbers or anti-counterfeit codes on individual bottles?</p></div></div>
+    <div class="q"><span class="n">42</span><div><p>Do you do a full stock count separate from the nightly one? How often, and who signs it off?</p></div></div>
+    <div class="q"><span class="n">43</span><div><p>How do you record stock that has gone missing, and who has to approve writing it off?</p></div></div>
+    <div class="q"><span class="n">44</span><div><p>Are testers kept as separate stock from the bottles you sell?</p></div></div>
+  </section>
+
+  <!-- ── 6 ───────────────────────────────────────────────────────────── -->
+  <section class="part" id="s6">
+    <h2>Orders and approvals</h2>
+    <p class="who">Best answered by <b>Khairul Anuar and Mei Ling Tan</b></p>
+
+    <div class="q"><span class="n">45</span><div><p>Is the flow in the demo right — the shop asks, head office approves, accounts checks the cost, the warehouse sends it, the shop confirms it arrived? Where is it different in real life?</p></div></div>
+    <div class="q"><span class="n">46</span><div><p>Should who approves an order depend on how much it is worth? If so, what amounts, and who approves each level?</p></div></div>
+    <div class="q"><span class="n">47</span><div><p>Does anything need approval from someone above the Managing Director?</p></div></div>
+    <div class="q"><span class="n">48</span><div><p>When the person who approves orders is on leave, who covers for them?</p></div></div>
+    <div class="q"><span class="n">49</span><div><p>Do you also place orders with your manufacturers or suppliers? Should those live in this system too, or only the shop-to-head-office requests?</p></div></div>
+    <div class="q"><span class="n">50</span><div><p>Can a shop ask for an urgent delivery outside the normal routine? What makes something urgent?</p></div></div>
+    <div class="q"><span class="n">51</span><div><p>Should the system produce a proper printed order form on your company letterhead? If there is a set format you must use, please send it to us.</p></div></div>
+    <div class="q"><span class="n">52</span><div><p>If only part of an order can be sent, should the rest stay on order automatically, or does the shop have to ask again?</p></div></div>
+  </section>
+
+  <!-- ── 7 ───────────────────────────────────────────────────────────── -->
+  <section class="part" id="s7">
+    <h2>Products and prices</h2>
+    <p class="who">Best answered by <b>Ms Kelly</b>. The demo used nine perfumes taken from your website — we assume the real list is longer.</p>
+
+    <div class="q"><span class="n">53</span><div><p>How many products do you have altogether, including discontinued ones you still report on?</p></div></div>
+    <div class="q"><span class="n">54</span><div><p>Do products come in different sizes, refills, travel sizes, gift sets or testers? Should each of those be counted separately?</p></div></div>
+    <div class="q"><span class="n">55</span><div><p>Do you sell gift sets made up from individual bottles, or are they packed in advance and counted as one item?</p></div></div>
+    <div class="q"><span class="n">56</span><div><p>Who is allowed to add a new product or change an existing one, and does that need approval?</p></div></div>
+    <div class="q"><span class="n">57</span><div><p>Do your boxes carry barcodes? Would scanning them make the nightly count faster for your staff?</p></div></div>
+    <div class="q"><span class="n">58</span><div><p>Should the cost price and the profit be visible in the system? If so, to exactly which people?</p></div></div>
+    <div class="q"><span class="n">59</span><div><p>How do price changes and promotions work — planned in advance, different per shop, running for a set period?</p></div></div>
+    <div class="q"><span class="n">60</span><div><p>Do different shops ever sell the same perfume at different prices — airport duty free compared with a shopping mall?</p></div></div>
+  </section>
+
+  <!-- ── 8 ───────────────────────────────────────────────────────────── -->
+  <section class="part" id="s8">
+    <h2>People, and who sees what</h2>
+    <p class="who">Best answered by <b>Ms Kelly or whoever handles staff</b></p>
+
+    <div class="q"><span class="n">61</span><div><p>Please send us a list of everyone who will use the system and what their job is. A simple list is perfectly fine.</p></div></div>
+    <div class="q"><span class="n">62</span><div><p>Are the seven logins in the demo right? Is anyone missing — an area manager, a regional manager, an auditor, a weekend part-timer?</p></div></div>
+    <div class="q"><span class="n">63</span><div><p>Can one person hold two jobs at once — for example a shop supervisor who also approves orders?</p></div></div>
+    <div class="q"><span class="n">64</span><div><p>Does anyone look after a group of shops, rather than one shop or all of them?</p></div></div>
+    <div class="q"><span class="n">65</span><div><p>What must certain people <b>not</b> be able to see? Cost prices, profit, other shops’ takings, anything to do with pay?</p></div></div>
+    <div class="q"><span class="n">66</span><div><p>Who creates a login when somebody joins, and who removes it the day they leave?</p></div></div>
+    <div class="q"><span class="n">67</span><div><p>Do you need a record of who changed what and when? Is that something you would like, or something your auditor insists on?</p></div></div>
+  </section>
+
+  <!-- ── 9 ───────────────────────────────────────────────────────────── -->
+  <section class="part" id="s9">
+    <h2>Targets and reports</h2>
+    <p class="who">Best answered by <b>Davy Lim</b></p>
+
+    <div class="q"><span class="n">68</span><div><p>How are sales targets set — per shop, per staff member, per product, per month? Who sets them?</p></div></div>
+    <div class="q"><span class="n">69</span><div><p>How often do targets change? If one changes halfway through a month, should the system remember the old one?</p></div></div>
+    <div class="q"><span class="n">70</span><div><p>Do staff earn commission or a bonus? Should the system work it out for you? If yes, please explain the rules in full — this is usually more complicated than it first sounds.</p></div></div>
+    <div class="q"><span class="n">71</span><div><p>Which three numbers do you personally look at first thing every morning?</p></div></div>
+    <div class="q"><span class="n">72</span><div><p>Which reports do you or your staff put together by hand today? Please send us examples — even a photo of a whiteboard or a messy spreadsheet tells us more than a description ever could.</p></div></div>
+    <div class="q"><span class="n">73</span><div><p>Who receives which report, how often, and how — email, printed on paper, WhatsApp?</p></div></div>
+    <div class="q"><span class="n">74</span><div><p>Does your accountant or auditor need anything particular out of this system?</p></div></div>
+  </section>
+
+  <!-- ── 10 ──────────────────────────────────────────────────────────── -->
+  <section class="part" id="s10">
+    <h2>Alerts and messages</h2>
+    <p class="who">Best answered by <b>Ms Kelly</b></p>
+
+    <div class="q"><span class="n">75</span><div><p>How should the system tell people things — a message inside the system, an email, WhatsApp, SMS? WhatsApp is possible but costs extra to set up, so it is worth deciding on purpose rather than by accident.</p></div></div>
+    <div class="q"><span class="n">76</span><div><p>Who should be told when a shop has not closed its day, when a perfume runs out, when an order is waiting for approval, and when a delivery arrives?</p></div></div>
+    <div class="q"><span class="n">77</span><div><p>What is urgent enough to interrupt someone straight away, and what can wait for a once-a-day summary?</p></div></div>
+  </section>
+
+  <!-- ── 11 ──────────────────────────────────────────────────────────── -->
+  <section class="part" id="s11">
+    <h2>Where it will be used</h2>
+    <p class="who">Best answered by <b>your IT person and a shop supervisor</b></p>
+
+    <div class="q"><span class="n">78</span><div><p>What do your staff actually use at the counter — a computer, a shared tablet, their own phone? A photo of a typical counter would help us more than a description.</p></div></div>
+    <div class="q"><span class="n">79</span><div><p>What do head office and management use — laptop, desktop computer, phone while travelling?</p></div></div>
+
+    <div class="q must"><span class="n">80</span><div>
+      <span class="tag">Answer first</span>
+      <p>How good is the internet in each shop, especially the airport ones? If the connection drops, must your staff still be able to close the day?</p>
+      <p class="why"><b>Why we ask:</b> letting the system work without internet and catch up later is genuinely useful in an airport. But it means the system has to keep its own copy of everything and then sort out what happens when two people change the same thing. It roughly doubles the work on the closing screen, so it must be decided at the very start.</p>
+    </div></div>
+
+    <div class="q"><span class="n">81</span><div><p>Do you want a real app that people download from the App Store and Play Store, or is a website that works properly on a phone good enough?</p></div></div>
+    <div class="q"><span class="n">82</span><div><p>Do you have any preference about where the system is kept, and which country the servers sit in?</p></div></div>
+    <div class="q"><span class="n">83</span><div><p>Do you have an IT person or company who will look after this after it launches, or should we plan to?</p></div></div>
+    <div class="q"><span class="n">84</span><div><p>Which languages does it need to work in — English only, or also Bahasa Malaysia and Chinese?</p></div></div>
+  </section>
+
+  <!-- ── 12 ──────────────────────────────────────────────────────────── -->
+  <section class="part" id="s12">
+    <h2>Your data, and the rules</h2>
+    <p class="who">Best answered by <b>Ms Kelly and your accountant</b></p>
+
+    <div class="q"><span class="n">85</span><div><p>How far back should we bring your old records — this year, three years, everything you have?</p></div></div>
+    <div class="q"><span class="n">86</span><div><p>What form are those old records in now, and could you send us a small sample to look at?</p></div></div>
+    <div class="q"><span class="n">87</span><div><p>If you decide to store customer details, do you already have a privacy notice and permission wording? Malaysia’s personal data law applies here, and it is much easier to build that in from the start than to add it later.</p></div></div>
+    <div class="q"><span class="n">88</span><div><p>How long must records be kept before they are allowed to be deleted?</p></div></div>
+    <div class="q"><span class="n">89</span><div><p>Are there any rules about where your company’s data may be stored — inside Malaysia, inside Southeast Asia, or anywhere at all?</p></div></div>
+    <div class="q"><span class="n">90</span><div><p>Would you like a guaranteed way to take all your data out, in case you ever move to a different system one day?</p></div></div>
+  </section>
+
+  <!-- ── 13 ──────────────────────────────────────────────────────────── -->
+  <section class="part" id="s13">
+    <h2>Getting started</h2>
+    <p class="who">Best answered by <b>Davy Lim</b></p>
+
+    <div class="q"><span class="n">91</span><div><p>Is there a date you would like to be up and running by? Any time of year to avoid — Chinese New Year, Raya, year end, your audit?</p></div></div>
+    <div class="q"><span class="n">92</span><div><p>Would you rather start with one shop first and learn from it, or launch everywhere at once? If one shop, which one, and why that one?</p></div></div>
+    <div class="q"><span class="n">93</span><div><p>Who will train the shop staff, and realistically how much time can they give to learning it?</p></div></div>
+    <div class="q"><span class="n">94</span><div><p>What budget range are you working with, both for building it and for running it each month? A rough range is fine — it changes what we recommend, not whether we go ahead.</p></div></div>
+    <div class="q"><span class="n">95</span><div><p>Six months after it goes live, what would have to be true for you to say it worked?</p></div></div>
+    <div class="q"><span class="n">96</span><div><p>Thinking back to the demo — is there anything you would take out, and anything you expected to see that was not there?</p></div></div>
+  </section>
+
+  <!-- ── Send ────────────────────────────────────────────────────────── -->
+  <section class="part" id="send">
+    <div class="box">
+      <h2>Things to send us</h2>
+      <p>
+        These usually answer more than the questions do, and much faster. Rough is completely
+        fine — photos of paper, untidy spreadsheets, screenshots on your phone.
+      </p>
+      <ul class="send">
+        <li><span>A list of your staff and their jobs<small>This alone answers most of section 8</small></span></li>
+        <li><span>Photos of a typical shop counter, and of a head office desk<small>Shows us what size screens to design for</small></span></li>
+        <li><span>The reports you put together by hand today<small>Whiteboard photos are welcome</small></span></li>
+        <li><span>A sales printout from the cash register for one busy day, and for one whole month<small>Tells us exactly what your till can give us</small></span></li>
+        <li><span>Your current stock list, with cost prices and selling prices</span></li>
+        <li><span>Your full product list — every size, set and barcode</span></li>
+        <li><span>Any order form you use at the moment</span></li>
+        <li><span>Whatever you send your accountant each month</span></li>
+      </ul>
+    </div>
+
+    <div class="next">
+      <h2>What happens next</h2>
+      <p>
+        Once we have the eight priority answers, we will write up a plain plan and draw every
+        screen for you to look at and approve. You will also get a proper build schedule and a
+        firm price at that point.
+      </p>
+      <p>
+        Nothing gets built until you have approved that. And wherever an answer is still unknown,
+        we will write down the assumption we are working to, so nothing important gets decided
+        quietly on your behalf.
+      </p>
+    </div>
+  </section>
+
+</div>

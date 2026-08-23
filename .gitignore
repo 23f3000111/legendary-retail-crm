@@ -1,0 +1,12 @@
+node_modules
+dist
+.DS_Store
+*.local
+.vite
+.playwright-mcp
+
+# The client's own documents — their org chart, their store list and their
+# completed discovery form. They describe how Legendary runs and who works
+# there, so they stay out of a public repository. Everything that was decided
+# from them is written up in docs/spec/ instead.
+docs/client-input/

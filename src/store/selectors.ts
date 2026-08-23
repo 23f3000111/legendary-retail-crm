@@ -1,0 +1,657 @@
+/**
+ * Every figure the system renders is computed here, by a pure function over the
+ * store's data. Screens call these; screens never aggregate. Charts receive the
+ * prepared arrays these return; charts never compute.
+ *
+ * Two rules decide what a filter means:
+ *
+ *  1. **Revenue is always the sum of the sale lines** (`qty × price`). Nothing
+ *     is typed in as a total and trusted, so a product or collection filter is
+ *     exact rather than approximate.
+ *  2. **Nationality is exact, and only main stores have it.** The client wanted
+ *     to know precisely which country bought which perfume (Q29), so main-store
+ *     lines carry a country. Dealers and consignment never capture it, and are
+ *     therefore *excluded* — not estimated — whenever a country filter is on.
+ *     `countryCoverage()` reports how much of the estate that leaves.
+ */
+import {
+  locations,
+  tradingLocations,
+  locationById,
+  CHANNELS,
+  type Channel,
+  type Region,
+} from '../data/locations'
+import {
+  skus,
+  skuById,
+  collections,
+  productById,
+  type CollectionId,
+  type Variant,
+} from '../data/products'
+import { countries } from '../data/countries'
+import { addDays, dateRange, daysBetween, monthKey } from '../lib/dates'
+import { effectiveQty, isOpen } from '../lib/po-machine'
+import type { Closing, CrmData, DateStr, PurchaseOrder } from '../data/types'
+
+// ── Filter ─────────────────────────────────────────────────────────────────
+
+export interface Filter {
+  from: DateStr
+  to: DateStr
+  /** Empty array means "all" on every dimension below. */
+  locationIds: string[]
+  channels: Channel[]
+  regions: Region[]
+  collectionIds: CollectionId[]
+  skuIds: string[]
+  variants: Variant[]
+  countryCodes: string[]
+}
+
+export type Metric = 'revenue' | 'units'
+
+export const METRIC_LABEL: Record<Metric, string> = {
+  revenue: 'Revenue',
+  units: 'Units sold',
+}
+
+export const emptyFilter = (from: DateStr, to: DateStr): Filter => ({
+  from,
+  to,
+  locationIds: [],
+  channels: [],
+  regions: [],
+  collectionIds: [],
+  skuIds: [],
+  variants: [],
+  countryCodes: [],
+})
+
+export const isDimensionless = (f: Filter): boolean =>
+  !f.locationIds.length &&
+  !f.channels.length &&
+  !f.regions.length &&
+  !f.collectionIds.length &&
+  !f.skuIds.length &&
+  !f.variants.length &&
+  !f.countryCodes.length
+
+export const activeFilterCount = (f: Filter): number =>
+  f.locationIds.length +
+  f.channels.length +
+  f.regions.length +
+  f.collectionIds.length +
+  f.skuIds.length +
+  f.variants.length +
+  f.countryCodes.length
+
+// ── Building blocks ────────────────────────────────────────────────────────
+
+const locationMatches = (locationId: string, f: Filter): boolean => {
+  const loc = locationById(locationId)
+  if (!loc) return false
+  if (f.locationIds.length && !f.locationIds.includes(locationId)) return false
+  if (f.channels.length && !f.channels.includes(loc.channel)) return false
+  if (f.regions.length && !f.regions.includes(loc.region)) return false
+  return true
+}
+
+/** SKU ids surviving the collection, product and variant filters. */
+export const skuIdsFor = (f: Filter): Set<string> => {
+  const ids = skus
+    .filter((s) => {
+      if (f.variants.length && !f.variants.includes(s.variant)) return false
+      if (f.skuIds.length && !f.skuIds.includes(s.id)) return false
+      if (f.collectionIds.length) {
+        const cid = productById(s.productId)?.collectionId
+        if (!cid || !f.collectionIds.includes(cid)) return false
+      }
+      return true
+    })
+    .map((s) => s.id)
+  return new Set(ids)
+}
+
+const inWindow = (date: DateStr, f: Filter) =>
+  daysBetween(f.from, date) >= 0 && daysBetween(date, f.to) >= 0
+
+export const filteredClosings = (data: CrmData, f: Filter): Closing[] =>
+  data.closings.filter((c) => inWindow(c.period, f) && locationMatches(c.locationId, f))
+
+export interface Totals {
+  revenue: number
+  units: number
+  /** Lines that carry a country — the exactly-attributed slice. */
+  attributedUnits: number
+  /** Staff purchases, kept out of the headline figures (Q23). */
+  staffRevenue: number
+  staffUnits: number
+}
+
+const emptyTotals = (): Totals => ({
+  revenue: 0,
+  units: 0,
+  attributedUnits: 0,
+  staffRevenue: 0,
+  staffUnits: 0,
+})
+
+/** True when a line survives both the SKU filter and the country filter. */
+const lineMatches = (
+  line: { skuId: string; countryCode?: string },
+  allowed: Set<string>,
+  f: Filter,
+): boolean => {
+  if (!allowed.has(line.skuId)) return false
+  if (f.countryCodes.length) {
+    // No country recorded means this line cannot satisfy a country filter.
+    if (!line.countryCode) return false
+    if (!f.countryCodes.includes(line.countryCode)) return false
+  }
+  return true
+}
+
+export const totalsFor = (data: CrmData, f: Filter): Totals => {
+  const allowed = skuIdsFor(f)
+  const t = emptyTotals()
+
+  for (const c of filteredClosings(data, f)) {
+    for (const line of c.lines) {
+      if (!lineMatches(line, allowed, f)) continue
+      const price = skuById(line.skuId)?.priceMYR ?? 0
+      t.revenue += line.qty * price
+      t.units += line.qty
+      if (line.countryCode) t.attributedUnits += line.qty
+    }
+    // Staff sales sit outside the country and SKU dimensions, so they only
+    // count when no such filter is narrowing the view.
+    if (!f.countryCodes.length && !f.skuIds.length && !f.collectionIds.length) {
+      t.staffRevenue += c.staffSales.revenueMYR
+      t.staffUnits += c.staffSales.qty
+    }
+  }
+
+  t.revenue = Math.round(t.revenue)
+  return t
+}
+
+export const metricValue = (t: Pick<Totals, 'revenue' | 'units'>, m: Metric): number =>
+  m === 'revenue' ? t.revenue : t.units
+
+/** The equivalent window immediately before this one, for like-for-like deltas. */
+export const previousWindow = (f: Filter): Filter => {
+  const span = daysBetween(f.from, f.to) + 1
+  return { ...f, from: addDays(f.from, -span), to: addDays(f.to, -span) }
+}
+
+export interface KpiSet {
+  current: Totals
+  previous: Totals
+  delta: Record<Metric, number | null>
+}
+
+export const selectKpis = (data: CrmData, f: Filter): KpiSet => {
+  const current = totalsFor(data, f)
+  const previous = totalsFor(data, previousWindow(f))
+  const d = (a: number, b: number) => (b === 0 ? null : ((a - b) / b) * 100)
+  return {
+    current,
+    previous,
+    delta: {
+      revenue: d(current.revenue, previous.revenue),
+      units: d(current.units, previous.units),
+    },
+  }
+}
+
+/**
+ * How much of the filtered estate can answer a nationality question. Main
+ * stores can; dealers and consignment cannot, and the UI says so rather than
+ * quietly returning a smaller number.
+ */
+export const countryCoverage = (data: CrmData, f: Filter) => {
+  const withCountry = { ...f, countryCodes: [] }
+  const rows = filteredClosings(data, withCountry)
+  const capable = new Set<string>()
+  const all = new Set<string>()
+  for (const c of rows) {
+    all.add(c.locationId)
+    if (locationById(c.locationId)?.recordsCountries) capable.add(c.locationId)
+  }
+  return {
+    capableLocations: capable.size,
+    totalLocations: all.size,
+    /** True when the filter spans places that cannot answer the question. */
+    partial: capable.size < all.size,
+  }
+}
+
+// ── Time series ────────────────────────────────────────────────────────────
+
+export interface SeriesPoint {
+  date: DateStr
+  value: number
+}
+
+export const selectTimeSeries = (data: CrmData, f: Filter, metric: Metric): SeriesPoint[] => {
+  const allowed = skuIdsFor(f)
+  const byDate = new Map<DateStr, { revenue: number; units: number }>()
+
+  for (const c of filteredClosings(data, f)) {
+    const bucket = byDate.get(c.period) ?? { revenue: 0, units: 0 }
+    for (const line of c.lines) {
+      if (!lineMatches(line, allowed, f)) continue
+      bucket.revenue += line.qty * (skuById(line.skuId)?.priceMYR ?? 0)
+      bucket.units += line.qty
+    }
+    byDate.set(c.period, bucket)
+  }
+
+  // Walk the calendar rather than the data, so a day nobody traded reads as a
+  // gap instead of silently closing up.
+  return dateRange(f.from, f.to).map((date) => {
+    const b = byDate.get(date)
+    return { date, value: b ? (metric === 'revenue' ? Math.round(b.revenue) : b.units) : 0 }
+  })
+}
+
+// ── Country mix ────────────────────────────────────────────────────────────
+
+export interface OriginSlice {
+  countryCode: string
+  name: string
+  flag: string
+  /** Units bought by this nationality — exact, from the sale lines. */
+  units: number
+  revenue: number
+  share: number
+}
+
+export const originSlicesFrom = (
+  tally: Map<string, { units: number; revenue: number }>,
+  top = 6,
+): OriginSlice[] => {
+  const total = [...tally.values()].reduce((a, b) => a + b.units, 0)
+  const sorted = [...tally.entries()].sort((a, b) => b[1].units - a[1].units)
+  const head = sorted.slice(0, top)
+  const tail = sorted.slice(top)
+
+  const slice = (code: string, units: number, revenue: number): OriginSlice => {
+    const meta = countries.find((c) => c.code === code)
+    return {
+      countryCode: code,
+      name: meta?.name ?? code,
+      flag: meta?.flag ?? '🏳️',
+      units,
+      revenue: Math.round(revenue),
+      share: total ? (units / total) * 100 : 0,
+    }
+  }
+
+  const out = head.map(([code, v]) => slice(code, v.units, v.revenue))
+  if (tail.length) {
+    const units = tail.reduce((a, [, v]) => a + v.units, 0)
+    const revenue = tail.reduce((a, [, v]) => a + v.revenue, 0)
+    if (units > 0) {
+      out.push({
+        countryCode: 'OTHER',
+        name: 'Other',
+        flag: '🌍',
+        units,
+        revenue: Math.round(revenue),
+        share: total ? (units / total) * 100 : 0,
+      })
+    }
+  }
+  return out
+}
+
+/** Units and revenue by nationality across the filtered window. */
+export const selectOriginMix = (data: CrmData, f: Filter, top = 6): OriginSlice[] => {
+  const allowed = skuIdsFor(f)
+  const tally = new Map<string, { units: number; revenue: number }>()
+
+  for (const c of filteredClosings(data, f)) {
+    for (const line of c.lines) {
+      if (!line.countryCode) continue
+      if (!lineMatches(line, allowed, f)) continue
+      const bucket = tally.get(line.countryCode) ?? { units: 0, revenue: 0 }
+      bucket.units += line.qty
+      bucket.revenue += line.qty * (skuById(line.skuId)?.priceMYR ?? 0)
+      tally.set(line.countryCode, bucket)
+    }
+  }
+
+  return originSlicesFrom(tally, top)
+}
+
+/** What one nationality bought, ranked — the question the airports raise. */
+export const selectSkusForCountry = (data: CrmData, f: Filter, countryCode: string) => {
+  const allowed = skuIdsFor(f)
+  const tally = new Map<string, { units: number; revenue: number }>()
+
+  for (const c of filteredClosings(data, f)) {
+    for (const line of c.lines) {
+      if (line.countryCode !== countryCode) continue
+      if (!allowed.has(line.skuId)) continue
+      const b = tally.get(line.skuId) ?? { units: 0, revenue: 0 }
+      b.units += line.qty
+      b.revenue += line.qty * (skuById(line.skuId)?.priceMYR ?? 0)
+      tally.set(line.skuId, b)
+    }
+  }
+
+  return [...tally.entries()]
+    .map(([skuId, v]) => ({
+      skuId,
+      label: skuById(skuId)?.label ?? skuId,
+      units: v.units,
+      revenue: Math.round(v.revenue),
+    }))
+    .sort((a, b) => b.revenue - a.revenue)
+}
+
+// ── SKU performance ────────────────────────────────────────────────────────
+
+export interface SkuPerformance {
+  skuId: string
+  label: string
+  name: string
+  collection: string
+  variant: Variant
+  units: number
+  revenue: number
+  /** Units per trading period across the filtered window. */
+  velocity: number
+}
+
+export const selectSkuPerformance = (data: CrmData, f: Filter): SkuPerformance[] => {
+  const allowed = skuIdsFor(f)
+  const rows = filteredClosings(data, f)
+  const periods = new Set(rows.map((c) => c.period)).size || 1
+  const tally = new Map<string, { units: number; revenue: number }>()
+
+  for (const c of rows) {
+    for (const line of c.lines) {
+      if (!lineMatches(line, allowed, f)) continue
+      const b = tally.get(line.skuId) ?? { units: 0, revenue: 0 }
+      b.units += line.qty
+      b.revenue += line.qty * (skuById(line.skuId)?.priceMYR ?? 0)
+      tally.set(line.skuId, b)
+    }
+  }
+
+  return [...tally.entries()]
+    .map(([skuId, v]) => {
+      const sku = skuById(skuId)
+      const product = productById(sku?.productId ?? '')
+      return {
+        skuId,
+        label: sku?.label ?? skuId,
+        name: product?.name ?? skuId,
+        collection: product?.collection ?? '—',
+        variant: sku?.variant ?? ('retail' as Variant),
+        units: v.units,
+        revenue: Math.round(v.revenue),
+        velocity: v.units / periods,
+      }
+    })
+    .sort((a, b) => b.revenue - a.revenue)
+}
+
+// ── Locations ──────────────────────────────────────────────────────────────
+
+export interface LocationRow {
+  locationId: string
+  name: string
+  shortName: string
+  code: string
+  channel: Channel
+  region: Region
+  cadence: 'daily' | 'monthly'
+  revenue: number
+  units: number
+  /** Month-to-date against the pro-rata share of the target. 1.0 is on track. */
+  targetPace: number | null
+  monthToDate: number
+  monthlyTarget: number | null
+  delta: number | null
+  filedLatest: boolean
+}
+
+export const selectLocationRows = (
+  data: CrmData,
+  f: Filter,
+  metric: Metric = 'revenue',
+): LocationRow[] => {
+  const month = monthKey(data.today)
+  const dayOfMonth = Number(data.today.slice(8))
+  const daysInMonth = new Date(
+    Number(data.today.slice(0, 4)),
+    Number(data.today.slice(5, 7)),
+    0,
+  ).getDate()
+  const monthElapsed = dayOfMonth / daysInMonth
+  const targetOf = (id: string) =>
+    data.targets.find((t) => t.locationId === id && t.month === month)?.amountMYR ?? null
+
+  const rows = tradingLocations
+    .filter((l) => locationMatches(l.id, f))
+    .map((l) => {
+      const scoped: Filter = { ...f, locationIds: [l.id], channels: [], regions: [] }
+      const t = totalsFor(data, scoped)
+      const prev = totalsFor(data, previousWindow(scoped))
+
+      const mtd = data.closings
+        .filter((c) => c.locationId === l.id && monthKey(c.period) === month)
+        .reduce(
+          (a, c) =>
+            a + c.lines.reduce((s, ln) => s + ln.qty * (skuById(ln.skuId)?.priceMYR ?? 0), 0),
+          0,
+        )
+
+      const target = targetOf(l.id)
+      const currentMetric = metricValue(t, metric)
+      const prevMetric = metricValue(prev, metric)
+
+      // Daily locations should have filed yesterday; monthly ones last month.
+      const latestPeriod =
+        l.cadence === 'daily' ? addDays(data.today, -1) : `${month}-01`
+      const filedLatest = data.closings.some(
+        (c) => c.locationId === l.id && c.period === latestPeriod,
+      )
+
+      return {
+        locationId: l.id,
+        name: l.name,
+        shortName: l.shortName,
+        code: l.code,
+        channel: l.channel,
+        region: l.region,
+        cadence: l.cadence,
+        revenue: t.revenue,
+        units: t.units,
+        targetPace: target ? mtd / (target * monthElapsed) : null,
+        monthToDate: Math.round(mtd),
+        monthlyTarget: target,
+        delta: prevMetric === 0 ? null : ((currentMetric - prevMetric) / prevMetric) * 100,
+        filedLatest,
+      }
+    })
+
+  return rows.sort((a, b) => metricValue(b, metric) - metricValue(a, metric))
+}
+
+/** Revenue split by channel — the shape of the business in one figure. */
+export const selectChannelSplit = (data: CrmData, f: Filter) =>
+  CHANNELS.map((channel) => {
+    const scoped: Filter = { ...f, channels: [channel] }
+    const t = totalsFor(data, scoped)
+    return { channel, revenue: t.revenue, units: t.units }
+  }).filter((r) => r.revenue > 0)
+
+// ── Stock ──────────────────────────────────────────────────────────────────
+
+export interface StockRow {
+  skuId: string
+  label: string
+  code: string
+  collection: string
+  variant: Variant
+  onHand: number
+  reorderPoint: number
+  velocity: number
+  daysCover: number | null
+  status: 'ok' | 'low' | 'critical' | 'out'
+  suggested: number
+}
+
+const VELOCITY_WINDOW = 30
+
+/**
+ * Stock on hand is the counted balance from the location's most recent closing,
+ * plus anything already dispatched and not yet received.
+ *
+ * This is a count for head office visibility only. The client was explicit that
+ * once stock leaves the warehouse it is no longer theirs, and that this must
+ * not be confused with SQL Accounting (Q35) — so nothing here is ever valued.
+ */
+export const selectStock = (data: CrmData, locationId: string): StockRow[] => {
+  const history = data.closings
+    .filter((c) => c.locationId === locationId)
+    .sort((a, b) => (a.period < b.period ? 1 : -1))
+  const latest = history[0]
+  const since = addDays(data.today, -VELOCITY_WINDOW)
+  const recent = history.filter((c) => daysBetween(since, c.period) >= 0)
+  const periods = recent.length || 1
+
+  const inbound = new Map<string, number>()
+  for (const po of data.purchaseOrders) {
+    if (po.locationId !== locationId) continue
+    if (po.status !== 'in_transit' && po.status !== 'packed') continue
+    for (const l of po.lines) inbound.set(l.skuId, (inbound.get(l.skuId) ?? 0) + effectiveQty(l))
+  }
+
+  const soldOf = (skuId: string) =>
+    recent.reduce(
+      (a, c) => a + c.lines.filter((l) => l.skuId === skuId).reduce((s, l) => s + l.qty, 0),
+      0,
+    )
+
+  return skus.map((s) => {
+    const onHand = latest?.stockCount.find((m) => m.skuId === s.id)?.counted ?? 0
+    const velocity = soldOf(s.id) / periods
+    const daysCover = velocity > 0 ? onHand / velocity : null
+    const status: StockRow['status'] =
+      onHand === 0
+        ? 'out'
+        : onHand <= s.reorderPoint / 2
+          ? 'critical'
+          : onHand <= s.reorderPoint
+            ? 'low'
+            : 'ok'
+
+    // Three weeks of cover, never below the reorder point, rounded to cases.
+    const target = Math.max(s.reorderPoint * 2, Math.ceil(velocity * 21))
+    const gap = Math.max(0, target - onHand - (inbound.get(s.id) ?? 0))
+    const product = productById(s.productId)
+
+    return {
+      skuId: s.id,
+      label: s.label,
+      code: s.code,
+      collection: product?.collection ?? '—',
+      variant: s.variant,
+      onHand,
+      reorderPoint: s.reorderPoint,
+      velocity,
+      daysCover,
+      status,
+      suggested: gap > 0 ? Math.ceil(gap / s.caseSize) * s.caseSize : 0,
+    }
+  })
+}
+
+/**
+ * Lines the closing flow pre-fills on its top-up step. Reorder points are the
+ * client's own numbers for now; after a few months of real data these become
+ * suggestions from sales velocity (Q37).
+ */
+export const selectSuggestedPoLines = (data: CrmData, locationId: string) =>
+  selectStock(data, locationId)
+    .filter((r) => r.status !== 'ok' && r.suggested > 0)
+    .map((r) => ({
+      skuId: r.skuId,
+      qtyRequested: r.suggested,
+      qtyApproved: null,
+      qtyShipped: null,
+    }))
+
+// ── Purchase orders ────────────────────────────────────────────────────────
+
+export const selectPosByStatus = (data: CrmData, statuses: string[]): PurchaseOrder[] =>
+  data.purchaseOrders
+    .filter((p) => statuses.includes(p.status))
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+
+export const selectOpenPos = (data: CrmData, locationId?: string): PurchaseOrder[] =>
+  data.purchaseOrders
+    .filter((p) => isOpen(p) && (!locationId || p.locationId === locationId))
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+
+export const poValue = (po: PurchaseOrder): number =>
+  po.lines.reduce((a, l) => a + effectiveQty(l) * (skuById(l.skuId)?.priceMYR ?? 0), 0)
+
+export const poUnits = (po: PurchaseOrder): number =>
+  po.lines.reduce((a, l) => a + effectiveQty(l), 0)
+
+// ── Today ──────────────────────────────────────────────────────────────────
+
+export const selectClosingFor = (data: CrmData, locationId: string, period: DateStr) =>
+  data.closings.find((c) => c.locationId === locationId && c.period === period)
+
+/** Daily locations that have not filed for the given day. */
+export const selectNotFiled = (data: CrmData, date: DateStr): string[] =>
+  tradingLocations
+    .filter((l) => l.cadence === 'daily')
+    .filter((l) => !data.closings.some((c) => c.locationId === l.id && c.period === date))
+    .map((l) => l.id)
+
+/** Sales logged at the counter today, before the close is filed. */
+export const selectLiveLines = (data: CrmData, locationId: string) =>
+  data.liveLines[locationId] ?? []
+
+/** The last `n` periods for one location, oldest first — for sparklines. */
+export const selectLocationSparkline = (
+  data: CrmData,
+  locationId: string,
+  n = 14,
+): SeriesPoint[] => {
+  const to = data.today
+  const from = addDays(to, -(n - 1))
+  return selectTimeSeries(
+    data,
+    { ...emptyFilter(from, to), locationIds: [locationId] },
+    'revenue',
+  )
+}
+
+// ── Write-offs ─────────────────────────────────────────────────────────────
+
+/** Testers used, damages and samples across the window (Q25). */
+export const selectWriteOffs = (data: CrmData, f: Filter) => {
+  const rows = filteredClosings(data, f)
+  const tally = new Map<string, number>()
+  let total = 0
+  for (const c of rows) {
+    for (const w of c.writeOffs) {
+      tally.set(w.reason, (tally.get(w.reason) ?? 0) + w.qty)
+      total += w.qty
+    }
+  }
+  return { total, byReason: tally }
+}
+
+export { collections, locations }
