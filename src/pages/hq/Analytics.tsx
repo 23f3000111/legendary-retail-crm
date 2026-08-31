@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { Panel, PanelBody, PanelHeader, Rule } from '../../components/ui/Panel'
+import { Icon } from '../../components/ui/icons'
 import { Button } from '../../components/ui/Button'
 import { StatTile } from '../../components/ui/StatTile'
 import { EmptyState } from '../../components/ui/DataTable'
@@ -42,6 +44,7 @@ import { num, rm, rmCompact } from '../../lib/format'
  * country bought — the question the airport stores exist to answer.
  */
 export function Analytics() {
+  const navigate = useNavigate()
   const data = useData()
   const [filter, setFilter] = useState<Filter>(() =>
     emptyFilter(addDays(data.today, -29), data.today),
@@ -94,7 +97,7 @@ export function Analytics() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="eyebrow">Legendary Group</p>
-          <h1 className="mt-1 font-display text-[26px] font-bold leading-tight tracking-tight">
+          <h1 className="page-title mt-1">
             Analytics
           </h1>
           <p className="mt-1 text-[13px] text-ink-2">
@@ -187,7 +190,7 @@ export function Analytics() {
               />
               <Rule />
               <PanelBody>
-                <div className="-mx-5 overflow-x-auto px-5">
+                <div className="scroll-x">
                   <table className="w-full min-w-[420px] border-collapse">
                     <thead>
                       <tr className="border-b border-line">
@@ -274,11 +277,11 @@ export function Analytics() {
             <PanelHeader
               eyebrow="By store"
               title={`Ranked by ${METRIC_LABEL[metric].toLowerCase()}`}
-              meta={`${rows.length} stores in view.`}
+              meta={`${rows.length} stores in view. Tap any row to open that store.`}
             />
             <Rule />
             <PanelBody>
-              <div className="-mx-5 overflow-x-auto px-5">
+              <div className="scroll-x">
                 <table className="w-full min-w-[720px] border-collapse">
                   <thead>
                     <tr className="border-b border-line">
@@ -296,13 +299,29 @@ export function Analytics() {
                   </thead>
                   <tbody>
                     {rows.slice(0, 25).map((r, i) => (
-                      <tr key={r.locationId} className="border-b border-line/70 last:border-0">
+                      <tr
+                        key={r.locationId}
+                        onClick={() => navigate(`/stores/${r.locationId}`)}
+                        className="cursor-pointer border-b border-line/70 transition-colors last:border-0 hover:bg-sunken"
+                      >
                         <td className="w-8 py-2.5">
                           <span className="readout text-[11px] text-ink-3">{i + 1}</span>
                         </td>
                         <td className="py-2.5">
-                          <p className="text-[13px] leading-tight text-ink">{r.shortName}</p>
-                          <p className="text-[11px] text-ink-3">{r.region}</p>
+                          <Link
+                            to={`/stores/${r.locationId}`}
+                            className="group block"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <p className="flex items-center gap-1 text-[13px] leading-tight text-ink group-hover:text-primary">
+                              {r.shortName}
+                              <Icon
+                                name="chevronRight"
+                                className="h-3 w-3 text-ink-3 transition-transform group-hover:translate-x-0.5 group-hover:text-primary"
+                              />
+                            </p>
+                            <p className="text-[11px] text-ink-3">{r.region}</p>
+                          </Link>
                         </td>
                         <td className="py-2.5 text-[12px] text-ink-2">
                           {CHANNEL_PLURAL[r.channel]}

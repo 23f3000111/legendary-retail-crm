@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { Panel, PanelBody, PanelHeader, Rule } from '../../components/ui/Panel'
 import { Button } from '../../components/ui/Button'
 import { Badge } from '../../components/ui/Badge'
-import { Field, NumberInput, Select, TextArea } from '../../components/ui/Field'
+import { Field, NumberInput, TextArea } from '../../components/ui/Field'
 import { Icon } from '../../components/ui/icons'
 import { OriginRibbon } from '../../components/charts/OriginRibbon'
 import { useData } from '../../store/useData'
@@ -17,10 +17,10 @@ import {
   selectSuggestedPoLines,
 } from '../../store/selectors'
 import { locationById } from '../../data/locations'
-import { skus, skuById } from '../../data/products'
+import { skuById } from '../../data/products'
 import { formatDate } from '../../lib/dates'
 import { num, rm } from '../../lib/format'
-import type { Closing, PurchaseOrder, StockCount, WriteOff, WriteOffReason } from '../../data/types'
+import type { Closing, PurchaseOrder, StockCount } from '../../data/types'
 
 const STEPS = [
   { key: 'sales', label: 'Sales', hint: 'Check what you logged' },
@@ -28,12 +28,6 @@ const STEPS = [
   { key: 'stock', label: 'Stock count', hint: 'Count every perfume' },
   { key: 'topup', label: 'Top-up', hint: 'What to ask HQ for' },
 ] as const
-
-const REASONS: { value: WriteOffReason; label: string }[] = [
-  { value: 'tester', label: 'Tester used up' },
-  { value: 'damaged', label: 'Damaged' },
-  { value: 'sample', label: 'Free sample' },
-]
 
 /**
  * The close, as one flow.
@@ -64,15 +58,8 @@ export function CloseDay() {
   const units = lines.reduce((a, l) => a + l.qty, 0)
 
   const [cash, setCash] = useState('')
-  const [ewallet, setEwallet] = useState('')
   const [card, setCard] = useState('')
-  const [staffQty, setStaffQty] = useState('')
-  const [staffRevenue, setStaffRevenue] = useState('')
   const [counted, setCounted] = useState<Record<string, string>>({})
-  const [writeOffs, setWriteOffs] = useState<WriteOff[]>([])
-  const [woSku, setWoSku] = useState(skus[0]?.id ?? '')
-  const [woQty, setWoQty] = useState(1)
-  const [woReason, setWoReason] = useState<WriteOffReason>('tester')
   const [poQty, setPoQty] = useState<Record<string, number>>(() =>
     Object.fromEntries(
       selectSuggestedPoLines(data, locationId).map((l) => [l.skuId, l.qtyRequested]),
@@ -81,7 +68,7 @@ export function CloseDay() {
   const [poNotes, setPoNotes] = useState('')
   const [raisePo, setRaisePo] = useState(true)
 
-  const tenderTotal = (Number(cash) || 0) + (Number(ewallet) || 0) + (Number(card) || 0)
+  const tenderTotal = (Number(cash) || 0) + (Number(card) || 0)
   const tenderGap = Math.round((revenue - tenderTotal) * 100) / 100
 
   const mix = useMemo(() => {
@@ -146,13 +133,19 @@ export function CloseDay() {
       revenueMYR: revenue,
       tender: {
         cash: Number(cash) || 0,
-        ewallet: Number(ewallet) || 0,
+        // The e-wallet field was removed from the form at the client's
+        // request. The column stays so three years of history and the database
+        // schema still line up — new closings simply record nothing there.
+        ewallet: 0,
         card: Number(card) || 0,
       },
       lines,
-      staffSales: { qty: Number(staffQty) || 0, revenueMYR: Number(staffRevenue) || 0 },
+      // Kept on the record as zero: the field is gone from the form at the
+      // client's request, but the shape of a closing has not changed, so
+      // three years of history and the database schema still line up.
+      staffSales: { qty: 0, revenueMYR: 0 },
       stockCount,
-      writeOffs,
+      writeOffs: [],
       submittedBy: user.name,
       submittedAt: new Date().toISOString(),
     }
@@ -235,7 +228,7 @@ export function CloseDay() {
     <div className="mx-auto max-w-3xl">
       <div className="mb-6">
         <p className="eyebrow">{location.name}</p>
-        <h1 className="mt-1 font-display text-[26px] font-bold leading-tight tracking-tight">
+        <h1 className="page-title mt-1">
           Close the day · {formatDate(data.today)}
         </h1>
 
@@ -349,16 +342,13 @@ export function CloseDay() {
               <PanelHeader
                 eyebrow="Step 2 of 4"
                 title="How it was paid"
-                meta={`Split the ${rm(revenue)} three ways. No float or cash on hand is recorded.`}
+                meta={`Split the ${rm(revenue)} between cash and card. No float or cash on hand is recorded.`}
               />
               <Rule />
               <PanelBody className="space-y-5">
-                <div className="grid gap-3 sm:grid-cols-3">
+                <div className="grid gap-3 sm:grid-cols-2">
                   <Field label="Cash">
                     <NumberInput prefix="RM" value={cash} onChange={(e) => setCash(e.target.value)} placeholder="0.00" />
-                  </Field>
-                  <Field label="E-wallet">
-                    <NumberInput prefix="RM" value={ewallet} onChange={(e) => setEwallet(e.target.value)} placeholder="0.00" />
                   </Field>
                   <Field label="Credit card">
                     <NumberInput prefix="RM" value={card} onChange={(e) => setCard(e.target.value)} placeholder="0.00" />
@@ -383,21 +373,6 @@ export function CloseDay() {
                     ) : null}
                   </div>
                 </div>
-
-                <div>
-                  <p className="eyebrow mb-2">Staff purchases</p>
-                  <p className="mb-2 text-[12.5px] text-ink-2">
-                    Kept separate from normal sales. Leave blank if there were none.
-                  </p>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <Field label="Units">
-                      <NumberInput value={staffQty} onChange={(e) => setStaffQty(e.target.value)} placeholder="0" />
-                    </Field>
-                    <Field label="Amount">
-                      <NumberInput prefix="RM" value={staffRevenue} onChange={(e) => setStaffRevenue(e.target.value)} placeholder="0.00" />
-                    </Field>
-                  </div>
-                </div>
               </PanelBody>
             </Panel>
           )}
@@ -412,7 +387,7 @@ export function CloseDay() {
               />
               <Rule />
               <PanelBody className="space-y-4">
-                <div className="-mx-5 overflow-x-auto px-5">
+                <div className="scroll-x">
                   <table className="w-full min-w-[520px] border-collapse">
                     <thead>
                       <tr className="border-b border-line">
@@ -472,82 +447,6 @@ export function CloseDay() {
                   </table>
                 </div>
 
-                {/* Write-offs */}
-                <div className="rounded-xl border border-line bg-surface-2 p-4">
-                  <p className="eyebrow mb-2">Testers, damages and samples</p>
-                  <p className="mb-3 text-[12.5px] text-ink-2">
-                    Record anything that left the shelf without being sold. Kelly or Davy approve
-                    these.
-                  </p>
-                  <div className="flex flex-wrap items-end gap-2">
-                    <Field label="Product" className="min-w-[190px] flex-1">
-                      <Select value={woSku} onChange={(e) => setWoSku(e.target.value)}>
-                        {skus.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.label}
-                          </option>
-                        ))}
-                      </Select>
-                    </Field>
-                    <Field label="Reason" className="min-w-[150px]">
-                      <Select
-                        value={woReason}
-                        onChange={(e) => setWoReason(e.target.value as WriteOffReason)}
-                      >
-                        {REASONS.map((r) => (
-                          <option key={r.value} value={r.value}>
-                            {r.label}
-                          </option>
-                        ))}
-                      </Select>
-                    </Field>
-                    <Field label="Units" className="w-[92px]">
-                      <NumberInput
-                        min={1}
-                        value={woQty}
-                        onChange={(e) => setWoQty(Math.max(1, Number(e.target.value)))}
-                      />
-                    </Field>
-                    <Button
-                      variant="secondary"
-                      icon="plus"
-                      onClick={() => {
-                        setWriteOffs((w) => [...w, { skuId: woSku, qty: woQty, reason: woReason }])
-                        setWoQty(1)
-                      }}
-                    >
-                      Add
-                    </Button>
-                  </div>
-
-                  {writeOffs.length > 0 && (
-                    <ul className="mt-3 space-y-1.5">
-                      {writeOffs.map((w, i) => (
-                        <li
-                          key={i}
-                          className="flex items-center gap-3 rounded-lg border border-line bg-surface px-3 py-2"
-                        >
-                          <span className="readout text-[12.5px] font-semibold text-ink">
-                            {w.qty} ×
-                          </span>
-                          <span className="flex-1 truncate text-[12.5px] text-ink">
-                            {skuById(w.skuId)?.label}
-                          </span>
-                          <Badge tone="warn">
-                            {REASONS.find((r) => r.value === w.reason)?.label}
-                          </Badge>
-                          <button
-                            onClick={() => setWriteOffs((list) => list.filter((_, j) => j !== i))}
-                            className="text-ink-3 transition-colors hover:text-ink"
-                            aria-label="Remove"
-                          >
-                            <Icon name="x" className="h-3.5 w-3.5" />
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
               </PanelBody>
             </Panel>
           )}

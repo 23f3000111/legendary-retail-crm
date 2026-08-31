@@ -4,6 +4,8 @@ import { Button } from '../../components/ui/Button'
 import { Badge } from '../../components/ui/Badge'
 import { StatTile } from '../../components/ui/StatTile'
 import { DataTable, type Column } from '../../components/ui/DataTable'
+import { Modal } from '../../components/ui/Modal'
+import { StockItemDetail } from '../../components/StockItemDetail'
 import { ProgressBar } from '../../components/ui/Progress'
 import { Select } from '../../components/ui/Field'
 import { useData } from '../../store/useData'
@@ -39,6 +41,8 @@ export function StockPage() {
     isPromoter ? (user?.locationId ?? '') : mainStores[0]?.id ?? '',
   )
   const [showMatrix, setShowMatrix] = useState(!isPromoter)
+  /** The product whose movements are open. */
+  const [item, setItem] = useState<StockRow | null>(null)
 
   const rows = useMemo(() => selectStock(data, locationId), [data, locationId])
   const low = rows.filter((r) => r.status !== 'ok')
@@ -151,7 +155,7 @@ export function StockPage() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="eyebrow">{isPromoter ? location?.name : 'Head Office'}</p>
-          <h1 className="mt-1 font-display text-[26px] font-bold leading-tight tracking-tight">
+          <h1 className="page-title mt-1">
             Stock on hand
           </h1>
           <p className="mt-1 max-w-2xl text-[13px] text-ink-2">
@@ -221,7 +225,29 @@ export function StockPage() {
         />
         <Rule />
         <PanelBody>
-          <DataTable columns={columns} rows={rows} rowKey={(r) => r.skuId} dense />
+          <DataTable
+            columns={columns}
+            rows={rows}
+            rowKey={(r) => r.skuId}
+            onRowClick={setItem}
+            dense
+          />
+
+          <Modal
+            open={item !== null}
+            onClose={() => setItem(null)}
+            title={item?.label ?? ''}
+            subtitle={
+              item
+                ? `${item.code} · ${item.onHand} on the shelf at ${location?.shortName ?? ''}`
+                : undefined
+            }
+            width="max-w-lg"
+          >
+            {item && (
+              <StockItemDetail locationId={locationId} skuId={item.skuId} row={item} />
+            )}
+          </Modal>
         </PanelBody>
       </Panel>
 
@@ -234,7 +260,7 @@ export function StockPage() {
           />
           <Rule />
           <PanelBody>
-            <div className="-mx-5 overflow-x-auto px-5">
+            <div className="scroll-x">
               <table className="w-full min-w-[820px] border-collapse">
                 <thead>
                   <tr className="border-b border-line">

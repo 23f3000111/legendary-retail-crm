@@ -44,11 +44,30 @@ import { num, rm, rmCompact } from '../../lib/format'
  * It opens with the three stores Davy said he checks first thing every morning
  * (Q71), because a dashboard that makes you hunt for your own habit is a
  * dashboard you stop opening.
+ *
+ * **The founder gets a shorter version.** Vins asked for his own screen to lose
+ * the charts and the detailed analysis: the takings he checks, how the stores
+ * are tracking, and anything genuinely his to worry about. Nothing is taken
+ * away from him — every chart is still on Analytics, and his navigation still
+ * reaches all of it — the *home page* is simply an answer rather than a
+ * workbench. He sees everything and edits nothing (the hierarchy chart), so a
+ * screen full of operational detail was work he never had to do.
  */
+
+/**
+ * What a founder is actually going to act on.
+ *
+ * Stock running low at a marketplace and an order waiting on Finance are
+ * somebody's job, and that somebody is not him. A store that never filed its
+ * day, a correction waiting to be approved and a month falling behind are
+ * different — those are the ones worth interrupting him for.
+ */
+const FOUNDER_ALERTS = ['missed_closing', 'correction_pending', 'target_risk']
 export function Overview() {
   const data = useData()
   const user = useCurrentUser()
   const capability = useCan()
+  const executive = user?.role === 'director'
   const filter = useMemo(() => emptyFilter(addDays(data.today, -29), data.today), [data.today])
 
   const kpis = useMemo(() => selectKpis(data, filter), [data, filter])
@@ -60,7 +79,9 @@ export function Overview() {
 
   const yesterday = addDays(data.today, -1)
   const notFiled = selectNotFiled(data, yesterday)
-  const alerts = data.alerts.filter((a) => !a.read)
+  const alerts = data.alerts
+    .filter((a) => !a.read)
+    .filter((a) => !executive || FOUNDER_ALERTS.includes(a.type))
   const urgent = alerts.filter((a) => a.severity !== 'warn')
   const openOrders = data.purchaseOrders.filter(isOpen)
   const openValue = openOrders.reduce((a, p) => a + poValue(p), 0)
@@ -88,11 +109,13 @@ export function Overview() {
             <p className="eyebrow">Legendary Group</p>
             <LiveDot />
           </div>
-          <h1 className="mt-1.5 font-display text-[28px] font-bold leading-tight tracking-tight">
+          <h1 className="page-title mt-1.5 sm:text-[28px]">
             Good morning{user ? `, ${user.name.split(' ')[0]}` : ''}
           </h1>
           <p className="mt-1 text-[13px] text-ink-2">
-            {tradingLocations.length} stores · rolling 30 days to {formatDate(data.today)}
+            {executive
+              ? `${tradingLocations.length} stores · yesterday and this month`
+              : `${tradingLocations.length} stores · rolling 30 days to ${formatDate(data.today)}`}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -118,26 +141,34 @@ export function Overview() {
         <PanelBody>
           <ul className="grid gap-3 sm:grid-cols-3">
             {watchlist.map((w) => (
-              <li
-                key={w.loc!.id}
-                className="rounded-xl border border-line bg-surface-2 px-4 py-3.5"
-              >
-                <p className="text-[12px] text-ink-2">{w.loc!.shortName}</p>
-                {w.filed ? (
-                  <p className="readout mt-1.5 font-display text-[24px] font-semibold text-ink">
-                    {rm(w.revenue!)}
+              <li key={w.loc!.id}>
+                <Link
+                  to={`/stores/${w.loc!.id}`}
+                  className="group block rounded-xl border border-line bg-surface-2 px-4 py-3.5 transition-all duration-200 hover:border-primary/45 hover:shadow-glass"
+                >
+                  <p className="flex items-center gap-1.5 text-[12px] text-ink-2">
+                    {w.loc!.shortName}
+                    <Icon
+                      name="chevronRight"
+                      className="h-3 w-3 text-ink-3 transition-transform group-hover:translate-x-0.5 group-hover:text-primary"
+                    />
                   </p>
-                ) : (
-                  <p className="mt-1.5 flex items-center gap-2 font-display text-[18px] font-semibold text-critical">
-                    <Icon name="alert" className="h-4 w-4" />
-                    Not filed
-                  </p>
-                )}
-                <Sparkline
-                  data={selectLocationSparkline(data, w.loc!.id)}
-                  width={140}
-                  height={26}
-                />
+                  {w.filed ? (
+                    <p className="readout mt-1.5 font-display text-[22px] font-semibold text-ink sm:text-[24px]">
+                      {rm(w.revenue!)}
+                    </p>
+                  ) : (
+                    <p className="mt-1.5 flex items-center gap-2 font-display text-[18px] font-semibold text-critical">
+                      <Icon name="alert" className="h-4 w-4" />
+                      Not filed
+                    </p>
+                  )}
+                  <Sparkline
+                    data={selectLocationSparkline(data, w.loc!.id)}
+                    width={140}
+                    height={26}
+                  />
+                </Link>
               </li>
             ))}
           </ul>
@@ -145,7 +176,8 @@ export function Overview() {
       </Panel>
 
       {/* ── Headline ──────────────────────────────────────────────────── */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {!executive && (
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <StatTile
           label="Revenue · 30 days"
           value={kpis.current.revenue}
@@ -179,8 +211,10 @@ export function Overview() {
           icon="bell"
         />
       </div>
+      )}
 
       {/* ── Trend + priority ──────────────────────────────────────────── */}
+      {!executive && (
       <div className="grid gap-5 lg:grid-cols-[1.55fr_1fr]">
         <ChartFrame
           title="Group revenue"
@@ -233,8 +267,39 @@ export function Overview() {
           </PanelBody>
         </Panel>
       </div>
+      )}
+
+      {/* ── The founder's short list ──────────────────────────────────── */}
+      {executive && alerts.length > 0 && (
+        <Panel>
+          <PanelHeader
+            eyebrow="Worth knowing"
+            title={alerts.length === 1 ? 'One thing to flag' : `${alerts.length} things to flag`}
+            meta="Missed closings, corrections waiting for approval, and months falling behind. Stock and order chasing sits with Kelly."
+          />
+          <Rule />
+          <PanelBody className="space-y-2">
+            {alerts.slice(0, 5).map((a) => (
+              <Link
+                key={a.id}
+                to={`/stores/${a.locationId}`}
+                className="flex items-start gap-2.5 rounded-xl border border-line bg-surface-2 px-3 py-2.5 transition-colors hover:border-primary/35"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="text-[12.5px] leading-snug text-ink">{a.message}</p>
+                  <p className="mt-0.5 text-[11px] text-ink-3">
+                    {locationById(a.locationId)?.shortName}
+                  </p>
+                </div>
+                <SeverityBadge severity={a.severity} />
+              </Link>
+            ))}
+          </PanelBody>
+        </Panel>
+      )}
 
       {/* ── Composition ───────────────────────────────────────────────── */}
+      {!executive && (
       <div className="grid gap-5 lg:grid-cols-2">
         <ChartFrame
           title="Revenue by channel"
@@ -262,8 +327,10 @@ export function Overview() {
           <SkuBars rows={skuRows.slice(0, 8)} />
         </ChartFrame>
       </div>
+      )}
 
       {/* ── Country mix ───────────────────────────────────────────────── */}
+      {!executive && (
       <ChartFrame
         title="Which countries bought"
         meta={`${num(kpis.current.attributedUnits)} units with a country recorded`}
@@ -277,6 +344,7 @@ export function Overview() {
           </div>
         </div>
       </ChartFrame>
+      )}
 
       {/* ── Main stores ───────────────────────────────────────────────── */}
       <Panel>
@@ -296,47 +364,61 @@ export function Overview() {
         <PanelBody>
           <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {mainRows.map((r, i) => (
-              <li
-                key={r.locationId}
-                className="rounded-xl border border-line bg-surface-2 px-3.5 py-3 transition-colors hover:border-primary/35"
-              >
-                <div className="flex items-start gap-2">
-                  <span className="readout mt-0.5 w-4 shrink-0 text-[11px] text-ink-3">{i + 1}</span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-[13px] font-medium leading-tight text-ink">
-                      {r.shortName}
-                    </p>
-                    <p className="text-[11px] text-ink-3">{r.region}</p>
-                  </div>
-                  <Sparkline data={selectLocationSparkline(data, r.locationId)} width={64} height={22} />
-                </div>
-
-                <div className="mt-2.5 flex items-end justify-between gap-2">
-                  <p className="readout text-[15px] font-semibold text-ink">{rm(r.revenue)}</p>
-                  <p
-                    className={`readout text-[11.5px] font-semibold ${
-                      (r.delta ?? 0) >= 0 ? 'text-good' : 'text-critical'
-                    }`}
-                  >
-                    {r.delta === null
-                      ? '—'
-                      : `${r.delta >= 0 ? '+' : '−'}${Math.abs(r.delta).toFixed(1)}%`}
-                  </p>
-                </div>
-
-                {r.targetPace !== null && (
-                  <>
-                    <ProgressBar className="mt-2" value={r.targetPace} />
-                    <div className="mt-1.5 flex items-center justify-between">
-                      <span className="text-[10.5px] text-ink-3">
-                        {rmCompact(r.monthToDate)} of {rmCompact(r.monthlyTarget ?? 0)}
-                      </span>
-                      <span className="readout text-[10.5px] text-ink-3">
-                        {Math.round(r.targetPace * 100)}% pace
-                      </span>
+              <li key={r.locationId}>
+                <Link
+                  to={`/stores/${r.locationId}`}
+                  className="group block rounded-xl border border-line bg-surface-2 px-3.5 py-3 transition-all duration-200 hover:border-primary/45 hover:shadow-glass"
+                >
+                  <div className="flex items-start gap-2">
+                    <span className="readout mt-0.5 w-4 shrink-0 text-[11px] text-ink-3">
+                      {i + 1}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="flex items-center gap-1 truncate text-[13px] font-medium leading-tight text-ink">
+                        <span className="truncate">{r.shortName}</span>
+                        <Icon
+                          name="chevronRight"
+                          className="h-3 w-3 shrink-0 text-ink-3 transition-transform group-hover:translate-x-0.5 group-hover:text-primary"
+                        />
+                      </p>
+                      <p className="text-[11px] text-ink-3">{r.region}</p>
                     </div>
-                  </>
-                )}
+                    <Sparkline
+                      data={selectLocationSparkline(data, r.locationId)}
+                      width={64}
+                      height={22}
+                    />
+                  </div>
+
+                  <div className="mt-2.5 flex items-end justify-between gap-2">
+                    <p className="readout text-[15px] font-semibold text-ink">{rm(r.revenue)}</p>
+                    {!executive && (
+                      <p
+                        className={`readout text-[11.5px] font-semibold ${
+                          (r.delta ?? 0) >= 0 ? 'text-good' : 'text-critical'
+                        }`}
+                      >
+                        {r.delta === null
+                          ? '—'
+                          : `${r.delta >= 0 ? '+' : '−'}${Math.abs(r.delta).toFixed(1)}%`}
+                      </p>
+                    )}
+                  </div>
+
+                  {r.targetPace !== null && (
+                    <>
+                      <ProgressBar className="mt-2" value={r.targetPace} />
+                      <div className="mt-1.5 flex items-center justify-between">
+                        <span className="text-[10.5px] text-ink-3">
+                          {rmCompact(r.monthToDate)} of {rmCompact(r.monthlyTarget ?? 0)}
+                        </span>
+                        <span className="readout text-[10.5px] text-ink-3">
+                          {Math.round(r.targetPace * 100)}% pace
+                        </span>
+                      </div>
+                    </>
+                  )}
+                </Link>
               </li>
             ))}
           </ul>
@@ -344,6 +426,7 @@ export function Overview() {
       </Panel>
 
       {/* ── Supply ────────────────────────────────────────────────────── */}
+      {!executive && (
       <Panel>
         <PanelHeader
           eyebrow="Supply"
@@ -391,6 +474,7 @@ export function Overview() {
           )}
         </PanelBody>
       </Panel>
+      )}
 
       {notFiled.length > 0 && capability.canEdit && (
         <div className="flex flex-wrap items-start gap-2.5 rounded-xl border border-warn/30 bg-warn/8 px-4 py-3">

@@ -1,21 +1,21 @@
 import { useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Panel, PanelBody, PanelHeader, Rule } from '../../components/ui/Panel'
+import { Icon } from '../../components/ui/icons'
 import { Button } from '../../components/ui/Button'
 import { Badge } from '../../components/ui/Badge'
 import { DataTable, EmptyState, type Column } from '../../components/ui/DataTable'
 import { SegmentedControl, TextInput } from '../../components/ui/Field'
 import { StatTile } from '../../components/ui/StatTile'
 import { ProgressBar } from '../../components/ui/Progress'
-import { Sparkline } from '../../components/charts/Sparkline'
 import { useData } from '../../store/useData'
 import {
   emptyFilter,
   selectLocationRows,
-  selectLocationSparkline,
   type LocationRow,
 } from '../../store/selectors'
 import { CHANNEL_PLURAL, locationsInChannel, tradingLocations, locations } from '../../data/locations'
-import { addDays } from '../../lib/dates'
+import { addDays, monthKey, monthLabel, relativeDay } from '../../lib/dates'
 import { downloadCsv } from '../../lib/exportCsv'
 import { num, rm } from '../../lib/format'
 import type { Channel } from '../../data/locations'
@@ -30,6 +30,7 @@ type View = Channel | 'all'
  * and only consignment carries a margin.
  */
 export function Locations() {
+  const navigate = useNavigate()
   const data = useData()
   const [view, setView] = useState<View>('main')
   const [query, setQuery] = useState('')
@@ -53,7 +54,10 @@ export function Locations() {
       header: 'Store',
       render: (r) => (
         <>
-          <p className="text-[13px] leading-tight text-ink">{r.shortName}</p>
+          <p className="flex items-center gap-1 text-[13px] leading-tight text-ink">
+            {r.shortName}
+            <Icon name="chevronRight" className="h-3 w-3 shrink-0 text-ink-3" />
+          </p>
           <p className="readout text-[10.5px] text-ink-3">
             {r.code} · {r.region}
           </p>
@@ -61,36 +65,40 @@ export function Locations() {
       ),
     },
     {
-      key: 'revenue',
-      header: 'Revenue · 30 days',
+      key: 'daily',
+      header: 'Daily sales',
       align: 'right',
-      render: (r) => <span className="readout text-[13px] text-ink">{rm(r.revenue)}</span>,
+      width: '150px',
+      render: (r) =>
+        r.dailyPeriod === null ? (
+          <span className="text-[11.5px] text-ink-3">nothing filed</span>
+        ) : (
+          <div>
+            <span className="readout text-[13px] text-ink">{rm(r.dailyRevenue)}</span>
+            <p className="readout text-[10.5px] text-ink-3">
+              {relativeDay(r.dailyPeriod, data.today)}
+            </p>
+          </div>
+        ),
+    },
+    {
+      key: 'mtd',
+      header: 'This month so far',
+      align: 'right',
+      width: '160px',
+      render: (r) => (
+        <div>
+          <span className="readout text-[13px] font-semibold text-ink">{rm(r.monthToDate)}</span>
+          <p className="readout text-[10.5px] text-ink-3">{monthLabel(monthKey(data.today))}</p>
+        </div>
+      ),
     },
     {
       key: 'units',
-      header: 'Units',
+      header: 'Units · 30 days',
       align: 'right',
+      width: '120px',
       render: (r) => <span className="readout text-[13px] text-ink-2">{num(r.units)}</span>,
-    },
-    {
-      key: 'trend',
-      header: 'Trend',
-      width: '110px',
-      render: (r) => <Sparkline data={selectLocationSparkline(data, r.locationId)} />,
-    },
-    {
-      key: 'delta',
-      header: 'Change',
-      align: 'right',
-      render: (r) =>
-        r.delta === null ? (
-          <span className="text-[11.5px] text-ink-3">—</span>
-        ) : (
-          <span className={`readout text-[12.5px] ${r.delta >= 0 ? 'text-good' : 'text-critical'}`}>
-            {r.delta >= 0 ? '+' : '−'}
-            {Math.abs(r.delta).toFixed(1)}%
-          </span>
-        ),
     },
     ...(view === 'main'
       ? [
@@ -151,16 +159,29 @@ export function Locations() {
   const exportRows = () =>
     downloadCsv(
       'legendary-stores.csv',
-      ['Store', 'Code', 'Channel', 'Region', 'Reports', 'Revenue 30d MYR', 'Units', 'Month to date'],
+      [
+        'Store',
+        'Code',
+        'Channel',
+        'Region',
+        'Reports',
+        'Daily sales MYR',
+        'Day filed',
+        'Month to date MYR',
+        'Revenue 30d MYR',
+        'Units 30d',
+      ],
       rows.map((r) => [
         r.name,
         r.code,
         r.channel,
         r.region,
         r.cadence,
+        r.dailyRevenue,
+        r.dailyPeriod ?? '',
+        r.monthToDate,
         r.revenue,
         r.units,
-        r.monthToDate,
       ]),
     )
 
@@ -169,7 +190,7 @@ export function Locations() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="eyebrow">Legendary Group</p>
-          <h1 className="mt-1 font-display text-[26px] font-bold leading-tight tracking-tight">
+          <h1 className="page-title mt-1">
             Stores
           </h1>
           <p className="mt-1 text-[13px] text-ink-2">
@@ -258,6 +279,7 @@ export function Locations() {
             columns={columns}
             rows={rows}
             rowKey={(r) => r.locationId}
+            onRowClick={(r) => navigate(`/stores/${r.locationId}`)}
             dense
             empty={
               <EmptyState

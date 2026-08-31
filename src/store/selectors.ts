@@ -415,6 +415,11 @@ export interface LocationRow {
   units: number
   /** Month-to-date against the pro-rata share of the target. 1.0 is on track. */
   targetPace: number | null
+  /** The most recent day this location filed — its "daily sales". */
+  dailyRevenue: number
+  /** Which day that was, so the column can say so rather than imply today. */
+  dailyPeriod: DateStr | null
+  /** First of the month to today. */
   monthToDate: number
   monthlyTarget: number | null
   delta: number | null
@@ -452,6 +457,12 @@ export const selectLocationRows = (
           0,
         )
 
+      // The last day actually filed, which is not always yesterday — a store
+      // that missed a night should show the night it did file, not a zero.
+      const latestFiled = data.closings
+        .filter((c) => c.locationId === l.id)
+        .sort((a, b) => (a.period < b.period ? 1 : -1))[0]
+
       const target = targetOf(l.id)
       const currentMetric = metricValue(t, metric)
       const prevMetric = metricValue(prev, metric)
@@ -474,6 +485,8 @@ export const selectLocationRows = (
         revenue: t.revenue,
         units: t.units,
         targetPace: target ? mtd / (target * monthElapsed) : null,
+        dailyRevenue: Math.round(latestFiled?.revenueMYR ?? 0),
+        dailyPeriod: latestFiled?.period ?? null,
         monthToDate: Math.round(mtd),
         monthlyTarget: target,
         delta: prevMetric === 0 ? null : ((currentMetric - prevMetric) / prevMetric) * 100,
@@ -572,6 +585,91 @@ export const selectStock = (data: CrmData, locationId: string): StockRow[] => {
       suggested: gap > 0 ? Math.ceil(gap / s.caseSize) * s.caseSize : 0,
     }
   })
+}
+
+// ── One item, at one store ─────────────────────────────────────────────────
+
+export interface StockMovement {
+  date: DateStr
+  /** Positive came in, negative went out. */
+  change: number
+  kind: 'sold' | 'received' | 'written off' | 'counted'
+  note?: string
+}
+
+/**
+ * Everything that happened to one product at one store: what came in, what went
+ * out, and what the count said afterwards.
+ *
+ * All of it is derived from closings and delivered orders rather than kept as a
+ * separate ledger, so it cannot drift away from the numbers on the rest of the
+ * system — there is one set of facts and this reads them back.
+ *
+ * Note what "received" means here: the client's stock stops being theirs once
+ * it leaves the warehouse (Q35), so an arrival is a movement onto the shop's
+ * shelf, not a purchase. Nothing on this screen is ever valued.
+ */
+export const selectSkuMovements = (
+  data: CrmData,
+  locationId: string,
+  skuId: string,
+  days = 30,
+): StockMovement[] => {
+  const since = addDays(data.today, -days)
+  const out: StockMovement[] = []
+
+  for (const c of data.closings) {
+    if (c.locationId !== locationId || c.period < since) continue
+
+    const sold = c.lines.filter((l) => l.skuId === skuId).reduce((a, l) => a + l.qty, 0)
+    if (sold > 0) out.push({ date: c.period, change: -sold, kind: 'sold' })
+
+    for (const w of c.writeOffs) {
+      if (w.skuId !== skuId) continue
+      out.push({
+        date: c.period,
+        change: -w.qty,
+        kind: 'written off',
+        note: w.reason === 'tester' ? 'Tester used up' : w.reason === 'damaged' ? 'Damaged' : 'Free sample',
+      })
+    }
+
+    const counted = c.stockCount.find((m) => m.skuId === skuId)
+    if (counted) {
+      out.push({
+        date: c.period,
+        change: 0,
+        kind: 'counted',
+        note: `${counted.counted} on the shelf`,
+      })
+    }
+  }
+
+  // An order that has been received put stock on the shelf.
+  for (const po of data.purchaseOrders) {
+    if (po.locationId !== locationId || po.status !== 'received') continue
+    const line = po.lines.find((l) => l.skuId === skuId)
+    if (!line) continue
+    const arrived = po.events.find((e) => e.status === 'received')?.at.slice(0, 10)
+    if (!arrived || arrived < since) continue
+    out.push({
+      date: arrived,
+      change: effectiveQty(line),
+      kind: 'received',
+      note: po.id,
+    })
+  }
+
+  // Newest first, and within a day the arrival before the count that followed.
+  const order: Record<StockMovement['kind'], number> = {
+    received: 0,
+    sold: 1,
+    'written off': 2,
+    counted: 3,
+  }
+  return out.sort((a, b) =>
+    a.date === b.date ? order[a.kind] - order[b.kind] : a.date < b.date ? 1 : -1,
+  )
 }
 
 /**

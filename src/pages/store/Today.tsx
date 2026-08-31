@@ -73,7 +73,7 @@ export function Today() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="eyebrow">{location.name}</p>
-          <h1 className="mt-1 font-display text-[26px] font-bold leading-tight tracking-tight">
+          <h1 className="page-title mt-1">
             {closedToday ? 'Today is closed' : 'Today is still open'}
           </h1>
           <p className="mt-1 text-[13px] text-ink-2">

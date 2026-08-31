@@ -15,6 +15,7 @@ import { Overview } from './pages/hq/Overview'
 import { Operations } from './pages/hq/Operations'
 import { Analytics } from './pages/hq/Analytics'
 import { Locations } from './pages/hq/Locations'
+import { StoreDetail } from './pages/hq/StoreDetail'
 import { Closings } from './pages/hq/Closings'
 import { StockPage } from './pages/hq/StockPage'
 import { Alerts } from './pages/hq/Alerts'
@@ -110,6 +111,7 @@ export default function App() {
           <Route path="/operations" element={<Operations />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/locations" element={<Locations />} />
+          <Route path="/stores/:id" element={<StoreDetail />} />
           <Route path="/closings" element={<Closings />} />
           <Route path="/stock" element={<StockPage />} />
           <Route path="/alerts" element={<Alerts />} />

@@ -13,7 +13,7 @@ export function PoLines({ po }: { po: PurchaseOrder }) {
   const showShipped = po.lines.some((l) => l.qtyShipped !== null)
 
   return (
-    <div className="-mx-5 overflow-x-auto px-5">
+    <div className="scroll-x">
       <table className="w-full min-w-[460px] border-collapse">
         <thead>
           <tr className="border-b border-line">

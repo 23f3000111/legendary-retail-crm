@@ -29,8 +29,11 @@ export function DataTable<T>({
 
   return (
     // Wide tables scroll inside their own panel; the page never scrolls sideways.
-    <div className="-mx-5 overflow-x-auto px-5">
-      <table className="w-full min-w-[560px] border-collapse">
+    <div className="scroll-x">
+      {/* `w-max` lets the declared column widths decide, so a narrow screen
+          scrolls the table instead of crushing every cell; `min-w-full` keeps
+          it filling the panel on a wide one. */}
+      <table className="w-max min-w-full border-collapse">
         <thead>
           <tr className="border-b border-line">
             {columns.map((c) => (

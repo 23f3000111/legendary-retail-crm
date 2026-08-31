@@ -58,7 +58,7 @@ export function Operations() {
             <p className="eyebrow">Head Office · Operations</p>
             <LiveDot />
           </div>
-          <h1 className="mt-1.5 font-display text-[28px] font-bold leading-tight tracking-tight">
+          <h1 className="page-title mt-1.5 sm:text-[28px]">
             {todo === 0 ? 'Nothing is waiting on you' : `${todo} things need you`}
           </h1>
           <p className="mt-1 text-[13px] text-ink-2">

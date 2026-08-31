@@ -10,20 +10,47 @@
   html,
   body,
   #root {
-    height: 100%;
+    /* `dvh` follows the browser chrome as it slides away on iOS; `100%` alone
+       leaves a gap under the footer there, and `100vh` overshoots. */
+    min-height: 100%;
+    min-height: 100dvh;
+  }
+
+  html {
+    /* Nothing in this app is meant to scroll sideways. If a wide table ever
+       escapes its own scroller, this stops it dragging the whole page with it. */
+    overflow-x: hidden;
+    /* Safari on iOS otherwise inflates type in landscape. */
+    -webkit-text-size-adjust: 100%;
   }
 
   body {
     @apply bg-canvas text-ink font-sans antialiased;
-    /* A command deck: cool light, a faint plotted grid, and two distant
-       coloured lights bleeding in from the top corners. */
+    overflow-x: hidden;
+  }
+
+  /*
+   * The command deck: cool light, a faint plotted grid, and two distant
+   * coloured lights bleeding in from the top corners.
+   *
+   * This lives on a fixed layer of its own rather than on `body` with
+   * `background-attachment: fixed`. iOS Safari does not honour that pairing —
+   * it re-rasterises the gradient on every scroll frame, which is what made
+   * the background jump and the page feel slow on an iPhone.
+   */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-color: theme('colors.canvas');
     background-image:
       radial-gradient(900px 420px at 12% -8%, rgba(99, 102, 241, 0.16), transparent 68%),
       radial-gradient(760px 380px at 92% -6%, rgba(34, 211, 238, 0.14), transparent 66%),
       linear-gradient(rgba(15, 27, 51, 0.032) 1px, transparent 1px),
       linear-gradient(90deg, rgba(15, 27, 51, 0.032) 1px, transparent 1px);
     background-size: 100% 100%, 100% 100%, 34px 34px, 34px 34px;
-    background-attachment: fixed;
   }
 
   /* Telemetry never wobbles as it counts up or as a table sorts. */
@@ -66,6 +93,27 @@
   input[type='number'] {
     -moz-appearance: textfield;
   }
+
+  /*
+   * iOS Safari zooms the whole page when you focus a control whose text is
+   * under 16px, and then leaves you scrolled sideways. Every control is 16px
+   * on a phone and drops to the designed size from `sm` up, where no browser
+   * does this.
+   */
+  @media (max-width: 639px) {
+    input,
+    select,
+    textarea {
+      font-size: 16px;
+    }
+  }
+
+  /* Taps should not flash a grey box on iOS, and should not select text. */
+  button,
+  a,
+  [role='button'] {
+    -webkit-tap-highlight-color: transparent;
+  }
 }
 
 @layer components {
@@ -93,6 +141,20 @@
   /* Numeric readouts in the mono face, so columns read straight down. */
   .readout {
     @apply tnum font-mono;
+  }
+
+  /*
+   * A page title. One class rather than a size repeated on every screen, so
+   * they cannot drift apart — and so a phone gets a heading that fits.
+   */
+  .page-title {
+    @apply font-display text-[21px] font-bold leading-tight tracking-tight sm:text-[26px];
+  }
+
+  /* Momentum scrolling inside a panel's own scroller on iOS. */
+  .scroll-x {
+    @apply -mx-4 overflow-x-auto px-4 sm:-mx-5 sm:px-5;
+    -webkit-overflow-scrolling: touch;
   }
 }
 

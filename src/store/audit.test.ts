@@ -320,3 +320,57 @@ describe('who can read the log', () => {
     expect(can('director').canEdit).toBe(false)
   })
 })
+
+// ── One customer, several things ────────────────────────────────────────────
+
+describe('recording a whole basket', () => {
+  it('writes every line with the same country, and one log entry', () => {
+    const before = written().length
+    useData.getState().recordSale({
+      locationId: 'pavilion-5',
+      lines: [
+        { skuId: 'orchid-retail', qty: 1 },
+        { skuId: 'orchid-travel', qty: 2 },
+        { skuId: 'mahsuri-retail', qty: 1 },
+      ],
+      countryCode: 'MY',
+      segment: 'chinese',
+    })
+
+    const lines = useData.getState().liveLines['pavilion-5'].slice(-3)
+    expect(lines.every((l) => l.countryCode === 'MY')).toBe(true)
+    expect(lines.every((l) => l.segment === 'chinese')).toBe(true)
+
+    // Three bottles, one customer, one line in the log.
+    expect(written()).toHaveLength(before + 1)
+    expect(written()[0].summary).toMatch(/4 units across 3 products/)
+    expect(written()[0].detail).toBe('Customer from Malaysia · Chinese')
+  })
+
+  it('names the product when only one thing was bought', () => {
+    useData.getState().recordSale({
+      locationId: 'pavilion-5',
+      lines: [{ skuId: 'orchid-retail', qty: 2 }],
+      countryCode: 'CN',
+    })
+    expect(written()[0].summary).toMatch(/2 × Orchid/)
+    expect(written()[0].detail).toBe('Customer from China')
+  })
+
+  it('records nothing at all for an empty basket', () => {
+    const before = written().length
+    useData.getState().recordSale({ locationId: 'pavilion-5', lines: [] })
+    expect(written()).toHaveLength(before)
+  })
+
+  it('leaves the country off where the store does not capture one', () => {
+    useData.getState().recordSale({
+      locationId: 'dlr-beauty-scent',
+      lines: [{ skuId: 'orchid-retail', qty: 1 }],
+    })
+    const dealerLines = useData.getState().liveLines['dlr-beauty-scent']
+    const line = dealerLines[dealerLines.length - 1]
+    expect(line?.countryCode).toBeUndefined()
+    expect(written()[0].detail).toBeUndefined()
+  })
+})

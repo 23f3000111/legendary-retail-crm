@@ -13,7 +13,7 @@ say what is built and what is still missing.
 ```bash
 npm install
 npm run dev      # http://localhost:5180
-npm test         # 131 tests
+npm test         # 148 tests
 npm run build    # typecheck + production bundle into dist/
 ```
 
@@ -195,7 +195,7 @@ it.
 
 ## Testing
 
-131 Vitest tests over the pure layer:
+148 Vitest tests over the pure layer:
 
 - **Seed** — determinism, revenue reconciling against its own sale lines, payment splitting three
   ways, every product counted every night, never selling stock a store did not have, never selling
@@ -214,6 +214,8 @@ it.
 - **Activity** — that every action writes exactly one line, that the line carries a person, a
   role and a timestamp, that a refused action writes nothing, and that no PIN ever reaches the
   log.
+- **Countries** — that all 200 of the client's own list are present with unique ISO codes, and
+  that search puts a name starting with your query above one that merely contains it.
 
 ---
 

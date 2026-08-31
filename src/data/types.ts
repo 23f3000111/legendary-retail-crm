@@ -2,6 +2,7 @@ import type { Person, Role } from './people'
 import type { Channel } from './locations'
 import type { Promotion } from './promotions'
 import type { AuditEntry } from '../lib/audit'
+import type { MalaysiaSegment } from './countries'
 
 /** `YYYY-MM-DD`. For monthly consignment periods this is the 1st of the month. */
 export type DateStr = string
@@ -19,6 +20,14 @@ export interface SaleLine {
   skuId: string
   qty: number
   countryCode?: string
+  /**
+   * Malaysian customers only, and never guessed.
+   *
+   * The client wants the home market broken down further than a headcount —
+   * Malaysia is where they sell most, so the mix inside it is worth more than
+   * the count. Set only when `countryCode` is 'MY'.
+   */
+  segment?: MalaysiaSegment
 }
 
 /** Tonight's physical count. Every product, every night (Q20). */

@@ -88,12 +88,14 @@ export function AppShell() {
 
             <span className="hidden h-8 w-px bg-white/20 lg:block" />
 
-            {/* The pills scroll sideways on a small screen, so they sit in their
-                own scroll container — and the "More" panel sits *outside* it.
-                An element with `overflow-x: auto` clips on both axes, which
-                would swallow a panel hanging below it. */}
-            <div className="order-last flex w-full min-w-0 items-center gap-1 lg:order-none lg:w-auto lg:flex-1">
-              <nav className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto pb-0.5 lg:pb-0">
+            {/* On a phone the pills wrap onto a second line — a sideways
+                scroller there just cuts a label in half and hides the rest.
+                From `sm` up they sit in their own scroll container, and the
+                "More" panel sits *outside* it: an element with
+                `overflow-x: auto` clips on both axes, which would swallow a
+                panel hanging below it. */}
+            <div className="order-last flex w-full min-w-0 flex-wrap items-center gap-1 sm:flex-nowrap lg:order-none lg:w-auto lg:flex-1">
+              <nav className="flex min-w-0 flex-wrap items-center gap-1 sm:flex-1 sm:flex-nowrap sm:overflow-x-auto sm:pb-0.5 lg:pb-0">
                 {NAV[user.role].filter((i) => !i.secondary).map((item) => (
                   <NavLink
                     key={item.to}
@@ -340,7 +342,10 @@ export function AppShell() {
         <Outlet />
       </main>
 
-      <footer className="no-print sticky bottom-0 z-30 flex flex-wrap items-center gap-x-4 gap-y-1 bg-grad-command px-4 py-2 text-[11px] text-white/80 sm:px-6">
+      {/* Sticky only where there is room for it. On a phone a pinned footer
+          costs a line of content on every screen and covers the last row of
+          whatever you are reading, so there it simply ends the page. */}
+      <footer className="no-print z-30 flex flex-wrap items-center gap-x-4 gap-y-1 bg-grad-command px-4 py-2 text-[11px] text-white/80 sm:sticky sm:bottom-0 sm:px-6">
         <span className="font-medium text-white">Legendary Retail CRM</span>
         <span className="hidden sm:inline">
           Wireframe build · seeded data, stored in this browser

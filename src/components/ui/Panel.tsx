@@ -29,22 +29,25 @@ export function PanelHeader({
   action?: ReactNode
 }) {
   return (
-    <header className="flex items-start justify-between gap-4 px-5 pt-4 pb-3">
-      <div className="min-w-0">
+    // The header wraps rather than overflowing: a filter row beside a title is
+    // fine on a laptop and is wider than a phone on its own, so below `sm` it
+    // drops onto its own full-width line instead of pushing out of the panel.
+    <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3 px-4 pt-4 pb-3 sm:px-5">
+      <div className="min-w-[180px] flex-1">
         {eyebrow && <p className="eyebrow mb-1.5">{eyebrow}</p>}
-        <h2 className="font-display text-[17px] font-semibold leading-tight tracking-tight text-ink">
+        <h2 className="font-display text-[16px] font-semibold leading-tight tracking-tight text-ink sm:text-[17px]">
           {title}
         </h2>
         {meta && <p className="mt-1 text-[12.5px] leading-snug text-ink-2">{meta}</p>}
       </div>
-      {action && <div className="shrink-0">{action}</div>}
+      {action && <div className="w-full shrink-0 sm:w-auto">{action}</div>}
     </header>
   )
 }
 
 /** The indigo rule that closes a panel header. */
 export function Rule() {
-  return <div className="rule mx-5" />
+  return <div className="rule mx-4 sm:mx-5" />
 }
 
 export function PanelBody({
@@ -54,5 +57,5 @@ export function PanelBody({
   children: ReactNode
   className?: string
 }) {
-  return <div className={`px-5 py-4 ${className}`}>{children}</div>
+  return <div className={`px-4 py-4 sm:px-5 ${className}`}>{children}</div>
 }

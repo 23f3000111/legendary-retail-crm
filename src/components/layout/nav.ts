@@ -27,8 +27,8 @@ export interface NavItem {
 export const NAV: Record<Role, NavItem[]> = {
   director: [
     { to: '/overview', label: 'Overview', icon: 'grid', end: true },
-    { to: '/analytics', label: 'Analytics', icon: 'chart' },
     { to: '/locations', label: 'Stores', icon: 'globe' },
+    { to: '/analytics', label: 'Analytics', icon: 'chart' },
     { to: '/closings', label: 'Closings', icon: 'clipboard' },
     { to: '/orders', label: 'Orders', icon: 'doc' },
     { to: '/stock', label: 'Stock', icon: 'box' },
@@ -38,8 +38,8 @@ export const NAV: Record<Role, NavItem[]> = {
   ],
   md: [
     { to: '/overview', label: 'Overview', icon: 'grid', end: true },
-    { to: '/analytics', label: 'Analytics', icon: 'chart' },
     { to: '/locations', label: 'Stores', icon: 'globe' },
+    { to: '/analytics', label: 'Analytics', icon: 'chart' },
     { to: '/closings', label: 'Closings', icon: 'clipboard' },
     { to: '/orders', label: 'Orders', icon: 'doc' },
     { to: '/stock', label: 'Stock', icon: 'box' },
@@ -62,8 +62,8 @@ export const NAV: Record<Role, NavItem[]> = {
   ],
   pa: [
     { to: '/overview', label: 'Overview', icon: 'grid', end: true },
-    { to: '/analytics', label: 'Analytics', icon: 'chart' },
     { to: '/locations', label: 'Stores', icon: 'globe' },
+    { to: '/analytics', label: 'Analytics', icon: 'chart' },
     { to: '/catalogue', label: 'Products', icon: 'sparkle' },
     { to: '/promotions', label: 'Promotions', icon: 'trophy' },
     { to: '/users', label: 'Logins', icon: 'users', secondary: true },
@@ -71,9 +71,9 @@ export const NAV: Record<Role, NavItem[]> = {
   ],
   finance: [
     { to: '/finance', label: 'Revenue', icon: 'wallet', end: true },
+    { to: '/locations', label: 'Stores', icon: 'globe' },
     { to: '/analytics', label: 'Analytics', icon: 'chart' },
     { to: '/orders', label: 'Orders', icon: 'doc' },
-    { to: '/locations', label: 'Stores', icon: 'globe' },
   ],
   warehouse: [
     { to: '/warehouse', label: 'Despatch', icon: 'truck', end: true },
@@ -102,6 +102,12 @@ export const allowedPaths = (role: Role): string[] => {
   const base = NAV[role].map((n) => n.to)
   // Order detail is reachable from any list that shows an order.
   if (base.some((p) => p === '/orders' || p === '/warehouse')) base.push('/orders/')
+  // One store's own page. Anybody who can see the estate can open a store in
+  // it — the store cards and rows are links now, and a link that bounces you
+  // is worse than no link.
+  if (base.includes('/locations') || base.includes('/overview') || base.includes('/operations')) {
+    base.push('/stores/')
+  }
   return base
 }
 

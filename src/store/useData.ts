@@ -27,7 +27,7 @@ import {
 } from '../data/people'
 import { daysBetween, formatDate } from '../lib/dates'
 import { skuLabel } from '../data/products'
-import { countryName } from '../data/countries'
+import { countryName, MALAYSIA_SEGMENT_LABEL, type MalaysiaSegment } from '../data/countries'
 import { locationName } from '../data/locations'
 import { rm } from '../lib/format'
 import {
@@ -200,6 +200,19 @@ export interface DataState extends CrmData {
   recoveredFromError: boolean
 
   addSaleLine: (locationId: string, line: SaleLine) => void
+  /**
+   * One customer, everything they bought.
+   *
+   * A person who buys three bottles is one sale, not three — so the counter
+   * builds the basket first and answers "where are they from?" once. Every line
+   * carries the same country, and the log gets one entry rather than three.
+   */
+  recordSale: (args: {
+    locationId: string
+    lines: SaleLine[]
+    countryCode?: string
+    segment?: MalaysiaSegment
+  }) => void
   removeSaleLine: (locationId: string, index: number) => void
 
   submitClosing: (closing: Closing) => void
@@ -358,6 +371,36 @@ export const useData = create<DataState>()(
           entityId: line.skuId,
           locationId,
           detail: line.countryCode ? `Customer from ${countryName(line.countryCode)}` : undefined,
+        })
+      },
+
+      recordSale: ({ locationId, lines, countryCode, segment }) => {
+        if (lines.length === 0) return
+        const stamped = lines.map((l) => ({
+          ...l,
+          ...(countryCode ? { countryCode } : {}),
+          ...(segment ? { segment } : {}),
+        }))
+        set((s) => {
+          const next = [...(s.liveLines[locationId] ?? []), ...stamped]
+          return {
+            liveLines: { ...s.liveLines, [locationId]: next },
+            overlay: { ...s.overlay, liveLines: { ...s.overlay.liveLines, [locationId]: next } },
+          }
+        })
+        const units = stamped.reduce((a, l) => a + l.qty, 0)
+        const what =
+          stamped.length === 1
+            ? `${stamped[0].qty} × ${skuLabel(stamped[0].skuId)}`
+            : `${units} units across ${stamped.length} products`
+        get().record({
+          kind: 'sale',
+          action: 'sale.recorded',
+          summary: `Recorded a sale — ${what} at ${locationName(locationId)}`,
+          locationId,
+          detail: countryCode
+            ? `Customer from ${countryName(countryCode)}${segment ? ` · ${MALAYSIA_SEGMENT_LABEL[segment]}` : ''}`
+            : undefined,
         })
       },
 
