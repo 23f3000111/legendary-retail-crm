@@ -15,10 +15,9 @@ import type { Role } from '../data/people'
  *      approved PO-2026-0131 for Pavilion KL" — not `UPDATE purchase_orders SET
  *      status='approved'`. The row is evidence, and evidence nobody can read is
  *      not evidence.
- *   2. **Reads are not logged, with one exception.** Opening a screen is not an
- *      action. Revealing somebody's PIN is, because the whole point of writing
- *      `docs/spec/pin-security.md` was that four people can read fifteen PINs,
- *      and that power should leave a mark.
+ *   2. **Reads are not logged.** Opening a screen is not an action. Nothing in
+ *      the system can read a credential back any more — passwords are hashed —
+ *      so what gets recorded is who *reset* whose, and when.
  */
 
 export type AuditKind =
@@ -28,7 +27,7 @@ export type AuditKind =
   | 'correction'
   | 'order'
   | 'login'
-  | 'pin'
+  | 'password'
   | 'promotion'
   | 'target'
   | 'alert'
@@ -40,7 +39,7 @@ export const AUDIT_KIND_LABEL: Record<AuditKind, string> = {
   correction: 'Corrections',
   order: 'Orders',
   login: 'Logins',
-  pin: 'PINs',
+  password: 'Passwords',
   promotion: 'Promotions',
   target: 'Targets',
   alert: 'Alerts',
@@ -60,7 +59,7 @@ export const AUDIT_KIND_TONE: Record<AuditKind, AuditTone> = {
   correction: 'warn',
   order: 'active',
   login: 'warn',
-  pin: 'critical',
+  password: 'critical',
   promotion: 'good',
   target: 'good',
   alert: 'neutral',

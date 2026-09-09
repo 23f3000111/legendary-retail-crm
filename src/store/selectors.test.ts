@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { buildSeed, DEMO_TODAY } from '../data/seed'
-import { locationsInChannel, tradingLocations } from '../data/locations'
-import { skuById, skus } from '../data/products'
+import { basisOf, locationsInChannel, tradingLocations } from '../data/locations'
+import { priceOfId, skuById, skus } from '../data/products'
 import { addDays, dateRange } from '../lib/dates'
 import {
   countryCoverage,
@@ -29,7 +29,7 @@ const bruteForce = (from: string, to: string, locationId?: string) =>
   data.closings
     .filter((c) => c.period >= from && c.period <= to && (!locationId || c.locationId === locationId))
     .reduce(
-      (a, c) => a + c.lines.reduce((s, l) => s + l.qty * (skuById(l.skuId)?.priceMYR ?? 0), 0),
+      (a, c) => a + c.lines.reduce((s, l) => s + l.qty * priceOfId(l.skuId, basisOf(c.locationId)), 0),
       0,
     )
 
@@ -64,7 +64,20 @@ describe('totals', () => {
   it('makes a product filter exact rather than approximate', () => {
     const f = { ...last30(), skuIds: ['orchid-retail'] }
     const t = totalsFor(data, f)
-    expect(t.revenue).toBe(t.units * (skuById('orchid-retail')?.priceMYR ?? 0))
+    // Not units × one price: BSAS is counted on the retail price and everybody
+    // else on the promotion price, so the two differ. Counted line by line.
+    const expected = data.closings
+      .filter((c) => c.period >= f.from && c.period <= f.to)
+      .reduce(
+        (a, c) =>
+          a +
+          c.lines
+            .filter((l) => l.skuId === 'orchid-retail')
+            .reduce((s, l) => s + l.qty * priceOfId(l.skuId, basisOf(c.locationId)), 0),
+        0,
+      )
+    expect(t.revenue).toBe(Math.round(expected))
+    expect(t.units).toBeGreaterThan(0)
   })
 
   it('returns zeroes for a window with no trading', () => {
@@ -84,7 +97,7 @@ describe('country attribution is exact, not estimated', () => {
           a +
           c.lines
             .filter((l) => l.countryCode === 'CN')
-            .reduce((s, l) => s + l.qty * (skuById(l.skuId)?.priceMYR ?? 0), 0),
+            .reduce((s, l) => s + l.qty * priceOfId(l.skuId, basisOf(c.locationId)), 0),
         0,
       )
     expect(totalsFor(data, f).revenue).toBe(Math.round(expected))

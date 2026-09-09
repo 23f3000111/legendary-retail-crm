@@ -13,7 +13,7 @@ import { useCurrentUser } from '../../store/useAuth'
 import { useToasts } from '../../components/ui/Toast'
 import { emptyFilter, originSlicesFrom, selectTimeSeries } from '../../store/selectors'
 import { locationById } from '../../data/locations'
-import { skuById } from '../../data/products'
+import { priceOf, skuById } from '../../data/products'
 import { addDays, daysBetween, formatDayShort } from '../../lib/dates'
 import { downloadCsv } from '../../lib/exportCsv'
 import { num, rm, rmCompact } from '../../lib/format'
@@ -33,6 +33,8 @@ export function History() {
   const push = useToasts((s) => s.push)
   const locationId = user?.locationId ?? ''
   const location = locationById(locationId)
+  // Which of the two prices this store is counted on (Revision 2).
+  const basis = location?.priceBasis ?? 'promotion'
 
   const [open, setOpen] = useState<Closing | null>(null)
   const [correcting, setCorrecting] = useState<Closing | null>(null)
@@ -204,7 +206,7 @@ export function History() {
                       if (!l.countryCode) return m
                       const b = m.get(l.countryCode) ?? { units: 0, revenue: 0 }
                       b.units += l.qty
-                      b.revenue += l.qty * (skuById(l.skuId)?.priceMYR ?? 0)
+                      b.revenue += l.qty * priceOf(skuById(l.skuId), basis)
                       m.set(l.countryCode, b)
                       return m
                     }, new Map<string, { units: number; revenue: number }>()),

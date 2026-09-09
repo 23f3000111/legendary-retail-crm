@@ -1,7 +1,7 @@
 # Legendary · Retail CRM
 
 A working wireframe of the production CRM for **Legendary**, a Malaysian perfume house selling
-through 78 locations across four channels.
+through 66 locations across four channels.
 
 Built from the client's own answers: the 96-question discovery form, the company hierarchy, and
 the store list. Those three documents are the client's own and are kept out of this repository;
@@ -13,7 +13,7 @@ say what is built and what is still missing.
 ```bash
 npm install
 npm run dev      # http://localhost:5180
-npm test         # 148 tests
+npm test         # 178 tests
 npm run build    # typecheck + production bundle into dist/
 ```
 
@@ -21,13 +21,13 @@ npm run build    # typecheck + production bundle into dist/
 
 ## What the business actually looks like
 
-The demo assumed nine identical outlets. The real estate is **78 locations that report
+The demo assumed nine identical outlets. The real estate is **66 locations that report
 differently**, and channel is the primary dimension in the system:
 
 | Channel | Count | Reports | Country per sale? | How often | Own stock? |
 |---|---|---|---|---|---|
 | **Main store** | 12 (9 open, 3 coming) | Sales, product, country | **Yes, exactly** | Daily | Yes |
-| **Dealer** | 56 | Sales, product | No | Daily | Yes |
+| **Dealer** | 44 | Sales, product | No | Daily | Yes |
 | **Consignment** | 6 | Sales, product, margin | No | Monthly | No |
 | **Online** | 4 | Sales, product | No | Daily | No — picked from the warehouse |
 
@@ -41,25 +41,25 @@ file sales daily but hold no shelf of their own.
 
 ## Signing in
 
-**The landing page is a six-digit PIN keypad.** There are no passwords, no Google accounts and no
-e-mail addresses in the system. A PIN belongs to exactly one person, so six digits identify them
-on their own — nobody picks a name first.
+**Username, password, then a six-digit code sent to the person's work e-mail.**
+No PINs, no Google accounts.
 
-Who may change and see whose PIN is a table the client set out precisely, and it is written once
-in `src/data/people.ts`, again in the database, and covered by tests for every row. The short
-version: promoters cannot change their own; Finance and the Warehouse can change theirs; Kelly and
-Chloe reach down but not across; Davy and Imran reach everyone. See
-[`docs/spec/pin-security.md`](docs/spec/pin-security.md), which also sets out the one real
-trade-off in being able to *look up* somebody's PIN.
+Passwords are stored as a one-way hash, so nobody can read one back — not Davy, not IT, not
+somebody holding a copy of the database. Who may *reset* whose is a table the client set out
+precisely, and every row of it has a test: promoters, Finance and the Warehouse reach only
+themselves; Kelly and Chloe reach down but not across; Davy and Imran reach everyone. See
+[`docs/spec/auth.md`](docs/spec/auth.md).
 
-The sign-in screen carries a demo panel listing every PIN, so a walkthrough can move between
-people. **It is marked in the code and must be removed before real staff use the system.**
+The sign-in screen carries a demo panel listing the logins and showing the code that would
+have been e-mailed. **It is one flag in the code and must be turned off before real staff use
+the system.**
 
 ---
 
-## The fifteen people
+## The thirty-nine people
 
-Taken from the hierarchy document, not invented.
+Taken from the hierarchy chart and the username list in *CRM Revision 2* — twelve at head
+office and twenty-seven store promoters, with their real usernames.
 
 | Person | Role | What they get |
 |---|---|---|
@@ -67,9 +67,9 @@ Taken from the hierarchy document, not invented.
 | **Lim Davy** | Managing Director | Overview, analytics, approvals, promotions, targets |
 | **Kelly Tew** | Operational Manager | Her working screen: approvals, corrections, missed closings |
 | **Chloe Chock** | PA to the MD | Overview, analytics, products, promotions, logins |
-| Siew Fang, Ivvi, Eunice, Apple | Finance | Revenue by channel, consignment margins, clearing orders |
+| Siew Fang, Ivvi Chin, Eunice Lim | Finance | Revenue by channel, consignment margins, clearing orders |
 | An, Loong, Low, Kim | Warehouse | Despatch and the combined pick list — stock screens only |
-| Pavilion KL / KLIA T2 promoters | Store Promoter | Their own store: record sales, close the day, stock, orders |
+| 27 promoters across six stores | Store Promoter | Their own store: record sales, close the day, stock, orders |
 | **Imran** | IT | Logins, permissions and the activity log. **His own login is hidden from everyone else** |
 
 The read-only founder is a real permission mode, not hidden buttons: `canEdit: false` removes
@@ -195,7 +195,7 @@ it.
 
 ## Testing
 
-148 Vitest tests over the pure layer:
+178 Vitest tests over the pure layer:
 
 - **Seed** — determinism, revenue reconciling against its own sale lines, payment splitting three
   ways, every product counted every night, never selling stock a store did not have, never selling
@@ -216,6 +216,9 @@ it.
   log.
 - **Countries** — that all 200 of the client's own list are present with unique ISO codes, and
   that search puts a name starting with your query above one that merely contains it.
+- **Catalogue** — the sixteen priced lines and their two prices, that no two SKUs share a code,
+  that nothing unsellable carries a price, and that BSAS counts on retail while everyone else
+  counts on promotion.
 
 ---
 

@@ -186,7 +186,7 @@ It also means the system must keep a recoverable copy of every PIN, which is wea
 the usual practice of keeping none. We have contained it as far as it can be contained —
 the encryption key lives outside the database, only four people can use it, and every
 look-up is recorded — and written the whole trade-off up in
-[`pin-security.md`](./pin-security.md).
+[`auth.md`](./auth.md).
 
 If **setting** somebody a new PIN would do instead of **seeing** their current one, the
 recoverable copy disappears and the system gets meaningfully safer, with no change to how
@@ -215,7 +215,7 @@ training the shop staff (Q93).
 - Store promoters cannot change their own PIN; Finance and the Warehouse can.
 
 Full detail, including who may change and see whose, is in
-[`pin-security.md`](./pin-security.md).
+[`auth.md`](./auth.md).
 
 ---
 

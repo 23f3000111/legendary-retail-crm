@@ -1,52 +1,175 @@
 /**
- * Sign-in.
+ * Signing in.
  *
- * Everyone signs in with their own six-digit PIN — there are no passwords and
- * no Google accounts. A PIN belongs to exactly one person (the store enforces
- * that on every change), so a PIN identifies them on its own and the keypad
- * needs no name to be picked first.
+ * Three things, in order: a username, a password, and a six-digit code sent to
+ * the person's company e-mail. The PIN keypad is gone.
  *
- * Everything downstream reads the capability set rather than the person, so
- * moving this to a real server changes only this module: `signInWithPin` becomes
- * a request, and the rest of the app does not notice.
+ * The second step is what makes this worth doing. A password on its own can be
+ * shoulder-surfed at a counter, guessed, or reused from somewhere that has
+ * already been breached; a code that arrives on the person's own mailbox means
+ * knowing the password is not enough. It costs one extra screen and about ten
+ * seconds, once per device.
  *
- * Signing in also tells the activity log who is acting, so every entry written
- * from here on carries a name. A wrong PIN is written down too — a sign-in log
- * that only records the successes is not much of a sign-in log.
+ * **In this wireframe there is no server**, so no mail is actually sent — the
+ * code is generated here and shown on screen behind a clearly marked panel. In
+ * production `beginSignIn` becomes one request that returns nothing but "we
+ * sent it", and the code never reaches the browser at all. That is the whole
+ * difference, and it is contained in this module.
  */
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import { can, type Capability, type Person } from '../data/people'
+import {
+  can,
+  maskEmail,
+  newSignInCode,
+  personByUsername,
+  CODE_TTL_MINUTES,
+  type Capability,
+  type Person,
+} from '../data/people'
 import { setAuditActor } from '../lib/audit'
 import { useData } from './useData'
 
+/** Wrong passwords before the account is held for a minute. */
+const MAX_PASSWORD_TRIES = 5
+/** Wrong codes before the whole attempt is thrown away. */
+const MAX_CODE_TRIES = 5
+const LOCKOUT_MS = 60_000
+
+/** A sign-in half-finished: password accepted, code not yet entered. */
+interface Pending {
+  personId: string
+  code: string
+  /** Epoch ms. */
+  expiresAt: number
+  sentTo: string
+  tries: number
+}
+
 interface AuthState {
   personId: string | null
-  /** Signs in the person holding this PIN. Returns them, or null. */
-  signInWithPin: (pin: string) => Person | null
+  pending: Pending | null
+  /** Epoch ms until which sign-in is refused after too many wrong passwords. */
+  lockedUntil: number | null
+
+  /** Step one. Returns where the code went, never who the person is. */
+  beginSignIn: (
+    username: string,
+    password: string,
+  ) => { ok: boolean; sentTo?: string; error?: string }
+  /** Step two. */
+  submitCode: (code: string) => { ok: boolean; person?: Person; error?: string }
+  /** Sends a fresh code for the attempt in progress. */
+  resendCode: () => { ok: boolean; error?: string }
+  cancelSignIn: () => void
   signOut: () => void
 }
 
-/** A wrong PIN never reaches the log — only the fact that one was tried. */
-const NOT_SIGNED_IN = { id: 'unknown', name: 'Someone at the keypad', role: 'promoter' } as const
+/** Nobody is signed in yet, so a failed attempt is filed against this. */
+const NOBODY = { id: 'unknown', name: 'Someone signing in', role: 'promoter' } as const
+
+/**
+ * Wrong-password count, held outside the store so it is never written to
+ * storage and cannot be cleared by hand from the browser. In production this
+ * lives in the database against the account, not against the device.
+ */
+let failedTries = 0
 
 export const useAuth = create<AuthState>()(
   persist(
     (set, get) => ({
       personId: null,
-      signInWithPin: (pin) => {
+      pending: null,
+      lockedUntil: null,
+
+      beginSignIn: (username, password) => {
         const data = useData.getState()
-        const person = data.users.find((u) => u.pin === pin && u.active)
-        if (!person) {
+        const locked = get().lockedUntil
+        if (locked && locked > Date.now()) {
+          const seconds = Math.ceil((locked - Date.now()) / 1000)
+          return { ok: false, error: `Too many attempts. Try again in ${seconds} seconds.` }
+        }
+
+        const person = personByUsername(username, data.users)
+        const matches = Boolean(person) && person!.password === password && person!.active
+
+        if (!matches) {
+          // The message never says which half was wrong. Telling somebody the
+          // username exists is telling them half the answer.
           data.record({
             kind: 'session',
-            action: 'session.pin_failed',
-            summary: 'A PIN that belongs to nobody was entered at the keypad',
-            actor: { ...NOT_SIGNED_IN },
+            action: 'session.sign_in_failed',
+            summary: 'A sign-in was refused — wrong username or password',
+            actor: { ...NOBODY },
           })
-          return null
+
+          const tries = failedTries + 1
+          failedTries = tries
+          if (tries >= MAX_PASSWORD_TRIES) {
+            failedTries = 0
+            set({ lockedUntil: Date.now() + LOCKOUT_MS })
+            return { ok: false, error: 'Too many attempts. Try again in a minute.' }
+          }
+          return { ok: false, error: 'That username and password do not match.' }
         }
-        set({ personId: person.id })
+
+        failedTries = 0
+        const code = newSignInCode()
+        set({
+          pending: {
+            personId: person!.id,
+            code,
+            expiresAt: Date.now() + CODE_TTL_MINUTES * 60_000,
+            sentTo: maskEmail(person!.email),
+            tries: 0,
+          },
+        })
+        data.record({
+          kind: 'session',
+          action: 'session.code_sent',
+          summary: `A sign-in code was sent to ${maskEmail(person!.email)}`,
+          entityId: person!.id,
+          actor: { id: person!.id, name: person!.name, role: person!.role },
+        })
+        return { ok: true, sentTo: maskEmail(person!.email) }
+      },
+
+      submitCode: (code) => {
+        const pending = get().pending
+        const data = useData.getState()
+        if (!pending) return { ok: false, error: 'Start again — that sign-in has expired.' }
+
+        if (Date.now() > pending.expiresAt) {
+          set({ pending: null })
+          return { ok: false, error: 'That code has expired. Sign in again for a new one.' }
+        }
+
+        if (code.trim() !== pending.code) {
+          const tries = pending.tries + 1
+          if (tries >= MAX_CODE_TRIES) {
+            set({ pending: null })
+            data.record({
+              kind: 'session',
+              action: 'session.code_failed',
+              summary: 'A sign-in was abandoned after five wrong codes',
+              actor: { ...NOBODY },
+            })
+            return { ok: false, error: 'Too many wrong codes. Start again.' }
+          }
+          set({ pending: { ...pending, tries } })
+          return {
+            ok: false,
+            error: `That code is not right. ${MAX_CODE_TRIES - tries} tries left.`,
+          }
+        }
+
+        const person = data.users.find((u) => u.id === pending.personId)
+        if (!person || !person.active) {
+          set({ pending: null })
+          return { ok: false, error: 'That login is no longer active.' }
+        }
+
+        set({ personId: person.id, pending: null, lockedUntil: null })
         setAuditActor(person.id)
         data.record({
           kind: 'session',
@@ -56,8 +179,26 @@ export const useAuth = create<AuthState>()(
           locationId: person.locationId,
           actor: { id: person.id, name: person.name, role: person.role },
         })
-        return person
+        return { ok: true, person }
       },
+
+      resendCode: () => {
+        const pending = get().pending
+        if (!pending) return { ok: false, error: 'Start again — that sign-in has expired.' }
+        const code = newSignInCode()
+        set({
+          pending: {
+            ...pending,
+            code,
+            tries: 0,
+            expiresAt: Date.now() + CODE_TTL_MINUTES * 60_000,
+          },
+        })
+        return { ok: true }
+      },
+
+      cancelSignIn: () => set({ pending: null }),
+
       signOut: () => {
         const id = get().personId
         const person = id ? useData.getState().users.find((u) => u.id === id) : undefined
@@ -71,20 +212,31 @@ export const useAuth = create<AuthState>()(
           })
         }
         setAuditActor(null)
-        set({ personId: null })
+        set({ personId: null, pending: null })
       },
     }),
     {
-      name: 'legendary-crm-session-v3',
-      version: 2,
+      name: 'legendary-crm-session-v4',
+      version: 3,
       storage: createJSONStorage(() => localStorage),
+      // A half-finished sign-in is never written to storage: the code would be
+      // sitting in the browser for anyone to read. Only the finished session is.
+      partialize: (s) => ({ personId: s.personId }) as unknown as AuthState,
       // After a refresh the session comes back before anything is clicked, so
-      // the log has to be told who is here — otherwise the first action of the
-      // day would be filed against nobody.
+      // the activity log has to be told who is here — otherwise the first
+      // action of the day would be filed against nobody.
       onRehydrateStorage: () => (state) => setAuditActor(state?.personId ?? null),
     },
   ),
 )
+
+/**
+ * The code that was just "sent", for the walkthrough panel only.
+ *
+ * Set `SHOW_DEMO_CODE` to false in `pages/Login.tsx` and this is never read.
+ * In production the code exists only in the mail and in the database.
+ */
+export const peekSignInCode = (): string | null => useAuth.getState().pending?.code ?? null
 
 /** The signed-in person, or null. Read from the live list, not the seed. */
 export const useCurrentUser = (): Person | null => {

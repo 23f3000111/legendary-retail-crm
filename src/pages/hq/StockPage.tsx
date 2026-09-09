@@ -5,9 +5,9 @@ import { Badge } from '../../components/ui/Badge'
 import { StatTile } from '../../components/ui/StatTile'
 import { DataTable, type Column } from '../../components/ui/DataTable'
 import { Modal } from '../../components/ui/Modal'
+import { StorePicker } from '../../components/StorePicker'
 import { StockItemDetail } from '../../components/StockItemDetail'
 import { ProgressBar } from '../../components/ui/Progress'
-import { Select } from '../../components/ui/Field'
 import { useData } from '../../store/useData'
 import { useCurrentUser } from '../../store/useAuth'
 import { selectStock, type StockRow } from '../../store/selectors'
@@ -166,17 +166,14 @@ export function StockPage() {
         <div className="flex flex-wrap items-center gap-2">
           {!isPromoter && (
             <>
-              <Select
+              {/* Only places that hold a shelf of their own — online is
+                  picked from the warehouse and has nothing to count. */}
+              <StorePicker
                 value={locationId}
-                onChange={(e) => setLocationId(e.target.value)}
-                className="h-9 w-[190px] text-[12.5px]"
-              >
-                {mainStores.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.name}
-                  </option>
-                ))}
-              </Select>
+                onChange={setLocationId}
+                only={(l) => l.holdsOwnStock}
+                className="h-9 w-[210px] text-[12.5px]"
+              />
               <Button
                 variant={showMatrix ? 'primary' : 'secondary'}
                 icon="grid"

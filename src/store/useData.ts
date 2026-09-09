@@ -17,9 +17,8 @@ import { buildSeed } from '../data/seed'
 import { canTransition } from '../lib/po-machine'
 import {
   can,
-  canChangePinOf,
-  canSeePinOf,
-  checkPin,
+  canResetPasswordOf,
+  checkPassword,
   seedPeople,
   ROLE_LABEL,
   type Person,
@@ -86,11 +85,6 @@ const FIELD_LABEL: Record<string, string> = {
   home: 'Home screen',
   blurb: 'Description',
   active: 'Can sign in',
-}
-
-const ordinal = (n: number): string => {
-  if (n % 100 >= 11 && n % 100 <= 13) return 'th'
-  return ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'
 }
 
 /** The small slice of state that is actually written to the browser. */
@@ -251,22 +245,20 @@ export interface DataState extends CrmData {
    * Changes someone's PIN. Authority and PIN rules are checked here, not only
    * in the form — a screen can be wrong, the store is the last line.
    */
-  changePin: (args: {
+  /**
+   * Sets somebody's password.
+   *
+   * There is no matching "read it back" — a password is stored as a one-way
+   * hash in production, so nobody can look one up, and this is the only way a
+   * credential changes.
+   */
+  setPassword: (args: {
     actor: Person
     targetId: string
-    pin: string
+    password: string
+    /** True when a senior issues it, so the person is asked to change it. */
+    issued?: boolean
   }) => { ok: boolean; error?: string }
-  /**
-   * Reads somebody's PIN back, and writes down that it happened.
-   *
-   * Screens never read `person.pin` directly. Going through here is what makes
-   * "who looked at whose PIN" answerable — see docs/spec/pin-security.md.
-   */
-  revealPin: (args: { actor: Person; targetId: string }) => {
-    ok: boolean
-    pin?: string
-    error?: string
-  }
 
   addPromotion: (promotion: Promotion) => void
   updatePromotion: (id: string, changes: Partial<Promotion>) => void
@@ -643,8 +635,8 @@ export const useData = create<DataState>()(
           summary: `Created a login for ${person.name}, ${ROLE_LABEL[person.role]}`,
           entityId: person.id,
           locationId: person.locationId,
-          // The PIN itself is never written to the log, here or anywhere else.
-          detail: 'Issued them a new PIN',
+          // The password is never written to the log, here or anywhere else.
+          detail: 'Issued them a starting password',
         })
       },
 
@@ -692,65 +684,52 @@ export const useData = create<DataState>()(
         })
       },
 
-      changePin: ({ actor, targetId, pin }) => {
+      setPassword: ({ actor, targetId, password, issued }) => {
         const state = get()
         const target = state.users.find((u) => u.id === targetId)
         if (!target) return { ok: false, error: 'That login no longer exists.' }
-        if (!canChangePinOf(actor, target)) {
+        if (!canResetPasswordOf(actor, target)) {
           return {
             ok: false,
             error:
               actor.id === target.id
-                ? 'Your role cannot change its own PIN. Ask a senior for a new one.'
-                : `You cannot change the PIN for ${target.name}.`,
+                ? 'Your role cannot change its own password.'
+                : `You cannot set the password for ${target.name}.`,
           }
         }
-        const check = checkPin(pin, target, state.users)
+        const check = checkPassword(password, target)
         if (!check.ok) return { ok: false, error: check.error }
 
         get().updateUser(
           targetId,
           {
-            pin,
-            // The old PIN joins the history so it can never be reissued.
-            pinHistory: [...target.pinHistory, target.pin],
-            pinSetAt: new Date().toISOString(),
-            pinSetBy: actor.name,
+            password,
+            // The old one joins the history so it can never be reused.
+            passwordHistory: [...target.passwordHistory, target.password],
+            passwordSetAt: new Date().toISOString(),
+            passwordSetBy: actor.name,
+            // Issued by somebody else means they have to choose their own.
+            mustChangePassword: issued === true && actor.id !== targetId,
           },
           { silent: true },
         )
         get().record({
-          kind: 'pin',
-          action: 'pin.changed',
+          kind: 'password',
+          action: actor.id === targetId ? 'password.changed' : 'password.reset',
           summary:
             actor.id === targetId
-              ? 'Changed their own PIN'
-              : `Changed the PIN for ${target.name}, ${ROLE_LABEL[target.role]}`,
+              ? 'Changed their own password'
+              : `Reset the password for ${target.name}, ${ROLE_LABEL[target.role]}`,
           entityId: targetId,
-          // Never the PIN, old or new. A log of PINs would be worse than no log.
-          detail: `Their ${target.pinHistory.length + 2}${ordinal(target.pinHistory.length + 2)} PIN`,
+          // Never the password itself. A log of passwords would be worse than
+          // no log at all.
+          detail:
+            actor.id === targetId
+              ? undefined
+              : 'They will be asked to choose their own when they next sign in',
           actor: { id: actor.id, name: actor.name, role: actor.role },
         })
         return { ok: true }
-      },
-
-      revealPin: ({ actor, targetId }) => {
-        const target = get().users.find((u) => u.id === targetId)
-        if (!target) return { ok: false, error: 'That login no longer exists.' }
-        if (!canSeePinOf(actor, target)) {
-          return { ok: false, error: `You cannot see the PIN for ${target.name}.` }
-        }
-        get().record({
-          kind: 'pin',
-          action: 'pin.revealed',
-          summary:
-            actor.id === targetId
-              ? 'Looked at their own PIN'
-              : `Looked at the PIN for ${target.name}, ${ROLE_LABEL[target.role]}`,
-          entityId: targetId,
-          actor: { id: actor.id, name: actor.name, role: actor.role },
-        })
-        return { ok: true, pin: target.pin }
       },
 
       // ── Promotions ───────────────────────────────────────────────────

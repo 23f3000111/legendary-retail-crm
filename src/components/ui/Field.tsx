@@ -1,3 +1,4 @@
+import { forwardRef } from 'react'
 import type { InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react'
 
 const control =
@@ -30,9 +31,12 @@ export function Field({
   )
 }
 
-export function TextInput({ className = '', ...rest }: InputHTMLAttributes<HTMLInputElement>) {
-  return <input className={`${control} h-10 text-[14px] ${className}`} {...rest} />
-}
+/** Forwards its ref, so a screen can focus it — the sign-in code box does. */
+export const TextInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
+  function TextInput({ className = '', ...rest }, ref) {
+    return <input ref={ref} className={`${control} h-10 text-[14px] ${className}`} {...rest} />
+  },
+)
 
 /** Money and counts are read column-wise, so they are set in the mono face. */
 export function NumberInput({

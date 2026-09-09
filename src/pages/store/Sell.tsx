@@ -13,7 +13,7 @@ import { useCurrentUser } from '../../store/useAuth'
 import { useToasts } from '../../components/ui/Toast'
 import { originSlicesFrom } from '../../store/selectors'
 import { locationById } from '../../data/locations'
-import { products, skuById, sellableSkus, VARIANT_LABEL } from '../../data/products'
+import { priceOf, products, skuById, sellableSkus } from '../../data/products'
 import {
   countryByCode,
   topCountries,
@@ -53,6 +53,8 @@ export function Sell() {
   const [pickerOpen, setPickerOpen] = useState(false)
 
   const needsCountry = location?.recordsCountries ?? false
+  // Which of the two prices this store's revenue is counted on (Revision 2).
+  const basis = location?.priceBasis ?? 'promotion'
 
   // The store's usual nationalities first; everything else is behind search.
   const quickCodes = (location?.originProfile ?? topCountries.slice(0, 5).map((c) => c.code)).slice(
@@ -62,11 +64,11 @@ export function Sell() {
 
   const basketUnits = basket.reduce((a, l) => a + l.qty, 0)
   const basketTotal = basket.reduce(
-    (a, l) => a + l.qty * (skuById(l.skuId)?.priceMYR ?? 0),
+    (a, l) => a + l.qty * priceOf(skuById(l.skuId), basis),
     0,
   )
 
-  const todayTotal = lines.reduce((a, l) => a + l.qty * (skuById(l.skuId)?.priceMYR ?? 0), 0)
+  const todayTotal = lines.reduce((a, l) => a + l.qty * priceOf(skuById(l.skuId), basis), 0)
   const todayUnits = lines.reduce((a, l) => a + l.qty, 0)
 
   const mix = useMemo(() => {
@@ -75,7 +77,7 @@ export function Sell() {
       if (!l.countryCode) continue
       const b = tally.get(l.countryCode) ?? { units: 0, revenue: 0 }
       b.units += l.qty
-      b.revenue += l.qty * (skuById(l.skuId)?.priceMYR ?? 0)
+      b.revenue += l.qty * priceOf(skuById(l.skuId), basis)
       tally.set(l.countryCode, b)
     }
     return originSlicesFrom(tally)
@@ -193,10 +195,10 @@ export function Sell() {
                           }`}
                         >
                           <span className="block text-[13.5px] font-medium text-ink">
-                            {v.variant === 'retail' ? v.size : VARIANT_LABEL[v.variant]}
+                            {v.variant === 'set' ? 'Set' : v.size}
                           </span>
                           <span className="readout block text-[11.5px] text-ink-3">
-                            {rm(v.priceMYR)}
+                            {rm(priceOf(v, basis))}
                           </span>
                           {inBasket && (
                             <span className="readout absolute right-2 top-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[11px] font-semibold text-white">
@@ -243,7 +245,7 @@ export function Sell() {
                         {s?.label}
                       </span>
                       <span className="readout text-[12.5px] text-ink-2">
-                        {rm(l.qty * (s?.priceMYR ?? 0))}
+                        {rm(l.qty * priceOf(s, basis))}
                       </span>
                       <div className="ml-auto flex items-center gap-2">
                         <IconButton
@@ -354,7 +356,7 @@ export function Sell() {
                       </Badge>
                     )}
                     <span className="readout text-[12.5px] text-ink-2">
-                      {rm(l.qty * (s?.priceMYR ?? 0))}
+                      {rm(l.qty * priceOf(s, basis))}
                     </span>
                     <IconButton
                       name="x"

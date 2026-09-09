@@ -6,7 +6,6 @@ import { DataTable, type Column } from '../../components/ui/DataTable'
 import { Icon } from '../../components/ui/icons'
 import { useCan } from '../../store/useAuth'
 import {
-  CATALOGUE_PENDING,
   collections,
   products,
   productById,
@@ -29,7 +28,7 @@ import { num, rm } from '../../lib/format'
  */
 export function Catalogue() {
   const capability = useCan()
-  const missing = CATALOGUE_PENDING.total - CATALOGUE_PENDING.confirmed
+  const sellableCount = skus.filter((s) => s.sellable).length
 
   const columns: Column<Sku>[] = [
     {
@@ -68,13 +67,18 @@ export function Catalogue() {
     },
     {
       key: 'price',
-      header: 'Our revenue',
+      header: 'Retail · Promotion',
       align: 'right',
-      render: (s) => (
-        <span className="readout text-[13px] text-ink">
-          {s.sellable ? rm(s.priceMYR) : '—'}
-        </span>
-      ),
+      width: '170px',
+      render: (s) =>
+        s.sellable ? (
+          <div>
+            <span className="readout text-[13px] text-ink">{rm(s.promotionPriceMYR)}</span>
+            <p className="readout text-[10.5px] text-ink-3">was {rm(s.retailPriceMYR)}</p>
+          </div>
+        ) : (
+          <span className="text-[12px] text-ink-3">not sold</span>
+        ),
     },
     {
       key: 'reorder',
@@ -100,7 +104,9 @@ export function Catalogue() {
         s.size,
         s.code,
         productById(s.productId)?.collection ?? '',
-        s.sellable ? s.priceMYR : '',
+        s.sellable ? s.retailPriceMYR : '',
+        s.sellable ? s.promotionPriceMYR : '',
+        s.offerMYR ?? '',
         s.reorderPoint,
         s.caseSize,
       ]),
@@ -131,23 +137,21 @@ export function Catalogue() {
         </div>
       </div>
 
-      {missing > 0 && (
-        <div className="flex flex-wrap items-start gap-2.5 rounded-xl border border-warn/30 bg-warn/8 px-4 py-3">
-          <Icon name="alert" className="mt-0.5 h-4 w-4 shrink-0 text-warn" />
-          <p className="flex-1 text-[12.5px] leading-relaxed text-ink">
-            You told us there are <b>{CATALOGUE_PENDING.total} products</b>. We have details for{' '}
-            <b>{CATALOGUE_PENDING.confirmed}</b>, taken from your website. Send the full list with
-            every size and price and we will load the remaining {missing}.
-          </p>
-        </div>
-      )}
+      <div className="flex flex-wrap items-start gap-2.5 rounded-xl border border-line bg-surface-2 px-4 py-3">
+        <Icon name="alert" className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+        <p className="flex-1 text-[12.5px] leading-relaxed text-ink-2">
+          Every line carries two prices. Which one a location's revenue is counted on comes from
+          the store list — BSAS and Sasa are on the retail price, everywhere else is on the
+          promotion price.
+        </p>
+      </div>
 
       <div className="grid gap-4 sm:grid-cols-3">
         <StatTile
           label="Products"
           value={products.length}
-          format={(n) => `${Math.round(n)} of ${CATALOGUE_PENDING.total}`}
-          footnote={missing ? `${missing} still to come` : 'complete'}
+          format={(n) => `${Math.round(n)}`}
+          footnote={`${sellableCount} sellable lines`}
           tone="violet"
           icon="sparkle"
         />

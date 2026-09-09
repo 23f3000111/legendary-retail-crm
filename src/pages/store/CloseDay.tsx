@@ -2,9 +2,9 @@ import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Panel, PanelBody, PanelHeader, Rule } from '../../components/ui/Panel'
-import { Button } from '../../components/ui/Button'
+import { Button, IconButton } from '../../components/ui/Button'
 import { Badge } from '../../components/ui/Badge'
-import { Field, NumberInput, TextArea } from '../../components/ui/Field'
+import { Field, NumberInput, Select, TextArea } from '../../components/ui/Field'
 import { Icon } from '../../components/ui/icons'
 import { OriginRibbon } from '../../components/charts/OriginRibbon'
 import { useData } from '../../store/useData'
@@ -17,15 +17,22 @@ import {
   selectSuggestedPoLines,
 } from '../../store/selectors'
 import { locationById } from '../../data/locations'
-import { skuById } from '../../data/products'
+import { orderableSkus, testerSkus, priceOf, skuById } from '../../data/products'
 import { formatDate } from '../../lib/dates'
 import { num, rm } from '../../lib/format'
 import type { Closing, PurchaseOrder, StockCount } from '../../data/types'
 
+/**
+ * Three steps, not four.
+ *
+ * Sales and the stock count used to be separate, which meant a promoter read
+ * the same product twice on the same screen — once for what sold and again for
+ * what to count. They are one table now: what sold today, what the shelf should
+ * therefore hold, and one box for what is actually there.
+ */
 const STEPS = [
-  { key: 'sales', label: 'Sales', hint: 'Check what you logged' },
+  { key: 'count', label: 'Sales & count', hint: 'What sold, and what is on the shelf' },
   { key: 'money', label: 'Money', hint: 'How it was paid' },
-  { key: 'stock', label: 'Stock count', hint: 'Count every perfume' },
   { key: 'topup', label: 'Top-up', hint: 'What to ask HQ for' },
 ] as const
 
@@ -46,6 +53,8 @@ export function CloseDay() {
 
   const locationId = user?.locationId ?? ''
   const location = locationById(locationId)
+  // Which of the two prices this store is counted on (Revision 2).
+  const basis = location?.priceBasis ?? 'promotion'
   const already = selectClosingFor(data, locationId, data.today)
   const stock = useMemo(() => selectStock(data, locationId), [data, locationId])
   const lines = data.liveLines[locationId] ?? []
@@ -54,7 +63,7 @@ export function CloseDay() {
   const [refiling, setRefiling] = useState(false)
   const [attempted, setAttempted] = useState<Record<number, boolean>>({})
 
-  const revenue = lines.reduce((a, l) => a + l.qty * (skuById(l.skuId)?.priceMYR ?? 0), 0)
+  const revenue = lines.reduce((a, l) => a + l.qty * priceOf(skuById(l.skuId), basis), 0)
   const units = lines.reduce((a, l) => a + l.qty, 0)
 
   const [cash, setCash] = useState('')
@@ -66,6 +75,8 @@ export function CloseDay() {
     ),
   )
   const [poNotes, setPoNotes] = useState('')
+  /** The line being added by hand from the picker. */
+  const [addSku, setAddSku] = useState('')
   const [raisePo, setRaisePo] = useState(true)
 
   const tenderTotal = (Number(cash) || 0) + (Number(card) || 0)
@@ -77,32 +88,30 @@ export function CloseDay() {
       if (!l.countryCode) continue
       const b = tally.get(l.countryCode) ?? { units: 0, revenue: 0 }
       b.units += l.qty
-      b.revenue += l.qty * (skuById(l.skuId)?.priceMYR ?? 0)
+      b.revenue += l.qty * priceOf(skuById(l.skuId), basis)
       tally.set(l.countryCode, b)
     }
     return originSlicesFrom(tally)
   }, [lines])
 
-  const suggested = useMemo(
-    () => selectSuggestedPoLines(data, locationId),
-    [data, locationId],
+  /**
+   * What is actually on the order: whatever has a quantity against it, whether
+   * the app suggested it or the promoter added it.
+   */
+  const orderLines = useMemo(
+    () =>
+      Object.entries(poQty)
+        .filter(([, qty]) => qty > 0)
+        .map(([skuId, qty]) => ({ skuId, qty })),
+    [poQty],
   )
 
   // ── Validation, in the promoter's own terms ───────────────────────────
   const stepErrors: string[] = []
-  if (step === 0 && lines.length === 0) {
-    stepErrors.push('No sales logged today. Record them on the Record a sale screen first.')
-  }
-  if (step === 1) {
-    if (revenue > 0 && Math.abs(tenderGap) > 0.5) {
-      stepErrors.push(
-        tenderGap > 0
-          ? `Cash, e-wallet and card are ${rm(Math.abs(tenderGap), { decimals: true })} short of ${rm(revenue)}.`
-          : `Cash, e-wallet and card are ${rm(Math.abs(tenderGap), { decimals: true })} over ${rm(revenue)}.`,
-      )
+  if (step === 0) {
+    if (lines.length === 0) {
+      stepErrors.push('No sales logged today. Record them on the Record a sale screen first.')
     }
-  }
-  if (step === 2) {
     for (const s of stock) {
       const value = counted[s.skuId]
       if (value === undefined || value === '') {
@@ -110,6 +119,15 @@ export function CloseDay() {
         break
       }
       if (Number(value) < 0) stepErrors.push(`${s.label} cannot be a negative number.`)
+    }
+  }
+  if (step === 1) {
+    if (revenue > 0 && Math.abs(tenderGap) > 0.5) {
+      stepErrors.push(
+        tenderGap > 0
+          ? `Cash and card are ${rm(Math.abs(tenderGap), { decimals: true })} short of ${rm(revenue)}.`
+          : `Cash and card are ${rm(Math.abs(tenderGap), { decimals: true })} over ${rm(revenue)}.`,
+      )
     }
   }
 
@@ -274,9 +292,9 @@ export function CloseDay() {
           {step === 0 && (
             <Panel>
               <PanelHeader
-                eyebrow="Step 1 of 4"
-                title="What you sold today"
-                meta="These are the sales you logged as they happened. Fix anything wrong before you go on."
+                eyebrow="Step 1 of 3"
+                title="What sold, and what is on the shelf"
+                meta="The sales you logged as they happened, and one box each for tonight's count."
                 action={
                   <Link to="/sell">
                     <Button size="sm" variant="secondary" icon="plus">
@@ -326,79 +344,29 @@ export function CloseDay() {
                           {s?.label}
                         </span>
                         <span className="readout text-[12px] text-ink-2">
-                          {rm(l.qty * (s?.priceMYR ?? 0))}
+                          {rm(l.qty * priceOf(s, basis))}
                         </span>
                       </div>
                     )
                   })}
                 </div>
-              </PanelBody>
-            </Panel>
-          )}
-
-          {/* ── 2 · Money ───────────────────────────────────────────── */}
-          {step === 1 && (
-            <Panel>
-              <PanelHeader
-                eyebrow="Step 2 of 4"
-                title="How it was paid"
-                meta={`Split the ${rm(revenue)} between cash and card. No float or cash on hand is recorded.`}
-              />
-              <Rule />
-              <PanelBody className="space-y-5">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Field label="Cash">
-                    <NumberInput prefix="RM" value={cash} onChange={(e) => setCash(e.target.value)} placeholder="0.00" />
-                  </Field>
-                  <Field label="Credit card">
-                    <NumberInput prefix="RM" value={card} onChange={(e) => setCard(e.target.value)} placeholder="0.00" />
-                  </Field>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-4 rounded-xl border border-line bg-surface-2 px-4 py-3">
-                  <div>
-                    <p className="eyebrow">Sales total</p>
-                    <p className="readout mt-0.5 text-[15px] text-ink">{rm(revenue)}</p>
-                  </div>
-                  <div className="ml-auto">
-                    {revenue > 0 && Math.abs(tenderGap) <= 0.5 ? (
-                      <Badge tone="good" icon="check">
-                        Payments match the sales
-                      </Badge>
-                    ) : revenue > 0 ? (
-                      <Badge tone="warn" icon="alert">
-                        {rm(Math.abs(tenderGap), { decimals: true })}{' '}
-                        {tenderGap > 0 ? 'still to account for' : 'over'}
-                      </Badge>
-                    ) : null}
-                  </div>
-                </div>
-              </PanelBody>
-            </Panel>
-          )}
-
-          {/* ── 3 · Stock ───────────────────────────────────────────── */}
-          {step === 2 && (
-            <Panel>
-              <PanelHeader
-                eyebrow="Step 3 of 4"
-                title="Count every perfume"
-                meta="Type what is physically on the shelf. The expected figure is shown so a mismatch stands out."
-              />
-              <Rule />
-              <PanelBody className="space-y-4">
+                {/* One row per product: what sold, what the shelf should hold,
+                    and the box for what is actually there. Testers are not on
+                    this list — they are ordered but never counted. */}
                 <div className="scroll-x">
-                  <table className="w-full min-w-[520px] border-collapse">
+                  <table className="w-full min-w-[560px] border-collapse">
                     <thead>
                       <tr className="border-b border-line">
-                        {['Product', 'Expected', 'Counted', 'Difference'].map((h, i) => (
-                          <th
-                            key={h}
-                            className={`pb-2 text-[10px] font-semibold uppercase tracking-wide2 text-ink-3 ${i === 0 ? 'text-left' : 'text-right'}`}
-                          >
-                            {h}
-                          </th>
-                        ))}
+                        {['Product', 'Sold today', 'Should be', 'Counted', 'Difference'].map(
+                          (h, i) => (
+                            <th
+                              key={h}
+                              className={`pb-2 text-[10px] font-semibold uppercase tracking-wide2 text-ink-3 ${i === 0 ? 'text-left' : 'text-right'}`}
+                            >
+                              {h}
+                            </th>
+                          ),
+                        )}
                       </tr>
                     </thead>
                     <tbody>
@@ -408,12 +376,20 @@ export function CloseDay() {
                           .reduce((a, l) => a + l.qty, 0)
                         const expected = Math.max(0, s.onHand - soldToday)
                         const value = counted[s.skuId]
-                        const diff = value === undefined || value === '' ? null : Number(value) - expected
+                        const diff =
+                          value === undefined || value === '' ? null : Number(value) - expected
                         return (
                           <tr key={s.skuId} className="border-b border-line/70 last:border-0">
                             <td className="py-2">
                               <p className="text-[13px] leading-tight text-ink">{s.label}</p>
                               <p className="readout text-[10.5px] text-ink-3">{s.code}</p>
+                            </td>
+                            <td
+                              className={`readout py-2 pr-3 text-right text-[13px] ${
+                                soldToday > 0 ? 'text-ink' : 'text-ink-3'
+                              }`}
+                            >
+                              {soldToday > 0 ? num(soldToday) : '—'}
                             </td>
                             <td className="readout py-2 pr-3 text-right text-[13px] text-ink-2">
                               {num(expected)}
@@ -451,13 +427,55 @@ export function CloseDay() {
             </Panel>
           )}
 
-          {/* ── 4 · Top-up ──────────────────────────────────────────── */}
-          {step === 3 && (
+          {/* ── 2 · Money ───────────────────────────────────────────── */}
+          {step === 1 && (
             <Panel>
               <PanelHeader
-                eyebrow="Step 4 of 4"
+                eyebrow="Step 2 of 3"
+                title="How it was paid"
+                meta={`Split the ${rm(revenue)} between cash and card. No float or cash on hand is recorded.`}
+              />
+              <Rule />
+              <PanelBody className="space-y-5">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Cash">
+                    <NumberInput prefix="RM" value={cash} onChange={(e) => setCash(e.target.value)} placeholder="0.00" />
+                  </Field>
+                  <Field label="Credit card">
+                    <NumberInput prefix="RM" value={card} onChange={(e) => setCard(e.target.value)} placeholder="0.00" />
+                  </Field>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-4 rounded-xl border border-line bg-surface-2 px-4 py-3">
+                  <div>
+                    <p className="eyebrow">Sales total</p>
+                    <p className="readout mt-0.5 text-[15px] text-ink">{rm(revenue)}</p>
+                  </div>
+                  <div className="ml-auto">
+                    {revenue > 0 && Math.abs(tenderGap) <= 0.5 ? (
+                      <Badge tone="good" icon="check">
+                        Payments match the sales
+                      </Badge>
+                    ) : revenue > 0 ? (
+                      <Badge tone="warn" icon="alert">
+                        {rm(Math.abs(tenderGap), { decimals: true })}{' '}
+                        {tenderGap > 0 ? 'still to account for' : 'over'}
+                      </Badge>
+                    ) : null}
+                  </div>
+                </div>
+              </PanelBody>
+            </Panel>
+          )}
+
+          {/* ── 3 · Stock ───────────────────────────────────────────── */}
+          {/* ── 3 · Top-up ──────────────────────────────────────────── */}
+          {step === 2 && (
+            <Panel>
+              <PanelHeader
+                eyebrow="Step 3 of 3"
                 title="Ask HQ for a top-up"
-                meta="Anything at or below its reorder level is listed. Change the numbers before you send."
+                meta="Anything low is filled in for you. Add anything else you want, including testers."
                 action={
                   <button
                     onClick={() => setRaisePo((v) => !v)}
@@ -473,55 +491,145 @@ export function CloseDay() {
               />
               <Rule />
               <PanelBody className="space-y-4">
-                {suggested.length === 0 ? (
+                {/* Add anything at all.
+
+                    This used to list only what the app thought the shop needed,
+                    which is a guess dressed up as a decision — the reorder
+                    points are the client's own numbers and will not be right
+                    until there is real data behind them (Q37). The promoter
+                    knows about the coach party on Saturday and the app does
+                    not, so they can ask for any line, testers included. */}
+                <div className="flex flex-wrap items-end gap-2">
+                  <Field label="Add something else" className="min-w-[220px] flex-1">
+                    <Select
+                      value={addSku}
+                      onChange={(e) => setAddSku(e.target.value)}
+                      disabled={!raisePo}
+                    >
+                      <option value="">Choose a product…</option>
+                      <optgroup label="Bottles and sets">
+                        {orderableSkus
+                          .filter((k) => k.sellable)
+                          .map((k) => (
+                            <option key={k.id} value={k.id}>
+                              {k.label}
+                            </option>
+                          ))}
+                      </optgroup>
+                      <optgroup label="Vials">
+                        {orderableSkus
+                          .filter((k) => k.variant === 'vial')
+                          .map((k) => (
+                            <option key={k.id} value={k.id}>
+                              {k.label}
+                            </option>
+                          ))}
+                      </optgroup>
+                      <optgroup label="Testers">
+                        {testerSkus.map((k) => (
+                          <option key={k.id} value={k.id}>
+                            {k.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    </Select>
+                  </Field>
+                  <Button
+                    variant="secondary"
+                    icon="plus"
+                    disabled={!raisePo || !addSku}
+                    onClick={() => {
+                      if (!addSku) return
+                      const caseSize = skuById(addSku)?.caseSize ?? 12
+                      setPoQty((q) => ({ ...q, [addSku]: (q[addSku] ?? 0) + caseSize }))
+                      setAddSku('')
+                    }}
+                  >
+                    Add
+                  </Button>
+                </div>
+
+                {orderLines.length === 0 ? (
                   <div className="flex items-center gap-3 rounded-xl border border-good/25 bg-good/8 px-4 py-3">
                     <Icon name="check" className="h-4 w-4 shrink-0 text-good" />
                     <p className="text-[12.5px] text-ink">
-                      Everything is above its reorder level. Nothing to ask for tonight.
+                      Nothing on the order. Everything is above its reorder level — add a line
+                      above if you want something anyway.
                     </p>
                   </div>
                 ) : (
-                  <>
-                    {stock
-                      .filter((s) => s.status !== 'ok')
-                      .map((s) => (
-                        <div
-                          key={s.skuId}
-                          className="flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface-2 px-3.5 py-3"
-                        >
-                          <div className="min-w-[160px] flex-1">
-                            <p className="text-[13px] text-ink">{s.label}</p>
-                            <p className="text-[11px] text-ink-3">
-                              {num(s.onHand)} on hand · reorder at {num(s.reorderPoint)}
-                              {s.daysCover !== null && ` · ${s.daysCover.toFixed(1)} days left`}
-                            </p>
-                          </div>
-                          <Badge tone={s.status === 'low' ? 'warn' : 'critical'} icon="alert">
-                            {s.status === 'out' ? 'Out of stock' : s.status === 'critical' ? 'Very low' : 'Low'}
-                          </Badge>
-                          <NumberInput
-                            className="w-24"
-                            min={0}
-                            step={skuById(s.skuId)?.caseSize ?? 12}
-                            value={poQty[s.skuId] ?? 0}
-                            onChange={(e) =>
-                              setPoQty((q) => ({ ...q, [s.skuId]: Math.max(0, Number(e.target.value)) }))
-                            }
-                            disabled={!raisePo}
-                          />
+                  orderLines.map((line) => {
+                    const sku = skuById(line.skuId)
+                    const row = stock.find((x) => x.skuId === line.skuId)
+                    return (
+                      <div
+                        key={line.skuId}
+                        className="flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface-2 px-3.5 py-3"
+                      >
+                        <div className="min-w-[160px] flex-1">
+                          <p className="text-[13px] text-ink">{sku?.label ?? line.skuId}</p>
+                          <p className="text-[11px] text-ink-3">
+                            {row
+                              ? `${num(row.onHand)} on hand · reorder at ${num(row.reorderPoint)}${
+                                  row.daysCover !== null
+                                    ? ` · ${row.daysCover.toFixed(1)} days left`
+                                    : ''
+                                }`
+                              : sku?.variant === 'tester'
+                                ? 'Tester — not counted on the shelf'
+                                : 'Not counted on the shelf'}
+                          </p>
                         </div>
-                      ))}
-
-                    <Field label="Note for Kelly (optional)" hint="Anything she should know before deciding.">
-                      <TextArea
-                        value={poNotes}
-                        onChange={(e) => setPoNotes(e.target.value)}
-                        placeholder="Tour group booked in on Saturday — expecting a run on the Signature line."
-                        disabled={!raisePo}
-                      />
-                    </Field>
-                  </>
+                        {row && row.status !== 'ok' && (
+                          <Badge tone={row.status === 'low' ? 'warn' : 'critical'} icon="alert">
+                            {row.status === 'out'
+                              ? 'Out of stock'
+                              : row.status === 'critical'
+                                ? 'Very low'
+                                : 'Low'}
+                          </Badge>
+                        )}
+                        {sku?.variant === 'tester' && <Badge tone="active">Tester</Badge>}
+                        <NumberInput
+                          className="w-24"
+                          min={0}
+                          step={sku?.caseSize ?? 12}
+                          value={poQty[line.skuId] ?? 0}
+                          onChange={(e) =>
+                            setPoQty((q) => ({
+                              ...q,
+                              [line.skuId]: Math.max(0, Number(e.target.value)),
+                            }))
+                          }
+                          disabled={!raisePo}
+                        />
+                        <IconButton
+                          name="x"
+                          label={`Take ${sku?.label ?? 'this'} off the order`}
+                          onClick={() =>
+                            setPoQty((q) => {
+                              const next = { ...q }
+                              delete next[line.skuId]
+                              return next
+                            })
+                          }
+                        />
+                      </div>
+                    )
+                  })
                 )}
+
+                <Field
+                  label="Note for Kelly (optional)"
+                  hint="Anything she should know before deciding."
+                >
+                  <TextArea
+                    value={poNotes}
+                    onChange={(e) => setPoNotes(e.target.value)}
+                    placeholder="Tour group booked in on Saturday — expecting a run on the Signature line."
+                    disabled={!raisePo}
+                  />
+                </Field>
               </PanelBody>
             </Panel>
           )}
@@ -561,7 +669,7 @@ export function CloseDay() {
           </Button>
         ) : (
           <Button variant="primary" icon="check" onClick={finish}>
-            {raisePo && suggested.length ? 'Close day and send order' : 'Close the day'}
+            {raisePo && orderLines.length ? 'Close day and send order' : 'Close the day'}
           </Button>
         )}
       </div>

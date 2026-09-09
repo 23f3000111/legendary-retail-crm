@@ -1,32 +1,44 @@
 /**
- * The catalogue.
+ * The catalogue, from the price list in "CRM Revision 2".
  *
- * The client confirmed 19 products, and that every variant — size, refill,
- * travel size, gift set, tester — is counted as its own line (discovery Q53,
- * Q54). So a *product* is the fragrance, and a *SKU* is a thing you can count
- * on a shelf. Stock, sales and orders all work at SKU level.
+ * A *product* is the fragrance; a *SKU* is a thing you can count on a shelf.
+ * Stock, sales and orders all work at SKU level (discovery Q54).
  *
- * Nine products are confirmed from the retail site with real prices. The
- * remaining ten are awaiting the client's full product list; they are absent
- * rather than invented, and `CATALOGUE_PENDING` records the gap so the UI can
- * say so honestly.
+ * ── Two prices, and which one counts ────────────────────────────────────────
+ *
+ * Every sellable item has a **retail price** and a **promotion price**, and the
+ * store list says which of the two each location's revenue is counted on:
+ * BSAS and Sasa on retail, everybody else on promotion. So a price is never a
+ * single number here — `priceOf` takes the basis, and the basis comes from the
+ * location. Getting this wrong would misstate revenue by more than 20%.
+ *
+ * ── What is sold, what is counted, what is ordered ──────────────────────────
+ *
+ *   retail / set   sold, counted, ordered
+ *   vial           counted and ordered, never sold
+ *   tester         ordered only — not sold, and not part of the nightly count
+ *
+ * That split comes straight from Revision 2: testers and travel sizes come out
+ * of the stock count, vials go in, and testers get their own ordering list.
  *
  * There is deliberately no cost price anywhere. The client was explicit that
  * only revenue is recorded (Q58, Q65); the one margin figure in the system sits
- * on the consignment partner, not on the product.
+ * on the location, not on the product.
  */
 
 export type CollectionId = 'signature' | 'nyonya' | 'three-wishes' | 'spirit'
 
-export type Variant = 'retail' | 'travel' | 'refill' | 'giftset' | 'tester'
+export type Variant = 'retail' | 'set' | 'vial' | 'tester'
 
 export const VARIANT_LABEL: Record<Variant, string> = {
-  retail: 'Retail',
-  travel: 'Travel size',
-  refill: 'Refill',
-  giftset: 'Gift set',
+  retail: 'Bottle',
+  set: 'Set',
+  vial: 'Vial',
   tester: 'Tester',
 }
+
+/** Which price a location's revenue is counted on (the store list's column). */
+export type PriceBasis = 'retail' | 'promotion'
 
 export interface Product {
   id: string
@@ -45,8 +57,12 @@ export interface Sku {
   label: string
   variant: Variant
   size: string
-  /** Legendary's revenue per unit. Shops may retail at their own price (Q60). */
-  priceMYR: number
+  /** Full price. What BSAS and Sasa are counted on. */
+  retailPriceMYR: number
+  /** The everyday price. What every other location is counted on. */
+  promotionPriceMYR: number
+  /** The extra the client's list shows against the Wishes. */
+  offerMYR?: number
   /** Units at or below which a top-up should be raised. */
   reorderPoint: number
   /** The warehouse ships in multiples of this. */
@@ -54,96 +70,198 @@ export interface Sku {
   /** Relative share of units sold, used by the demo data generator. */
   popularity: number
   bestseller: boolean
-  /** Testers are counted and written off, never sold. */
+  /** Testers and vials are never sold. */
   sellable: boolean
+  /** Testers are ordered but never counted on the shelf (Revision 2). */
+  counted: boolean
 }
 
-/** How many products the client says exist, against how many we have details for. */
-export const CATALOGUE_PENDING = { confirmed: 9, total: 19 }
-
 export const products: Product[] = [
+  // Signature
   { id: 'orchid', name: 'Orchid', collection: 'Signature', collectionId: 'signature', family: 'Floral Fruity', audience: 'For Her' },
   { id: 'mahsuri', name: 'Mahsuri', collection: 'Signature', collectionId: 'signature', family: 'Fruity Floral', audience: 'For Her' },
   { id: 'violet', name: 'Violet', collection: 'Signature', collectionId: 'signature', family: 'Powdery Floral', audience: 'For Her' },
   { id: 'man', name: 'Man', collection: 'Signature', collectionId: 'signature', family: 'Woody Aromatic', audience: 'For Him' },
+
+  // Nyonya
+  { id: 'nyonya-aromatic', name: 'Nyonya Aromatic', collection: 'Nyonya', collectionId: 'nyonya', family: 'Spicy Floral', audience: 'Unisex' },
   { id: 'kebaya-blooms', name: 'Kebaya Blooms', collection: 'Nyonya', collectionId: 'nyonya', family: 'Floral', audience: 'For Her' },
   { id: 'ondeh-delights', name: 'Ondeh Delights', collection: 'Nyonya', collectionId: 'nyonya', family: 'Green Gourmand', audience: 'Unisex' },
-  { id: 'nyonya-aromatic', name: 'Nyonya Aromatic', collection: 'Nyonya', collectionId: 'nyonya', family: 'Spicy Aromatic', audience: 'Unisex' },
-  { id: '3-wishes', name: '3 Wishes', collection: '3 Wishes', collectionId: 'three-wishes', family: 'Clean Musk', audience: 'Unisex' },
-  { id: 'spirit', name: 'Spirit', collection: 'Spirit', collectionId: 'spirit', family: 'Fresh Discovery', audience: 'Unisex' },
+
+  // Spirit
+  { id: 'life', name: 'Life', collection: 'Spirit', collectionId: 'spirit', family: 'Fresh Citrus', audience: 'Unisex' },
+  { id: 'passion', name: 'Passion', collection: 'Spirit', collectionId: 'spirit', family: 'Warm Amber', audience: 'Unisex' },
+  { id: 'dream', name: 'Dream', collection: 'Spirit', collectionId: 'spirit', family: 'Soft Musk', audience: 'Unisex' },
+  { id: 'love', name: 'Love', collection: 'Spirit', collectionId: 'spirit', family: 'Rose Amber', audience: 'Unisex' },
+  { id: 'hope', name: 'Hope', collection: 'Spirit', collectionId: 'spirit', family: 'Green Floral', audience: 'Unisex' },
+  { id: 'confidence', name: 'Confidence', collection: 'Spirit', collectionId: 'spirit', family: 'Woody Spice', audience: 'Unisex' },
+  { id: 'spirit-1', name: 'Spirit 1', collection: 'Spirit', collectionId: 'spirit', family: 'Gift set', audience: 'Unisex' },
+  { id: 'spirit-2', name: 'Spirit 2', collection: 'Spirit', collectionId: 'spirit', family: 'Gift set', audience: 'Unisex' },
+
+  // 3 Wishes
+  { id: 'three-wishes', name: '3 Wishes', collection: '3 Wishes', collectionId: 'three-wishes', family: 'Gift set', audience: 'Unisex' },
+  { id: 'wish-1', name: 'Wish 1', collection: '3 Wishes', collectionId: 'three-wishes', family: 'Floral', audience: 'For Her' },
+  { id: 'wish-2', name: 'Wish 2', collection: '3 Wishes', collectionId: 'three-wishes', family: 'Fruity', audience: 'For Her' },
+  { id: 'wish-3', name: 'Wish 3', collection: '3 Wishes', collectionId: 'three-wishes', family: 'Musk', audience: 'Unisex' },
 ]
 
-interface SkuSeed {
+/** The sixteen sellable lines, exactly as the client's price list has them. */
+interface SellableSeed {
   productId: string
-  variant: Variant
   size: string
-  price: number
-  reorderPoint: number
-  caseSize: number
+  variant: 'retail' | 'set'
+  retail: number
+  promotion: number
+  offer?: number
   popularity: number
   bestseller?: boolean
 }
 
-const skuSeeds: SkuSeed[] = [
-  // Signature — the four icons, each with a travel size and a counter tester.
-  { productId: 'orchid', variant: 'retail', size: '30ml', price: 159, reorderPoint: 24, caseSize: 12, popularity: 1.0, bestseller: true },
-  { productId: 'orchid', variant: 'travel', size: '10ml', price: 69, reorderPoint: 18, caseSize: 12, popularity: 0.42 },
-  { productId: 'orchid', variant: 'tester', size: '30ml', price: 0, reorderPoint: 4, caseSize: 6, popularity: 0 },
+const sellableSeeds: SellableSeed[] = [
+  { productId: 'orchid', size: '30ml', variant: 'retail', retail: 238, promotion: 188, popularity: 15, bestseller: true },
+  { productId: 'violet', size: '30ml', variant: 'retail', retail: 238, promotion: 188, popularity: 9 },
+  { productId: 'mahsuri', size: '30ml', variant: 'retail', retail: 238, promotion: 188, popularity: 13, bestseller: true },
+  { productId: 'spirit-1', size: 'Set', variant: 'set', retail: 238, promotion: 188, popularity: 6 },
+  { productId: 'spirit-2', size: 'Set', variant: 'set', retail: 238, promotion: 188, popularity: 5 },
+  { productId: 'life', size: '50ml', variant: 'retail', retail: 238, promotion: 188, popularity: 7 },
+  { productId: 'passion', size: '50ml', variant: 'retail', retail: 238, promotion: 188, popularity: 7 },
+  { productId: 'dream', size: '50ml', variant: 'retail', retail: 238, promotion: 188, popularity: 6 },
+  { productId: 'nyonya-aromatic', size: '30ml', variant: 'retail', retail: 238, promotion: 188, popularity: 8 },
+  { productId: 'kebaya-blooms', size: '30ml', variant: 'retail', retail: 238, promotion: 188, popularity: 11, bestseller: true },
+  { productId: 'ondeh-delights', size: '30ml', variant: 'retail', retail: 238, promotion: 188, popularity: 8 },
+  { productId: 'man', size: '50ml', variant: 'retail', retail: 238, promotion: 188, popularity: 12, bestseller: true },
+  { productId: 'three-wishes', size: 'Set', variant: 'set', retail: 238, promotion: 188, popularity: 9, bestseller: true },
+  { productId: 'wish-1', size: 'Set', variant: 'set', retail: 128, promotion: 88, offer: 10, popularity: 6 },
+  { productId: 'wish-2', size: 'Set', variant: 'set', retail: 128, promotion: 88, offer: 10, popularity: 5 },
+  { productId: 'wish-3', size: 'Set', variant: 'set', retail: 128, promotion: 88, offer: 10, popularity: 5 },
+]
 
-  { productId: 'mahsuri', variant: 'retail', size: '30ml', price: 159, reorderPoint: 24, caseSize: 12, popularity: 0.88, bestseller: true },
-  { productId: 'mahsuri', variant: 'travel', size: '10ml', price: 69, reorderPoint: 18, caseSize: 12, popularity: 0.36 },
-  { productId: 'mahsuri', variant: 'tester', size: '30ml', price: 0, reorderPoint: 4, caseSize: 6, popularity: 0 },
+/**
+ * Vials, one per fragrance.
+ *
+ * "Include Vial for all products" (Revision 2). They are counted on the shelf
+ * and can be ordered, but never sold — so they carry no price.
+ */
+const vialProducts = [
+  'orchid', 'violet', 'mahsuri', 'man',
+  'nyonya-aromatic', 'kebaya-blooms', 'ondeh-delights',
+  'life', 'passion', 'dream', 'love', 'hope', 'confidence',
+]
 
-  { productId: 'violet', variant: 'retail', size: '30ml', price: 149, reorderPoint: 18, caseSize: 12, popularity: 0.61 },
-  { productId: 'violet', variant: 'tester', size: '30ml', price: 0, reorderPoint: 4, caseSize: 6, popularity: 0 },
-
-  { productId: 'man', variant: 'retail', size: '50ml', price: 189, reorderPoint: 20, caseSize: 12, popularity: 0.79, bestseller: true },
-  { productId: 'man', variant: 'travel', size: '10ml', price: 79, reorderPoint: 16, caseSize: 12, popularity: 0.31 },
-  { productId: 'man', variant: 'tester', size: '50ml', price: 0, reorderPoint: 4, caseSize: 6, popularity: 0 },
-
-  // Nyonya
-  { productId: 'kebaya-blooms', variant: 'retail', size: '30ml', price: 159, reorderPoint: 20, caseSize: 12, popularity: 0.83, bestseller: true },
-  { productId: 'kebaya-blooms', variant: 'tester', size: '30ml', price: 0, reorderPoint: 4, caseSize: 6, popularity: 0 },
-  { productId: 'ondeh-delights', variant: 'retail', size: '30ml', price: 159, reorderPoint: 18, caseSize: 12, popularity: 0.57 },
-  { productId: 'nyonya-aromatic', variant: 'retail', size: '30ml', price: 159, reorderPoint: 18, caseSize: 12, popularity: 0.49 },
-
-  // Boxed sets — packed in advance, counted as one item (Q55).
-  { productId: '3-wishes', variant: 'giftset', size: '3 × 15ml', price: 199, reorderPoint: 16, caseSize: 8, popularity: 0.72, bestseller: true },
-  { productId: 'spirit', variant: 'giftset', size: '3 × 15ml', price: 179, reorderPoint: 16, caseSize: 8, popularity: 0.44 },
-
-  // Refills — sold against the signature bottles.
-  { productId: 'orchid', variant: 'refill', size: '30ml pouch', price: 109, reorderPoint: 12, caseSize: 12, popularity: 0.23 },
-  { productId: 'mahsuri', variant: 'refill', size: '30ml pouch', price: 109, reorderPoint: 12, caseSize: 12, popularity: 0.19 },
+/**
+ * The tester list, exactly as Revision 2 gives it.
+ *
+ * Testers are ordered from HQ and are deliberately **not** part of the nightly
+ * stock count. Note that Love, Hope and Confidence appear here and nowhere in
+ * the price list — they have testers but nothing sellable, which is worth
+ * confirming with the client.
+ */
+const testerSeeds: [productId: string, size: string][] = [
+  ['orchid', '30ml'],
+  ['violet', '30ml'],
+  ['man', '50ml'],
+  ['mahsuri', '30ml'],
+  ['nyonya-aromatic', '30ml'],
+  ['kebaya-blooms', '30ml'],
+  ['ondeh-delights', '30ml'],
+  ['love', '15ml'],
+  ['love', '50ml'],
+  ['hope', '15ml'],
+  ['hope', '50ml'],
+  ['confidence', '15ml'],
+  ['confidence', '50ml'],
+  ['life', '15ml'],
+  ['life', '50ml'],
+  ['passion', '15ml'],
+  ['passion', '50ml'],
+  ['dream', '15ml'],
+  ['dream', '50ml'],
+  ['wish-1', '15ml'],
+  ['wish-1', '50ml'],
+  ['wish-2', '15ml'],
+  ['wish-2', '50ml'],
+  ['wish-3', '15ml'],
+  ['wish-3', '50ml'],
 ]
 
 const productName = (id: string) => products.find((p) => p.id === id)?.name ?? id
 
 const VARIANT_CODE: Record<Variant, string> = {
   retail: 'R',
-  travel: 'T',
-  refill: 'F',
-  giftset: 'G',
+  set: 'S',
+  vial: 'V',
   tester: 'X',
 }
 
-export const skus: Sku[] = skuSeeds.map((s) => {
-  const name = productName(s.productId)
-  const shortProduct = s.productId.slice(0, 3).toUpperCase()
-  return {
-    id: `${s.productId}-${s.variant}`,
-    code: `LGD-${shortProduct}-${VARIANT_CODE[s.variant]}${s.size.replace(/[^0-9]/g, '').slice(0, 3) || '00'}`,
-    productId: s.productId,
-    label: s.variant === 'retail' ? `${name} · ${s.size}` : `${name} · ${VARIANT_LABEL[s.variant]}`,
-    variant: s.variant,
-    size: s.size,
-    priceMYR: s.price,
-    reorderPoint: s.reorderPoint,
-    caseSize: s.caseSize,
-    popularity: s.popularity,
-    bestseller: Boolean(s.bestseller),
-    sellable: s.variant !== 'tester',
-  }
-})
+/**
+ * A shelf code that is actually unique.
+ *
+ * The product id carries its own number where there is one — "wish-1",
+ * "spirit-2" — so it goes into the code. Slicing the name alone gave Wish 1, 2
+ * and 3 the same code, which is worse than no code at all on a stock sheet.
+ */
+const codeFor = (productId: string, variant: Variant, size: string) => {
+  const parts = productId.split('-')
+  const letters = parts[0].replace(/[^a-z0-9]/g, '').slice(0, 3).toUpperCase()
+  const suffix = parts.length > 1 && /^\d+$/.test(parts[1]) ? parts[1] : ''
+  const digits = size.replace(/[^0-9]/g, '').slice(0, 3) || 'S'
+  return `LGD-${letters}${suffix}-${VARIANT_CODE[variant]}${digits}`
+}
+
+const sellable: Sku[] = sellableSeeds.map((s) => ({
+  id: `${s.productId}-${s.variant}`,
+  code: codeFor(s.productId, s.variant, s.size),
+  productId: s.productId,
+  label: s.variant === 'set' ? `${productName(s.productId)} · Set` : `${productName(s.productId)} · ${s.size}`,
+  variant: s.variant,
+  size: s.size,
+  retailPriceMYR: s.retail,
+  promotionPriceMYR: s.promotion,
+  ...(s.offer ? { offerMYR: s.offer } : {}),
+  reorderPoint: 24,
+  caseSize: 12,
+  popularity: s.popularity,
+  bestseller: Boolean(s.bestseller),
+  sellable: true,
+  counted: true,
+}))
+
+const vials: Sku[] = vialProducts.map((productId) => ({
+  id: `${productId}-vial`,
+  code: codeFor(productId, 'vial', '2'),
+  productId,
+  label: `${productName(productId)} · Vial`,
+  variant: 'vial' as const,
+  size: '2ml',
+  retailPriceMYR: 0,
+  promotionPriceMYR: 0,
+  reorderPoint: 40,
+  caseSize: 50,
+  popularity: 0,
+  bestseller: false,
+  sellable: false,
+  counted: true,
+}))
+
+const testers: Sku[] = testerSeeds.map(([productId, size]) => ({
+  id: `${productId}-tester-${size}`,
+  code: codeFor(productId, 'tester', size),
+  productId,
+  label: `${productName(productId)} · Tester ${size}`,
+  variant: 'tester' as const,
+  size,
+  retailPriceMYR: 0,
+  promotionPriceMYR: 0,
+  reorderPoint: 2,
+  caseSize: 6,
+  popularity: 0,
+  bestseller: false,
+  sellable: false,
+  // Revision 2: testers come out of the nightly stock count.
+  counted: false,
+}))
+
+export const skus: Sku[] = [...sellable, ...vials, ...testers]
 
 export const collections: { id: CollectionId; name: string; slot: 1 | 2 | 3 | 4 }[] = [
   { id: 'signature', name: 'Signature', slot: 1 },
@@ -158,8 +276,29 @@ export const skuLabel = (id: string) => skuById(id)?.label ?? id
 
 export const productById = (id: string) => products.find((p) => p.id === id)
 
-/** Everything a shop can actually sell — testers are counted but never sold. */
+/** Everything a shop can actually sell. */
 export const sellableSkus = skus.filter((s) => s.sellable)
+
+/** Everything counted on the shelf at night — no testers, per Revision 2. */
+export const countedSkus = skus.filter((s) => s.counted)
+
+/** Everything a shop can ask HQ for, which is everything including testers. */
+export const orderableSkus = skus
+
+export const testerSkus = skus.filter((s) => s.variant === 'tester')
 
 export const collectionOfSku = (skuId: string): CollectionId | undefined =>
   productById(skuById(skuId)?.productId ?? '')?.collectionId
+
+/**
+ * What one unit is worth, on the basis the location is counted on.
+ *
+ * There is no single "price" in this system, so nothing should ever reach for
+ * one. Passing the basis explicitly is what stops a report quietly counting
+ * BSAS on the promotion price.
+ */
+export const priceOf = (sku: Sku | undefined, basis: PriceBasis): number =>
+  !sku ? 0 : basis === 'retail' ? sku.retailPriceMYR : sku.promotionPriceMYR
+
+export const priceOfId = (skuId: string, basis: PriceBasis): number =>
+  priceOf(skuById(skuId), basis)

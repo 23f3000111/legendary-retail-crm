@@ -12,7 +12,7 @@
  * the one on Friday.
  */
 import { locations, tradingLocations, type Location } from './locations'
-import { skus, sellableSkus, skuById } from './products'
+import { countedSkus, sellableSkus, skuById, priceOf } from './products'
 import { countries } from './countries'
 import { seedPeople as people, seedPeople } from './people'
 import { seedPromotions } from './promotions'
@@ -246,17 +246,17 @@ function deriveAudit(
   // The day everyone was given a login and a PIN.
   for (const person of seedPeople) {
     entries.push({
-      id: id(person.pinSetAt),
-      at: person.pinSetAt,
+      id: id(person.passwordSetAt),
+      at: person.passwordSetAt,
       actorId: 'imran',
-      actorName: person.pinSetBy,
+      actorName: person.passwordSetBy,
       actorRole: 'it',
       kind: 'login',
       action: 'login.created',
       summary: `Created a login for ${person.name}, ${ROLE_LABEL[person.role]}`,
       entityId: person.id,
       locationId: person.locationId,
-      detail: 'Issued them a new PIN',
+      detail: 'Issued them a starting password',
     })
   }
 
@@ -299,7 +299,7 @@ function build(r: () => number): CrmData {
   const stock = new Map<string, number>()
   const key = (l: string, s: string) => `${l}::${s}`
   for (const loc of dailyLocations.filter((l) => l.holdsOwnStock)) {
-    for (const s of skus) {
+    for (const s of countedSkus) {
       const base = loc.channel === 'main' ? 2.6 : 1.6
       stock.set(key(loc.id, s.id), Math.round(s.reorderPoint * (base + r() * 1.6)))
     }
@@ -336,7 +336,7 @@ function build(r: () => number): CrmData {
           const qty = Math.round((s.popularity / popTotal) * units * jitter(r, 0.9))
           if (qty <= 0) continue
           soldBySku.set(s.id, qty)
-          revenueMYR += qty * s.priceMYR
+          revenueMYR += qty * priceOf(s, loc.priceBasis)
         }
         if (soldBySku.size === 0) continue
 
@@ -380,7 +380,7 @@ function build(r: () => number): CrmData {
       const stockCount: StockCount[] = []
       let revenueMYR = 0
 
-      for (const s of skus) {
+      for (const s of countedSkus) {
         const openingBefore = stock.get(key(loc.id, s.id))! - (received.get(s.id) ?? 0)
         const available = openingBefore + (received.get(s.id) ?? 0)
 
@@ -394,7 +394,7 @@ function build(r: () => number): CrmData {
 
         if (sold > 0) {
           soldBySku.set(s.id, sold)
-          revenueMYR += sold * s.priceMYR
+          revenueMYR += sold * priceOf(s, loc.priceBasis)
         }
         stockCount.push({ skuId: s.id, opening: openingBefore, counted: closing })
       }
@@ -402,7 +402,7 @@ function build(r: () => number): CrmData {
       // Testers used, the odd damage, an occasional sample.
       const writeOffs: WriteOff[] = []
       if (r() < 0.16) {
-        const s = pick(r, skus)
+        const s = pick(r, countedSkus)
         const reason: WriteOff['reason'] = r() < 0.5 ? 'tester' : r() < 0.8 ? 'damaged' : 'sample'
         writeOffs.push({
           skuId: s.id,
@@ -417,7 +417,9 @@ function build(r: () => number): CrmData {
       const staffQty = r() < 0.12 ? 1 : 0
       const staffSales = {
         qty: staffQty,
-        revenueMYR: staffQty ? Math.round(pick(r, sellableSkus).priceMYR * 0.7) : 0,
+        revenueMYR: staffQty
+          ? Math.round(priceOf(pick(r, sellableSkus), loc.priceBasis) * 0.7)
+          : 0,
       }
 
       const lines: SaleLine[] =
@@ -448,7 +450,7 @@ function build(r: () => number): CrmData {
       })
 
       // Raise a top-up when something crosses its reorder point.
-      const lowLines = skus
+      const lowLines = countedSkus
         .filter((s) => stock.get(key(loc.id, s.id))! <= s.reorderPoint)
         .map((s) => {
           const onHand = stock.get(key(loc.id, s.id))!
@@ -522,7 +524,7 @@ function build(r: () => number): CrmData {
         const qty = Math.round((s.popularity / popTotal) * monthlyUnits * jitter(r, 0.7))
         if (qty <= 0) continue
         soldBySku.set(s.id, qty)
-        revenueMYR += qty * s.priceMYR
+        revenueMYR += qty * priceOf(s, loc.priceBasis)
       }
 
       closings.push({
@@ -670,7 +672,7 @@ function deriveAlerts(
 
   // Stock at or under its reorder point right now.
   for (const loc of daily) {
-    for (const s of skus) {
+    for (const s of countedSkus) {
       const onHand = stock.get(key(loc.id, s.id)) ?? 0
       if (onHand > s.reorderPoint) continue
       alerts.push({

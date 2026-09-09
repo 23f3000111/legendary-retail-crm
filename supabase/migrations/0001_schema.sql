@@ -2,9 +2,9 @@
 -- Legendary Retail CRM — database schema
 --
 -- Postgres 15+. Written for Supabase (it uses RLS and Vault), but the only
--- Supabase-specific parts are current_app_user(), which reads the PIN session's
--- JWT claim, and the two Vault look-ups behind the PIN secrets. On plain
--- Postgres, replace those three functions and everything else runs unchanged.
+-- Supabase-specific part is current_app_user(), which reads the signed-in
+-- person from the session's JWT claim. On plain Postgres, replace that one
+-- function and everything else runs unchanged.
 --
 -- Design rules, all traceable to the client's answers:
 --
@@ -16,15 +16,16 @@
 --   * Country lives on the sale line, not on the closing, because the client
 --     needs to know exactly which nationality bought which perfume (Q29).
 --   * Figures exclude SST (Q24).
---   * Everyone signs in with a six-digit PIN. There are no passwords and no
---     Google accounts. Senior staff must be able to *read* a colleague's current
---     PIN, so the PIN is reversibly encrypted rather than hashed — see the
---     "People" section below and docs/spec/pin-security.md for what that costs
---     and how it is contained.
+--   * Everyone signs in with a username and password, then a six-digit code
+--     sent to their work e-mail. Passwords are stored as an Argon2 hash and
+--     nothing else — nobody can read one back, including the Managing Director
+--     and IT. See docs/spec/auth.md.
 -- ============================================================================
 
--- pgcrypto gives us both hmac() for the PIN digest and pgp_sym_encrypt() for
--- the recoverable copy.
+-- pgcrypto gives us gen_random_uuid() and the digest used for the sign-in
+-- code. Password hashing is Argon2id, done in the Edge Function rather than
+-- here — Postgres has no Argon2 of its own, and a password should never travel
+-- as far as a SQL statement in the first place.
 create extension if not exists "pgcrypto";
 
 -- ── Enums ───────────────────────────────────────────────────────────────────
@@ -32,7 +33,9 @@ create extension if not exists "pgcrypto";
 create type channel        as enum ('main', 'dealer', 'consignment', 'online');
 create type cadence        as enum ('daily', 'monthly');
 create type location_status as enum ('open', 'coming', 'closed');
-create type variant        as enum ('retail', 'travel', 'refill', 'giftset', 'tester');
+create type variant        as enum ('retail', 'set', 'vial', 'tester');
+-- Which of the two prices a location's revenue is counted on (Revision 2).
+create type price_basis    as enum ('retail', 'promotion');
 create type app_role       as enum ('director','md','ops','pa','finance','warehouse','promoter','it');
 create type po_status      as enum ('draft','submitted','approved','rejected','accounts_cleared','packed','in_transit','received');
 create type write_off_reason as enum ('tester','damaged','sample');
@@ -40,7 +43,7 @@ create type correction_status as enum ('pending','approved','rejected');
 create type alert_type     as enum ('missed_closing','low_stock','correction_pending','po_waiting','target_risk');
 create type severity       as enum ('warn','serious','critical');
 create type promo_mechanic as enum ('discount','bundle','gift','member','other');
-create type audit_kind    as enum ('session','sale','closing','correction','order','login','pin','promotion','target','alert');
+create type audit_kind    as enum ('session','sale','closing','correction','order','login','password','promotion','target','alert');
 
 -- ── Reference data ──────────────────────────────────────────────────────────
 
@@ -62,8 +65,12 @@ create table locations (
   cadence           cadence not null,
   -- Only main stores capture the buyer's nationality (Q29).
   records_countries boolean not null default false,
-  -- Consignment partners keep an agreed share (Q58). Null elsewhere.
+  -- What Legendary keeps. Dealers are all 70%; consignment runs 48.5%–70%.
   margin_pct        numeric(5,2),
+  -- Retail or promotion. BSAS and Sasa are on retail, everybody else on
+  -- promotion, and the two differ by more than 20% — so a figure computed on
+  -- the wrong one is simply wrong.
+  price_basis       price_basis not null default 'promotion',
   -- False for online storefronts: the website and the shops share one set of
   -- stock numbers (Q13), so an online order is picked from the warehouse and
   -- never sits on a shelf of its own. Those locations file sales with no
@@ -72,8 +79,6 @@ create table locations (
   opened_on         date,
   created_at        timestamptz not null default now(),
 
-  constraint margin_only_on_consignment
-    check (margin_pct is null or channel = 'consignment'),
   constraint countries_only_on_main
     check (records_countries = false or channel = 'main'),
   constraint only_online_shares_stock
@@ -101,12 +106,20 @@ create table skus (
   label          text not null,
   variant        variant not null,
   size           text not null,
-  -- Legendary's revenue per unit. Stores may retail at their own price (Q60).
-  price_myr      numeric(10,2) not null check (price_myr >= 0),
+  -- Two prices, and the location decides which one counts. Stores may retail
+  -- at their own price on the shelf (Q60); these are what Legendary counts.
+  retail_price_myr    numeric(10,2) not null default 0 check (retail_price_myr >= 0),
+  promotion_price_myr numeric(10,2) not null default 0 check (promotion_price_myr >= 0),
+  offer_myr           numeric(10,2),
   reorder_point  integer not null default 0 check (reorder_point >= 0),
   case_size      integer not null default 12 check (case_size > 0),
-  -- Testers are counted and written off, never sold.
+  -- Testers and vials are never sold.
   sellable       boolean not null default true,
+  -- Testers are ordered but never counted on a shelf (Revision 2).
+  counted        boolean not null default true,
+
+  constraint only_sellable_lines_are_priced
+    check (sellable or (retail_price_myr = 0 and promotion_price_myr = 0)),
   active         boolean not null default true,
   created_at     timestamptz not null default now(),
 
@@ -117,38 +130,37 @@ create index on skus (product_id) where active;
 
 -- ── People ──────────────────────────────────────────────────────────────────
 --
--- Everyone signs in with a six-digit PIN (client instruction, superseding the
--- Q11 answer about Gmail). The PIN is created when the staff member is created,
--- and only the Managing Director, the Operational Manager, the PA and IT may
--- create one.
+-- Sign-in is a username, a password, and a six-digit code sent to the person's
+-- work e-mail. The PIN keypad is gone, and with it the one uncomfortable
+-- compromise in the old design: a PIN had to be *readable* so a senior could
+-- look it up, which meant keeping a recoverable copy. A password does not, so
+-- there is nothing here that anybody can read back.
 --
--- The client also requires senior staff to be able to *look up* a colleague's
--- current PIN. A one-way hash cannot do that, so each PIN is held twice:
+--   password_hash   Argon2id. One way. Not reversible by anyone, at all.
+--   login_codes     the second step, hashed the same way and short-lived.
 --
---   pin_digest  hmac(pin, pepper) — deterministic, so it enforces "no two
---               logins share a PIN" as a plain unique index and gives sign-in a
---               single indexed lookup. It reveals nothing on its own.
---   pin_cipher  pgp_sym_encrypt(pin, key) — recoverable, and only by
---               reveal_pin(), which checks the caller's authority first.
---
--- Both keys live in Supabase Vault, never in this file and never in the
--- application. That is what keeps a stolen database dump from being a list of
--- everybody's PIN. The trade-off is written up in docs/spec/pin-security.md.
+-- What carries over from the PIN model is the *authority table* — who may reset
+-- whose credentials is exactly who could change whose PIN. Only the verb
+-- changed, because a hash can be replaced but never revealed.
 
 create table app_users (
   id              uuid primary key default gen_random_uuid(),
+  -- What they type to sign in.
+  username        text not null unique
+                  check (username = lower(username) and length(username) >= 3),
   name            text not null,
+  -- Where the sign-in code is sent.
+  email           text not null unique,
   role            app_role not null,
   title           text,
   -- Promoters belong to one store; everyone else is head office.
   location_id     uuid references locations(id) on delete restrict,
-  -- Deterministic digest. Unique across every login, active or not, so a
-  -- disabled person's PIN cannot be handed to the next joiner.
-  pin_digest      bytea not null unique,
-  -- Recoverable copy. Read only through reveal_pin().
-  pin_cipher      bytea not null,
-  pin_set_at      timestamptz not null default now(),
-  pin_set_by      uuid references app_users(id),
+  -- Argon2id. There is no second copy and no way back to the password.
+  password_hash   text not null,
+  password_set_at timestamptz not null default now(),
+  password_set_by uuid references app_users(id),
+  -- Set when a senior issues one, cleared once the person chooses their own.
+  must_change_password boolean not null default true,
   initials        text not null,
   accent          text not null default 'blue',
   active          boolean not null default true,
@@ -165,29 +177,50 @@ create table app_users (
 create index on app_users (role) where active;
 create index on app_users (location_id) where active;
 
--- Every PIN a person has ever held. A PIN is never reissued to the same person,
--- which is enforced here rather than trusted to the application.
-create table pin_history (
-  user_id     uuid not null references app_users(id) on delete cascade,
-  pin_digest  bytea not null,
-  retired_at  timestamptz not null default now(),
-  retired_by  uuid references app_users(id),
-  primary key (user_id, pin_digest)
+-- Every password a person has ever held, as a hash. A password is never
+-- reissued to the same person, and that is enforced here rather than trusted
+-- to the application.
+create table password_history (
+  user_id       uuid not null references app_users(id) on delete cascade,
+  password_hash text not null,
+  retired_at    timestamptz not null default now(),
+  retired_by    uuid references app_users(id),
+  primary key (user_id, password_hash)
 );
 
--- Sign-in attempts, so a keypad can be locked after five wrong PINs without
--- trusting the browser to count them.
-create table pin_attempts (
+-- The second step. A code lives for ten minutes, is good for one use, and is
+-- stored hashed — a table of live codes in clear text would undo the point of
+-- having a second step at all.
+create table login_codes (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null references app_users(id) on delete cascade,
+  code_hash   text not null,
+  created_at  timestamptz not null default now(),
+  expires_at  timestamptz not null,
+  consumed_at timestamptz,
+  attempts    integer not null default 0,
+  -- Where the attempt came from, for the rate limit below.
+  device_id   text
+);
+
+create index on login_codes (user_id, created_at desc);
+create index on login_codes (expires_at) where consumed_at is null;
+
+-- Sign-in attempts, so an account can be held after five wrong passwords
+-- without trusting the browser to count them.
+create table login_attempts (
   id         bigserial primary key,
-  -- Never the PIN that was tried, not even hashed: a log of guesses is a list
-  -- of candidate PINs.
+  -- Never the password or the code that was tried, not even hashed: a log of
+  -- guesses is a list of candidate passwords.
+  username   text,
   device_id  text not null,
   at         timestamptz not null default now(),
   succeeded  boolean not null,
   user_id    uuid references app_users(id) on delete set null
 );
 
-create index on pin_attempts (device_id, at desc);
+create index on login_attempts (username, at desc);
+create index on login_attempts (device_id, at desc);
 
 -- ── Trading ─────────────────────────────────────────────────────────────────
 
@@ -239,13 +272,21 @@ select
   c.location_id,
   c.period,
   c.period_type,
-  coalesce(sum(sl.qty * s.price_myr), 0)::numeric(14,2) as revenue_myr,
+  -- Counted on whichever price this location is counted on.
+  coalesce(
+    sum(sl.qty * case l.price_basis
+                   when 'retail' then s.retail_price_myr
+                   else s.promotion_price_myr
+                 end),
+    0
+  )::numeric(14,2) as revenue_myr,
   coalesce(sum(sl.qty), 0)                        as units,
   coalesce(sum(sl.qty) filter (where sl.country_code is not null), 0) as attributed_units
 from closings c
+join      locations  l on l.id = c.location_id
 left join sale_lines sl on sl.closing_id = c.id
-left join skus s        on s.id = sl.sku_id
-group by c.id;
+left join skus       s  on s.id = sl.sku_id
+group by c.id, l.price_basis;
 
 
 -- Every product counted every night (Q20).
@@ -446,10 +487,11 @@ create index on audit_log (kind, at desc);
 create index on audit_log (entity_id, at desc);
 create index on audit_log (table_name, entity_id, at desc);
 
--- ── PINs: who may see and change whose ──────────────────────────────────────
+-- ── Passwords: who may reset whose ──────────────────────────────────────────
 --
--- Straight from the client's instruction. The table is the whole rule, so it
--- can be read back against what they wrote:
+-- Straight from the client's instruction, and unchanged from the PIN rules that
+-- came before it. Only the verb is different: a hash can be replaced, never
+-- revealed, so there is no "who may see whose" any more.
 --
 --   IT ................. anyone, including the Managing Director and itself
 --   Managing Director .. anyone visible to him, including the Director and himself
@@ -457,14 +499,14 @@ create index on audit_log (table_name, entity_id, at desc);
 --                        but not each other, and not the Managing Director
 --   Finance ............ themselves only
 --   Warehouse .......... themselves only
---   Store Promoter ..... nobody; they use the PIN a senior gave them
---   Director ........... nobody; the role cannot edit anything
+--   Store Promoter ..... their own only
+--   Director ........... his own only; the role cannot edit anything else
 --
--- This mirrors canChangePinOf() in src/data/people.ts. The two are deliberately
--- duplicated: the browser copy decides which buttons appear, this copy decides
--- what actually happens.
+-- This mirrors canResetPasswordOf() in src/data/people.ts. The two are
+-- deliberately duplicated: the browser copy decides which buttons appear, this
+-- copy decides what actually happens.
 
-create or replace function pin_targets(actor app_role)
+create or replace function reset_targets(actor app_role)
 returns app_role[]
 language sql immutable
 as $fn$
@@ -475,7 +517,8 @@ as $fn$
     when 'pa'        then array['pa','finance','warehouse','promoter']::app_role[]
     when 'finance'   then array['finance']::app_role[]
     when 'warehouse' then array['warehouse']::app_role[]
-    else array[]::app_role[]
+    when 'promoter'  then array['promoter']::app_role[]
+    else array['director']::app_role[]
   end;
 $fn$;
 
@@ -487,76 +530,34 @@ as $fn$
   select not target.hidden or target.id = actor.id;
 $fn$;
 
-create or replace function can_change_pin_of(actor app_users, target app_users)
+create or replace function can_reset_password_of(actor app_users, target app_users)
 returns boolean
 language sql immutable
 as $fn$
   select
     can_see_user(actor, target)
-    and target.role = any (pin_targets(actor.role))
+    and target.role = any (reset_targets(actor.role))
     and case
       -- Ops and the PA reach their own role only for themselves, never a colleague.
       when actor.role in ('ops','pa') and actor.role = target.role then actor.id = target.id
-      -- Finance and the Warehouse change their own PIN only.
-      when actor.role in ('finance','warehouse') then actor.id = target.id
+      -- These four reach nobody but themselves.
+      when actor.role in ('finance','warehouse','promoter','director') then actor.id = target.id
       else true
     end;
 $fn$;
 
--- Reading a PIN follows the same authority as changing it.
-create or replace function can_see_pin_of(actor app_users, target app_users)
-returns boolean
-language sql immutable
-as $fn$
-  select can_change_pin_of(actor, target);
-$fn$;
-
--- ── PIN storage ─────────────────────────────────────────────────────────────
+-- ── Setting a password ──────────────────────────────────────────────────────
 --
--- Both secrets come from Supabase Vault, so they are not in this file, not in
--- the application, and not in a database dump.
+-- The hash arrives already computed. Argon2id belongs in the Edge Function, not
+-- here: hashing in SQL would mean the password itself travelling through the
+-- query log and the statement cache on its way in.
 
-create or replace function pin_pepper() returns text
-language sql stable security definer as $fn$
-  select decrypted_secret from vault.decrypted_secrets where name = 'pin_pepper';
-$fn$;
-
-create or replace function pin_key() returns text
-language sql stable security definer as $fn$
-  select decrypted_secret from vault.decrypted_secrets where name = 'pin_key';
-$fn$;
-
-create or replace function pin_digest_of(pin text)
-returns bytea
-language sql stable security definer as $fn$
-  select hmac(pin, pin_pepper(), 'sha256');
-$fn$;
-
--- Six digits, and not one of the obvious ones.
-create or replace function pin_is_acceptable(pin text)
-returns boolean
-language sql immutable as $fn$
-  select pin ~ '^[0-9]{6}$'
-     and pin not in (
-       '000000','111111','222222','333333','444444','555555',
-       '666666','777777','888888','999999',
-       '123456','654321','012345','543210','123123','121212','112233'
-     );
-$fn$;
-
--- Sets a PIN. Every rule the client gave is checked here, so no application
--- path can skip one:
---   * the caller must have authority over the target
---   * six digits, and not an obvious one
---   * not already in use by any other login
---   * never one this person has held before
-create or replace function set_pin(target_id uuid, new_pin text)
+create or replace function set_password(target_id uuid, new_hash text, issued boolean default false)
 returns void
 language plpgsql security definer as $fn$
 declare
   actor  app_users;
   target app_users;
-  digest bytea;
 begin
   actor := current_app_user();
   if actor is null then raise exception 'Not signed in'; end if;
@@ -564,120 +565,119 @@ begin
   select * into target from app_users where id = target_id;
   if target is null then raise exception 'That login no longer exists'; end if;
 
-  if not can_change_pin_of(actor, target) then
-    raise exception 'You cannot change the PIN for %', target.name;
+  if not can_reset_password_of(actor, target) then
+    raise exception 'You cannot set the password for %', target.name;
   end if;
 
-  if not pin_is_acceptable(new_pin) then
-    raise exception 'A PIN is six digits and must not be an obvious one';
+  if exists (
+    select 1 from password_history h
+    where h.user_id = target_id and h.password_hash = new_hash
+  ) or target.password_hash = new_hash then
+    raise exception 'That password has been used before. Choose a new one';
   end if;
 
-  digest := pin_digest_of(new_pin);
-
-  if exists (select 1 from app_users u where u.id <> target_id and u.pin_digest = digest) then
-    raise exception 'Another login already uses that PIN';
-  end if;
-  if digest = target.pin_digest then
-    raise exception 'That is already their current PIN';
-  end if;
-  if exists (select 1 from pin_history h where h.user_id = target_id and h.pin_digest = digest) then
-    raise exception 'They have used that PIN before. Choose a new one';
-  end if;
-
-  insert into pin_history (user_id, pin_digest, retired_by)
-  values (target_id, target.pin_digest, actor.id)
+  insert into password_history (user_id, password_hash, retired_by)
+  values (target_id, target.password_hash, actor.id)
   on conflict do nothing;
 
   update app_users
-  set pin_digest = digest,
-      pin_cipher = pgp_sym_encrypt(new_pin, pin_key()),
-      pin_set_at = now(),
-      pin_set_by = actor.id
+  set password_hash = new_hash,
+      password_set_at = now(),
+      password_set_by = actor.id,
+      must_change_password = (issued and actor.id <> target_id)
   where id = target_id;
 
   insert into audit_log (actor_id, actor_name, actor_role, kind, action, summary,
                          entity_id, table_name)
-  values (actor.id, actor.name, actor.role, 'pin', 'pin.changed',
-          case when actor.id = target.id
-               then 'Changed their own PIN'
-               else format('Changed the PIN for %s', target.name) end,
+  values (actor.id, actor.name, actor.role, 'password',
+          case when actor.id = target_id then 'password.changed' else 'password.reset' end,
+          case when actor.id = target_id
+               then 'Changed their own password'
+               else format('Reset the password for %s', target.name) end,
           target_id, 'app_users');
 end $fn$;
 
--- Reads a PIN back. The client asked for this; the authority check and the
--- audit row are what make it defensible.
-create or replace function reveal_pin(target_id uuid)
-returns text
-language plpgsql security definer as $fn$
-declare
-  actor  app_users;
-  target app_users;
-begin
-  actor := current_app_user();
-  select * into target from app_users where id = target_id;
-  if actor is null or target is null then raise exception 'Not permitted'; end if;
-  if not can_see_pin_of(actor, target) then
-    raise exception 'You cannot see the PIN for %', target.name;
-  end if;
-
-  -- The look-up itself is the thing worth recording. The PIN never appears in
-  -- the row — a log of PINs would defeat the point of encrypting them.
-  insert into audit_log (actor_id, actor_name, actor_role, kind, action, summary,
-                         entity_id, table_name)
-  values (actor.id, actor.name, actor.role, 'pin', 'pin.revealed',
-          case when actor.id = target.id
-               then 'Looked at their own PIN'
-               else format('Looked at the PIN for %s', target.name) end,
-          target_id, 'app_users');
-
-  return pgp_sym_decrypt(target.pin_cipher, pin_key());
-end $fn$;
-
--- Sign-in. One indexed lookup, and the caller learns nothing from a failure
--- beyond the fact that it failed.
+-- ── Signing in ──────────────────────────────────────────────────────────────
 --
--- It signals failure by returning NULL rather than by raising. That is
--- deliberate: `raise exception` rolls the transaction back, which would take
--- the "somebody tried a wrong PIN" row with it — and a sign-in log that records
--- only the successes is not a sign-in log. The caller checks for NULL.
-create or replace function sign_in_with_pin(pin text, device_id text)
-returns app_users
+-- Two steps. The first checks the password and issues a code; the second
+-- redeems it. Both return NULL rather than raising on failure, so the row
+-- recording the attempt survives — `raise exception` rolls the transaction back
+-- and would take the evidence with it.
+
+create or replace function begin_sign_in(
+  p_username text,
+  password_ok boolean,
+  p_code_hash text,
+  p_device_id text
+)
+returns uuid
 language plpgsql security definer as $fn$
 declare
   found  app_users;
   recent integer;
+  code_id uuid;
 begin
   select count(*) into recent
-  from pin_attempts a
-  where a.device_id = sign_in_with_pin.device_id
+  from login_attempts a
+  where a.username = lower(p_username)
     and not a.succeeded
     and a.at > now() - interval '1 minute';
 
   if recent >= 5 then
     insert into audit_log (actor_name, kind, action, summary)
-    values ('Someone at the keypad', 'session', 'session.pin_locked',
-            'A keypad was locked after five wrong PINs');
+    values ('Someone signing in', 'session', 'session.locked',
+            'An account was held after five wrong passwords');
     return null;
   end if;
 
   select * into found from app_users u
-  where u.pin_digest = pin_digest_of(pin) and u.active;
+  where u.username = lower(p_username) and u.active;
 
-  insert into pin_attempts (device_id, succeeded, user_id)
-  values (device_id, found.id is not null, found.id);
+  insert into login_attempts (username, device_id, succeeded, user_id)
+  values (lower(p_username), p_device_id, password_ok and found.id is not null, found.id);
+
+  if found.id is null or not password_ok then
+    insert into audit_log (actor_name, kind, action, summary)
+    values ('Someone signing in', 'session', 'session.sign_in_failed',
+            'A sign-in was refused — wrong username or password');
+    return null;
+  end if;
+
+  insert into login_codes (user_id, code_hash, expires_at, device_id)
+  values (found.id, p_code_hash, now() + interval '10 minutes', p_device_id)
+  returning id into code_id;
+
+  insert into audit_log (actor_id, actor_name, actor_role, kind, action, summary, entity_id)
+  values (found.id, found.name, found.role, 'session', 'session.code_sent',
+          'A sign-in code was sent', found.id);
+
+  return code_id;
+end $fn$;
+
+create or replace function redeem_sign_in_code(p_code_id uuid, p_code_hash text)
+returns app_users
+language plpgsql security definer as $fn$
+declare
+  row_code login_codes;
+  found    app_users;
+begin
+  select * into row_code from login_codes where id = p_code_id for update;
+  if row_code is null or row_code.consumed_at is not null then return null; end if;
+  if row_code.expires_at < now() or row_code.attempts >= 5 then return null; end if;
+
+  if row_code.code_hash <> p_code_hash then
+    update login_codes set attempts = attempts + 1 where id = p_code_id;
+    return null;
+  end if;
+
+  update login_codes set consumed_at = now() where id = p_code_id;
+  select * into found from app_users where id = row_code.user_id and active;
+  if found.id is null then return null; end if;
 
   insert into audit_log (actor_id, actor_name, actor_role, kind, action, summary, entity_id,
                          location_id)
-  values (found.id,
-          coalesce(found.name, 'Someone at the keypad'),
-          found.role,
-          'session',
-          case when found.id is null then 'session.pin_failed' else 'session.signed_in' end,
-          case when found.id is null
-               then 'A PIN that belongs to nobody was entered at the keypad'
-               else format('%s signed in', found.name) end,
-          found.id,
-          found.location_id);
+  values (found.id, found.name, found.role, 'session', 'session.signed_in',
+          format('%s signed in', found.name), found.id, found.location_id);
 
   return found;
 end $fn$;
@@ -741,8 +741,9 @@ alter table targets         enable row level security;
 alter table promotions          enable row level security;
 alter table promotion_locations enable row level security;
 alter table promotion_skus      enable row level security;
-alter table pin_history         enable row level security;
-alter table pin_attempts        enable row level security;
+alter table password_history    enable row level security;
+alter table login_codes         enable row level security;
+alter table login_attempts      enable row level security;
 alter table alerts          enable row level security;
 alter table audit_log       enable row level security;
 
@@ -762,9 +763,9 @@ create policy write_skus on skus for all
 -- everyone but IT. Only the MD, Kelly, Chloe and IT create or change a login.
 --
 -- Note what a select policy cannot do: once a row is visible, every column on
--- it is readable. That is precisely why the PIN is not a readable column —
--- pin_cipher is meaningless without the Vault key, and reveal_pin() is the only
--- way through it.
+-- it is readable. It does not matter here — `password_hash` is an Argon2 digest
+-- and gives nothing away, which is the whole reason this is safer than the PIN
+-- column it replaced.
 create policy read_users on app_users for select using (
   current_app_user() is not null
   and (not hidden or id = (select id from current_app_user()))
@@ -839,9 +840,9 @@ create policy rw_promotion_skus on promotion_skus for all
 create policy read_alerts on alerts for select using (current_app_user() is not null);
 create policy write_alerts on alerts for all using (can_write()) with check (can_write());
 
--- Nobody reads the PIN tables directly. set_pin(), reveal_pin() and
--- sign_in_with_pin() are security definer and are the only way in, so those two
--- tables carry no policy at all and RLS denies everything by default.
+-- Nobody reads the credential tables directly. set_password(), begin_sign_in()
+-- and redeem_sign_in_code() are security definer and are the only way in, so
+-- those three tables carry no policy at all and RLS denies everything.
 
 -- The activity log.
 --
@@ -939,9 +940,9 @@ end $fn$;
 -- The safety net. Attached to every table that holds something worth tracing,
 -- so a change made outside the application is still recorded.
 --
--- It deliberately never touches app_users.pin_cipher or pin_digest: a diff of
--- those columns would be a history of everybody's PINs, which is the one thing
--- this log must never become. set_pin() and reveal_pin() write their own rows.
+-- It deliberately drops app_users.password_hash from its diffs. The hash gives
+-- nothing away on its own, but a log full of them is a free head start for
+-- anybody cracking offline. set_password() writes its own readable row.
 -- Which category a table's changes belong to, so the trigger's rows sit
 -- alongside the application's on the same Activity screen.
 create or replace function kind_for_table(t text)
@@ -976,11 +977,11 @@ begin
   )::uuid;
 
   payload := case tg_op
-    when 'INSERT' then jsonb_build_object('new', to_jsonb(new) - 'pin_cipher' - 'pin_digest')
-    when 'DELETE' then jsonb_build_object('old', to_jsonb(old) - 'pin_cipher' - 'pin_digest')
+    when 'INSERT' then jsonb_build_object('new', to_jsonb(new) - 'password_hash')
+    when 'DELETE' then jsonb_build_object('old', to_jsonb(old) - 'password_hash')
     else jsonb_build_object(
-      'old', to_jsonb(old) - 'pin_cipher' - 'pin_digest',
-      'new', to_jsonb(new) - 'pin_cipher' - 'pin_digest'
+      'old', to_jsonb(old) - 'password_hash',
+      'new', to_jsonb(new) - 'password_hash'
     )
   end;
 

@@ -18,14 +18,17 @@ import {
   locations,
   tradingLocations,
   locationById,
+  basisOf,
   CHANNELS,
   type Channel,
   type Region,
 } from '../data/locations'
 import {
   skus,
+  countedSkus,
   skuById,
   collections,
+  priceOfId,
   productById,
   type CollectionId,
   type Variant,
@@ -160,7 +163,8 @@ export const totalsFor = (data: CrmData, f: Filter): Totals => {
   for (const c of filteredClosings(data, f)) {
     for (const line of c.lines) {
       if (!lineMatches(line, allowed, f)) continue
-      const price = skuById(line.skuId)?.priceMYR ?? 0
+      // Counted on whichever price this location is counted on (Revision 2).
+      const price = priceOfId(line.skuId, basisOf(c.locationId))
       t.revenue += line.qty * price
       t.units += line.qty
       if (line.countryCode) t.attributedUnits += line.qty
@@ -243,7 +247,7 @@ export const selectTimeSeries = (data: CrmData, f: Filter, metric: Metric): Seri
     const bucket = byDate.get(c.period) ?? { revenue: 0, units: 0 }
     for (const line of c.lines) {
       if (!lineMatches(line, allowed, f)) continue
-      bucket.revenue += line.qty * (skuById(line.skuId)?.priceMYR ?? 0)
+      bucket.revenue += line.qty * priceOfId(line.skuId, basisOf(c.locationId))
       bucket.units += line.qty
     }
     byDate.set(c.period, bucket)
@@ -319,7 +323,7 @@ export const selectOriginMix = (data: CrmData, f: Filter, top = 6): OriginSlice[
       if (!lineMatches(line, allowed, f)) continue
       const bucket = tally.get(line.countryCode) ?? { units: 0, revenue: 0 }
       bucket.units += line.qty
-      bucket.revenue += line.qty * (skuById(line.skuId)?.priceMYR ?? 0)
+      bucket.revenue += line.qty * priceOfId(line.skuId, basisOf(c.locationId))
       tally.set(line.countryCode, bucket)
     }
   }
@@ -338,7 +342,7 @@ export const selectSkusForCountry = (data: CrmData, f: Filter, countryCode: stri
       if (!allowed.has(line.skuId)) continue
       const b = tally.get(line.skuId) ?? { units: 0, revenue: 0 }
       b.units += line.qty
-      b.revenue += line.qty * (skuById(line.skuId)?.priceMYR ?? 0)
+      b.revenue += line.qty * priceOfId(line.skuId, basisOf(c.locationId))
       tally.set(line.skuId, b)
     }
   }
@@ -378,7 +382,7 @@ export const selectSkuPerformance = (data: CrmData, f: Filter): SkuPerformance[]
       if (!lineMatches(line, allowed, f)) continue
       const b = tally.get(line.skuId) ?? { units: 0, revenue: 0 }
       b.units += line.qty
-      b.revenue += line.qty * (skuById(line.skuId)?.priceMYR ?? 0)
+      b.revenue += line.qty * priceOfId(line.skuId, basisOf(c.locationId))
       tally.set(line.skuId, b)
     }
   }
@@ -453,7 +457,7 @@ export const selectLocationRows = (
         .filter((c) => c.locationId === l.id && monthKey(c.period) === month)
         .reduce(
           (a, c) =>
-            a + c.lines.reduce((s, ln) => s + ln.qty * (skuById(ln.skuId)?.priceMYR ?? 0), 0),
+            a + c.lines.reduce((s, ln) => s + ln.qty * priceOfId(ln.skuId, l.priceBasis), 0),
           0,
         )
 
@@ -553,7 +557,9 @@ export const selectStock = (data: CrmData, locationId: string): StockRow[] => {
       0,
     )
 
-  return skus.map((s) => {
+  // Testers are ordered but never counted on a shelf (Revision 2), so they are
+  // not part of stock on hand.
+  return countedSkus.map((s) => {
     const onHand = latest?.stockCount.find((m) => m.skuId === s.id)?.counted ?? 0
     const velocity = soldOf(s.id) / periods
     const daysCover = velocity > 0 ? onHand / velocity : null
@@ -699,8 +705,12 @@ export const selectOpenPos = (data: CrmData, locationId?: string): PurchaseOrder
     .filter((p) => isOpen(p) && (!locationId || p.locationId === locationId))
     .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
 
+/** What an order is worth, on the basis the destination store is counted on. */
 export const poValue = (po: PurchaseOrder): number =>
-  po.lines.reduce((a, l) => a + effectiveQty(l) * (skuById(l.skuId)?.priceMYR ?? 0), 0)
+  po.lines.reduce(
+    (a, l) => a + effectiveQty(l) * priceOfId(l.skuId, basisOf(po.locationId)),
+    0,
+  )
 
 export const poUnits = (po: PurchaseOrder): number =>
   po.lines.reduce((a, l) => a + effectiveQty(l), 0)

@@ -6,9 +6,10 @@ import { Badge, StatusChip } from '../../components/ui/Badge'
 import { StatTile } from '../../components/ui/StatTile'
 import { DataTable, EmptyState, type Column } from '../../components/ui/DataTable'
 import { Modal } from '../../components/ui/Modal'
-import { SegmentedControl, Select } from '../../components/ui/Field'
+import { SegmentedControl } from '../../components/ui/Field'
 import { Icon } from '../../components/ui/icons'
 import { StockItemDetail } from '../../components/StockItemDetail'
+import { StorePicker } from '../../components/StorePicker'
 import { ChartFrame } from '../../components/charts/ChartFrame'
 import { TrendChart } from '../../components/charts/TrendChart'
 import { OriginRibbon } from '../../components/charts/OriginRibbon'
@@ -25,7 +26,7 @@ import {
   totalsFor,
   type StockRow,
 } from '../../store/selectors'
-import { CHANNEL_LABEL, locationById, locations } from '../../data/locations'
+import { CHANNEL_LABEL, locationById } from '../../data/locations'
 import { addDays, formatDate, monthKey, startOfMonth } from '../../lib/dates'
 import { downloadCsv } from '../../lib/exportCsv'
 import { change, num, rm } from '../../lib/format'
@@ -203,19 +204,11 @@ export function StoreDetail() {
 
         <div className="flex flex-wrap items-center gap-2">
           <SegmentedControl<RangeKey> size="sm" value={range} onChange={setRange} options={RANGES} />
-          <Select
+          <StorePicker
             value={id}
-            onChange={(e) => navigate(`/stores/${e.target.value}`)}
-            className="h-8 w-[170px] text-[12.5px]"
-          >
-            {locations
-              .filter((l) => l.status === 'open')
-              .map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.shortName}
-                </option>
-              ))}
-          </Select>
+            onChange={(next) => navigate(`/stores/${next}`)}
+            className="h-8 w-[210px] text-[12.5px]"
+          />
         </div>
       </div>
 

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { buildSeed, DEMO_TODAY, SEED_VALUE } from './seed'
-import { tradingLocations, locationById, locationsInChannel } from './locations'
-import { skuById, skus } from './products'
+import { basisOf, tradingLocations, locationById, locationsInChannel } from './locations'
+import { countedSkus, priceOfId, skuById } from './products'
 import { seedPeople } from './people'
 import { PO_STATUSES } from './types'
 
@@ -22,7 +22,8 @@ describe('determinism', () => {
 describe('the estate', () => {
   it('matches the store list the client sent', () => {
     expect(locationsInChannel('main').length).toBe(12)
-    expect(locationsInChannel('dealer').length).toBe(56)
+    // Revision 2 replaced the original 56 dealers with 44.
+    expect(locationsInChannel('dealer').length).toBe(44)
     expect(locationsInChannel('consignment').length).toBe(6)
   })
 
@@ -58,7 +59,7 @@ describe('daily channels', () => {
   it('reconciles revenue against its own sale lines', () => {
     for (const c of daily) {
       const fromLines = c.lines.reduce(
-        (a, l) => a + l.qty * (skuById(l.skuId)?.priceMYR ?? 0),
+        (a, l) => a + l.qty * priceOfId(l.skuId, basisOf(c.locationId)),
         0,
       )
       expect(fromLines).toBe(c.revenueMYR)
@@ -75,7 +76,8 @@ describe('daily channels', () => {
 
   it('counts every product every night', () => {
     for (const c of counted) {
-      expect(c.stockCount.length).toBe(skus.length)
+      // Testers are ordered but never counted on a shelf (Revision 2).
+      expect(c.stockCount.length).toBe(countedSkus.length)
       for (const m of c.stockCount) expect(m.counted).toBeGreaterThanOrEqual(0)
     }
   })
@@ -145,13 +147,17 @@ describe('consignment', () => {
 })
 
 describe('unfiled days', () => {
-  it('leaves the promoter’s own store open today so the closing is reachable', () => {
-    const promoter = seedPeople.find((p) => p.role === 'promoter')!
-    expect(
-      data.closings.some(
-        (c) => c.locationId === promoter.locationId && c.period === DEMO_TODAY,
-      ),
-    ).toBe(false)
+  it('leaves a promoter’s own store open today so the closing is reachable', () => {
+    // The seed deliberately holds Pavilion open. A walkthrough needs at least
+    // one promoter whose store has not filed, or "Close the day" is a dead end.
+    const open = seedPeople.filter(
+      (p) =>
+        p.role === 'promoter' &&
+        !data.closings.some(
+          (c) => c.locationId === p.locationId && c.period === DEMO_TODAY,
+        ),
+    )
+    expect(open.length).toBeGreaterThan(0)
   })
 
   it('raises a missed-closing alert for each back-dated gap', () => {
@@ -204,7 +210,7 @@ describe('write-offs and staff sales', () => {
     for (const c of withStaff) {
       // Staff revenue is recorded separately and never folded into the lines.
       const fromLines = c.lines.reduce(
-        (a, l) => a + l.qty * (skuById(l.skuId)?.priceMYR ?? 0),
+        (a, l) => a + l.qty * priceOfId(l.skuId, basisOf(c.locationId)),
         0,
       )
       expect(fromLines).toBe(c.revenueMYR)

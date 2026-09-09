@@ -6,20 +6,20 @@ import { StatTile } from '../../components/ui/StatTile'
 import { DataTable, type Column } from '../../components/ui/DataTable'
 import { Modal } from '../../components/ui/Modal'
 import { Field, Select, TextInput } from '../../components/ui/Field'
-import { PinDialog } from '../../components/PinDialog'
+import { PasswordDialog } from '../../components/PasswordDialog'
 import { Icon } from '../../components/ui/icons'
 import { useCan, useCurrentUser } from '../../store/useAuth'
 import { useData } from '../../store/useData'
 import { useToasts } from '../../components/ui/Toast'
 import {
   can,
-  canChangePinOf,
-  canSeePinOf,
+  canResetPasswordOf,
   canSeeUser,
+  emailFor,
   initialsOf,
-  suggestPin,
+  suggestPassword,
+  suggestUsername,
   HOME_FOR_ROLE,
-  PIN_LENGTH,
   ROLE_ACCESS,
   ROLE_LABEL,
   ACCENT_GRADIENT,
@@ -38,9 +38,11 @@ const ACCENTS: Person['accent'][] = ['violet', 'blue', 'cyan', 'teal']
  * id from the outset: a select whose value is `undefined` still *renders* its
  * first option, so leaving it blank shows a store that was never chosen.
  */
-const blank = (defaultLocationId: string, pin: string): Person => ({
+const blank = (defaultLocationId: string): Person => ({
   id: '',
+  username: '',
   name: '',
+  email: '',
   role: 'promoter',
   title: '',
   blurb: 'Record today’s sales, count the stock, ask HQ for more.',
@@ -48,10 +50,11 @@ const blank = (defaultLocationId: string, pin: string): Person => ({
   home: HOME_FOR_ROLE.promoter,
   accent: 'teal',
   locationId: defaultLocationId,
-  pin,
-  pinHistory: [],
-  pinSetAt: new Date().toISOString(),
-  pinSetBy: '',
+  password: '',
+  passwordHistory: [],
+  passwordSetAt: new Date().toISOString(),
+  passwordSetBy: '',
+  mustChangePassword: true,
   active: true,
 })
 
@@ -59,8 +62,12 @@ const blank = (defaultLocationId: string, pin: string): Person => ({
  * Logins.
  *
  * Creating staff sits with the Managing Director, the Operational Manager, the
- * PA and IT. Who may change or see whose PIN is narrower still, and the rules
- * live in `data/people.ts` so this screen and the store agree.
+ * PA and IT. Who may reset whose password is narrower still, and the rules live
+ * in `data/people.ts` so this screen and the store agree.
+ *
+ * There is no column showing a password and no way to reveal one. They are
+ * stored so that they cannot be read back — by anyone, including the four
+ * people on this screen — which is the point of the arrangement.
  *
  * IT's own login is hidden from everyone else, so the list you see depends on
  * who you are.
@@ -72,16 +79,13 @@ export function Users() {
   const addUser = useData((s) => s.addUser)
   const updateUser = useData((s) => s.updateUser)
   const setUserActive = useData((s) => s.setUserActive)
-  const revealPin = useData((s) => s.revealPin)
   const push = useToasts((s) => s.push)
 
   const [editing, setEditing] = useState<Person | null>(null)
   const [isNew, setIsNew] = useState(false)
+  const [firstPassword, setFirstPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
-
-  const [pinTarget, setPinTarget] = useState<Person | null>(null)
-  /** id → the PIN, once it has been asked for. Cleared when it is hidden again. */
-  const [revealed, setRevealed] = useState<Record<string, string>>({})
+  const [passwordTarget, setPasswordTarget] = useState<Person | null>(null)
 
   const mainStores = locationsInChannel('main').filter((l) => l.status === 'open')
 
@@ -92,7 +96,8 @@ export function Users() {
   )
 
   const openNew = () => {
-    setEditing(blank(mainStores[0]?.id ?? '', suggestPin(allUsers)))
+    setEditing(blank(mainStores[0]?.id ?? ''))
+    setFirstPassword(suggestPassword())
     setIsNew(true)
     setError(null)
   }
@@ -121,37 +126,42 @@ export function Users() {
     if (!editing || !me) return
     const name = editing.name.trim()
     if (!name) return setError('Give the person a name.')
+
+    const username = (editing.username || suggestUsername(name, allUsers)).trim().toLowerCase()
+    if (!/^[a-z0-9._-]{3,}$/.test(username)) {
+      return setError('A username is at least three characters, letters and numbers.')
+    }
+    if (allUsers.some((u) => u.username === username && u.id !== editing.id)) {
+      return setError('Somebody already has that username.')
+    }
     if (editing.role === 'promoter' && !editing.locationId) {
       return setError('A store promoter has to belong to a store.')
     }
-    if (isNew) {
-      if (!/^\d{6}$/.test(editing.pin)) {
-        return setError(`Set a ${PIN_LENGTH}-digit PIN for them.`)
-      }
-      if (allUsers.some((u) => u.pin === editing.pin)) {
-        return setError('Another login already uses that PIN.')
-      }
+    if (isNew && firstPassword.trim().length < 10) {
+      return setError('Set a starting password of at least 10 characters.')
     }
 
     const person: Person = {
       ...editing,
       name,
+      username,
+      email: editing.email.trim() || emailFor(username),
       initials: editing.initials.trim() || initialsOf(name),
       title: editing.title.trim() || ROLE_LABEL[editing.role],
-      id: isNew
-        ? `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now().toString(36).slice(-4)}`
-        : editing.id,
-      pinSetBy: isNew ? me.name : editing.pinSetBy,
+      id: isNew ? username : editing.id,
+      password: isNew ? firstPassword.trim() : editing.password,
+      passwordSetBy: isNew ? me.name : editing.passwordSetBy,
+      mustChangePassword: isNew ? true : editing.mustChangePassword,
       placeholder: false,
     }
 
     if (isNew) {
       addUser(person)
-      push(`${person.name} can now sign in with PIN ${person.pin}`, 'good')
+      push(`${person.name} can sign in as ${person.username}`, 'good')
     } else {
-      // The PIN is never changed from this form — it has its own guarded flow.
-      const { pin, pinHistory, pinSetAt, pinSetBy, ...rest } = person
-      void pin, pinHistory, pinSetAt, pinSetBy
+      // The password is never changed from this form — it has its own flow.
+      const { password, passwordHistory, passwordSetAt, passwordSetBy, ...rest } = person
+      void password, passwordHistory, passwordSetAt, passwordSetBy
       updateUser(person.id, rest)
       push(`${person.name} updated`, 'good')
     }
@@ -165,25 +175,6 @@ export function Users() {
     }
     setUserActive(p.id, !p.active)
     push(p.active ? `${p.name} can no longer sign in` : `${p.name} can sign in again`, 'info')
-  }
-
-  /**
-   * Showing a PIN goes through the store rather than reading `p.pin` off the
-   * row, because that is what puts a line in the activity log. Four people can
-   * read fifteen PINs; each time they do, it is written down.
-   */
-  const toggleReveal = (p: Person) => {
-    if (revealed[p.id]) {
-      setRevealed(({ [p.id]: _gone, ...rest }) => rest)
-      return
-    }
-    if (!me) return
-    const result = revealPin({ actor: me, targetId: p.id })
-    if (!result.ok || !result.pin) {
-      push(result.error ?? 'That PIN cannot be shown.', 'critical')
-      return
-    }
-    setRevealed((r) => ({ ...r, [p.id]: result.pin! }))
   }
 
   const tick = (on: boolean) =>
@@ -206,11 +197,11 @@ export function Users() {
           </span>
           <div className="min-w-0">
             <p className="text-[13px] leading-tight text-ink">{p.name}</p>
-            <p className="text-[11px] text-ink-3">{ROLE_LABEL[p.role]}</p>
+            <p className="readout text-[11px] text-ink-3">{p.username}</p>
           </div>
           {!p.active && <Badge tone="neutral">Disabled</Badge>}
           {p.hidden && <Badge tone="active">Hidden</Badge>}
-          {p.placeholder && <Badge tone="warn">Name to confirm</Badge>}
+          {p.placeholder && <Badge tone="warn">Store to confirm</Badge>}
         </div>
       ),
     },
@@ -227,93 +218,77 @@ export function Users() {
       ),
     },
     {
-      key: 'pin',
-      header: 'PIN',
+      key: 'password',
+      header: 'Password',
       width: '150px',
-      render: (p) => {
-        if (!me || !canSeePinOf(me, p)) {
-          return <span className="text-[12px] text-ink-3">••••••</span>
-        }
-        const shown = revealed[p.id]
-        return (
-          <div className="flex items-center gap-1.5">
-            <span className="readout text-[13px] font-semibold text-ink">
-              {shown ?? '••••••'}
-            </span>
-            <button
-              onClick={() => toggleReveal(p)}
-              aria-label={shown ? `Hide ${p.name}'s PIN` : `Show ${p.name}'s PIN`}
-              className="text-ink-3 transition-colors hover:text-primary"
-            >
-              <Icon name={shown ? 'eyeOff' : 'eye'} className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        )
-      },
+      render: (p) => (
+        <div>
+          <p className="text-[12px] text-ink-2">
+            {p.mustChangePassword ? 'Not yet chosen' : 'Set by ' + p.passwordSetBy}
+          </p>
+          <p className="readout text-[10.5px] text-ink-3">{p.passwordSetAt.slice(0, 10)}</p>
+        </div>
+      ),
     },
     { key: 'edit', header: 'Can edit', align: 'right', width: '80px', render: (p) => tick(can(p.role).canEdit) },
     { key: 'approve', header: 'Approves', align: 'right', width: '92px', render: (p) => tick(can(p.role).approvePurchaseOrders) },
-    { key: 'catalogue', header: 'Edits products', align: 'right', width: '112px', render: (p) => tick(can(p.role).manageCatalogue) },
     { key: 'users', header: 'Adds staff', align: 'right', width: '96px', render: (p) => tick(can(p.role).manageUsers) },
-    ...(capability.manageUsers || me
-      ? [
-          {
-            key: 'actions',
-            header: '',
-            align: 'right' as const,
-            width: '210px',
-            render: (p: Person) => (
-              <div className="flex justify-end gap-1">
-                {me && canChangePinOf(me, p) && (
-                  <Button size="sm" variant="ghost" onClick={() => setPinTarget(p)}>
-                    {p.id === me.id ? 'My PIN' : 'Set PIN'}
-                  </Button>
-                )}
-                {capability.manageUsers && (
-                  <>
-                    <Button size="sm" variant="ghost" onClick={() => openEdit(p)}>
-                      Edit
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => toggleActive(p)}>
-                      {p.active ? 'Disable' : 'Enable'}
-                    </Button>
-                  </>
-                )}
-              </div>
-            ),
-          },
-        ]
-      : []),
+    {
+      key: 'actions',
+      header: '',
+      align: 'right',
+      width: '230px',
+      render: (p: Person) => (
+        <div className="flex justify-end gap-1">
+          {me && canResetPasswordOf(me, p) && (
+            <Button size="sm" variant="ghost" onClick={() => setPasswordTarget(p)}>
+              {p.id === me.id ? 'My password' : 'Reset'}
+            </Button>
+          )}
+          {capability.manageUsers && (
+            <>
+              <Button size="sm" variant="ghost" onClick={() => openEdit(p)}>
+                Edit
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => toggleActive(p)}>
+                {p.active ? 'Disable' : 'Enable'}
+              </Button>
+            </>
+          )}
+        </div>
+      ),
+    },
   ]
 
   const exportRows = () =>
     downloadCsv(
       'legendary-logins.csv',
-      ['Name', 'Role', 'Access', 'Where', 'Active', 'PIN last set', 'Set by'],
+      ['Name', 'Username', 'E-mail', 'Role', 'Access', 'Where', 'Active', 'Password set', 'Set by'],
       users.map((p) => [
         p.name,
+        p.username,
+        p.email,
         ROLE_LABEL[p.role],
         ROLE_ACCESS[p.role],
         p.locationId ? (locationById(p.locationId)?.name ?? '') : 'Head Office',
         p.active ? 'Yes' : 'No',
-        p.pinSetAt.slice(0, 10),
-        p.pinSetBy,
+        p.passwordSetAt.slice(0, 10),
+        p.passwordSetBy,
       ]),
     )
 
   const active = users.filter((u) => u.active)
+  const awaiting = active.filter((u) => u.mustChangePassword).length
 
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="eyebrow">Head Office</p>
-          <h1 className="page-title mt-1">
-            Logins
-          </h1>
+          <h1 className="page-title mt-1">Logins</h1>
           <p className="mt-1 max-w-2xl text-[13px] text-ink-2">
-            Everyone signs in with a six-digit PIN. Davy, Kelly, Chloe and Imran can add staff;
-            who may change a PIN is narrower, and the buttons below show only what you can do.
+            Everyone signs in with a username and password, then a six-digit code sent to their
+            work e-mail. Davy, Kelly, Chloe and Imran can add staff.
           </p>
         </div>
         <div className="flex gap-2">
@@ -329,12 +304,11 @@ export function Users() {
       </div>
 
       <div className="flex flex-wrap items-start gap-2.5 rounded-xl border border-line bg-surface-2 px-4 py-3">
-        <Icon name="alert" className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+        <Icon name="lock" className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
         <p className="flex-1 text-[12.5px] leading-relaxed text-ink-2">
-          A PIN is six digits, is never shared with another login, and is never reissued to the
-          same person twice. Store promoters use the PIN they are given and cannot change it
-          themselves; Finance and the Warehouse can change their own. <b className="text-ink">
-          Showing a PIN is recorded</b> — who looked, whose, and when.
+          <b className="text-ink">No password can be looked up here, by anyone.</b> They are
+          stored so that they cannot be read back — not by Davy, not by IT, and not by somebody
+          holding a copy of the database. If a person forgets theirs, set them a new one.
         </p>
       </div>
 
@@ -349,11 +323,11 @@ export function Users() {
           icon="doc"
         />
         <StatTile
-          label="View only"
-          value={active.filter((p) => !can(p.role).canEdit).length}
+          label="Yet to choose a password"
+          value={awaiting}
           format={(n) => num(Math.round(n))}
-          footnote="sees everything, changes nothing"
-          tone="cyan"
+          footnote={awaiting === 0 ? 'everybody has' : 'still on the one they were given'}
+          tone={awaiting === 0 ? 'teal' : 'cyan'}
           icon="alert"
         />
       </div>
@@ -373,7 +347,7 @@ export function Users() {
         title={isNew ? 'Add staff' : `Edit ${editing?.name}`}
         subtitle={
           isNew
-            ? 'They sign in with the PIN you set here.'
+            ? 'They sign in with the username and starting password you set here.'
             : 'Changing the role changes what they can do straight away.'
         }
         width="max-w-lg"
@@ -393,11 +367,42 @@ export function Users() {
             <Field label="Full name">
               <TextInput
                 value={editing.name}
-                onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                onChange={(e) => {
+                  const name = e.target.value
+                  setEditing({
+                    ...editing,
+                    name,
+                    username:
+                      isNew && !editing.username ? '' : editing.username,
+                  })
+                }}
                 placeholder="Nurul Aina"
                 autoFocus
               />
             </Field>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Username" hint="Leave blank and we will make one.">
+                <TextInput
+                  value={editing.username}
+                  onChange={(e) =>
+                    setEditing({ ...editing, username: e.target.value.toLowerCase() })
+                  }
+                  placeholder={editing.name ? suggestUsername(editing.name, allUsers) : 'nurulaina'}
+                  autoCapitalize="off"
+                  spellCheck={false}
+                />
+              </Field>
+              <Field label="Work e-mail" hint="Where their sign-in code goes.">
+                <TextInput
+                  value={editing.email}
+                  onChange={(e) => setEditing({ ...editing, email: e.target.value })}
+                  placeholder={emailFor(editing.username || 'nurulaina')}
+                  autoCapitalize="off"
+                  spellCheck={false}
+                />
+              </Field>
+            </div>
 
             <Field label="Job">
               <Select value={editing.role} onChange={(e) => changeRole(e.target.value as Role)}>
@@ -426,26 +431,19 @@ export function Users() {
 
             {isNew && (
               <Field
-                label="Their PIN"
-                hint="Six digits. Give this to them in person — they will use it to sign in."
+                label="Starting password"
+                hint="Hand this over in person. They will be asked to choose their own."
               >
                 <div className="flex gap-2">
                   <TextInput
-                    value={editing.pin}
-                    inputMode="numeric"
-                    maxLength={PIN_LENGTH}
-                    onChange={(e) =>
-                      setEditing({
-                        ...editing,
-                        pin: e.target.value.replace(/\D/g, '').slice(0, PIN_LENGTH),
-                      })
-                    }
-                    className="readout text-[16px] tracking-[0.3em]"
+                    value={firstPassword}
+                    onChange={(e) => setFirstPassword(e.target.value)}
+                    className="readout"
                   />
                   <Button
                     variant="secondary"
                     icon="refresh"
-                    onClick={() => setEditing({ ...editing, pin: suggestPin(allUsers) })}
+                    onClick={() => setFirstPassword(suggestPassword())}
                   >
                     New
                   </Button>
@@ -494,10 +492,10 @@ export function Users() {
         )}
       </Modal>
 
-      <PinDialog
-        open={pinTarget !== null}
-        target={pinTarget}
-        onClose={() => setPinTarget(null)}
+      <PasswordDialog
+        open={passwordTarget !== null}
+        target={passwordTarget}
+        onClose={() => setPasswordTarget(null)}
       />
     </div>
   )

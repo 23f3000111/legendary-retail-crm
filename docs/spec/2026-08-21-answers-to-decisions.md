@@ -125,7 +125,7 @@ Named responsibilities from the answers:
   has since asked for it in the CRM. Every action that changes anything is recorded with the
   person and the time, on the Activity screen, and the log is append-only in the database.
 - **Six-digit PIN sign-in for everyone.** This supersedes the Q11 answer about Gmail, at the
-  client's instruction. See [`pin-security.md`](./pin-security.md) for who may change and see
+  client's instruction. See [`auth.md`](./auth.md) for who may change and see
   whose PIN, and for the one trade-off it carries.
 - **Hosted in Malaysia** (Q82).
 - **3 years of history to migrate, from Excel** (Q85, Q86). Country data starts fresh (Q12).

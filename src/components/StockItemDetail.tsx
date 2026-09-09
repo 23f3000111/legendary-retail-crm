@@ -1,7 +1,8 @@
 import { useMemo } from 'react'
 import { useData } from '../store/useData'
+import { basisOf } from '../data/locations'
 import { selectSkuMovements, type StockRow } from '../store/selectors'
-import { skuById } from '../data/products'
+import { priceOf, skuById } from '../data/products'
 import { formatDate } from '../lib/dates'
 import { num, rm } from '../lib/format'
 
@@ -60,7 +61,7 @@ export function StockItemDetail({
         </span>
         {sku && (
           <span>
-            <span className="readout text-ink-2">{rm(sku.priceMYR)}</span> each
+            <span className="readout text-ink-2">{rm(priceOf(sku, basisOf(locationId)))}</span> each
           </span>
         )}
         {row.suggested > 0 && (

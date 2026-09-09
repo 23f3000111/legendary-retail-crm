@@ -24,7 +24,7 @@ const actions = () => written().map((e) => e.action)
 
 beforeEach(() => {
   useData.getState().resetDemo()
-  useAuth.setState({ personId: null })
+  useAuth.setState({ personId: null, pending: null, lockedUntil: null })
   setAuditActor('kelly')
 })
 
@@ -105,9 +105,10 @@ describe('every action leaves a line', () => {
     const fresh: Person = {
       ...person('siew-fang'),
       id: 'new-person',
+      username: 'nurulaina',
       name: 'Nurul Aina',
-      pin: '704318',
-      pinHistory: [],
+      password: 'Start-nurul-26',
+      passwordHistory: [],
     }
     useData.getState().addUser(fresh)
     expect(actions()[0]).toBe('login.created')
@@ -136,7 +137,7 @@ describe('every action leaves a line', () => {
       period: '2026-08-21',
       periodType: 'day' as const,
       revenueMYR: 4200,
-      tender: { cash: 1000, ewallet: 1200, card: 2000 },
+      tender: { cash: 2200, ewallet: 0, card: 2000 },
       lines: [{ skuId: 'orchid-30', qty: 3, countryCode: 'CN' }],
       staffSales: { qty: 0, revenueMYR: 0 },
       stockCount: [],
@@ -191,33 +192,32 @@ describe('every action leaves a line', () => {
 
 // ── PINs ────────────────────────────────────────────────────────────────────
 
-describe('PINs in the log', () => {
-  it('records a change without ever writing the PIN down', () => {
-    useData.getState().changePin({ actor: person('davy'), targetId: 'kim', pin: '704318' })
-    const entry = written().find((e) => e.action === 'pin.changed')!
+describe('passwords in the log', () => {
+  it('records a reset without ever writing the password down', () => {
+    useData
+      .getState()
+      .setPassword({ actor: person('davy'), targetId: 'kim', password: 'kebaya-tanjung-417' })
+    const entry = written().find((e) => e.action === 'password.reset')!
 
     expect(entry.actorName).toBe('Lim Davy')
-    expect(entry.summary).toMatch(/Changed the PIN for Kim/)
-    expect(JSON.stringify(entry)).not.toContain('704318')
+    expect(entry.summary).toMatch(/Reset the password for Kim Lim/)
+    expect(JSON.stringify(entry)).not.toContain('kebaya-tanjung-417')
+    expect(entry.kind).toBe('password')
   })
 
-  it('records a look-up, and refuses one it should not allow', () => {
-    const allowed = useData.getState().revealPin({ actor: person('davy'), targetId: 'kim' })
-    expect(allowed.ok).toBe(true)
-    expect(allowed.pin).toBe(person('kim').pin)
-    expect(actions()[0]).toBe('pin.revealed')
-
-    const before = written().length
-    const refused = useData.getState().revealPin({ actor: person('kelly'), targetId: 'davy' })
-    expect(refused.ok).toBe(false)
-    expect(refused.pin).toBeUndefined()
-    // A refusal changes nothing, so it does not pretend a look-up happened.
-    expect(written()).toHaveLength(before)
+  it('tells a self-change apart from a reset', () => {
+    useData
+      .getState()
+      .setPassword({ actor: person('kim'), targetId: 'kim', password: 'kebaya-tanjung-417' })
+    expect(written()[0].action).toBe('password.changed')
+    expect(written()[0].summary).toBe('Changed their own password')
   })
 
-  it('never lets a failed PIN change reach the log', () => {
+  it('never lets a refused change reach the log', () => {
     const before = written().length
-    useData.getState().changePin({ actor: person('kelly'), targetId: 'chloe', pin: '704318' })
+    useData
+      .getState()
+      .setPassword({ actor: person('kelly'), targetId: 'chloe', password: 'kebaya-tanjung-417' })
     expect(written()).toHaveLength(before)
   })
 })
@@ -225,23 +225,85 @@ describe('PINs in the log', () => {
 // ── Sessions ────────────────────────────────────────────────────────────────
 
 describe('sign-in in the log', () => {
-  it('records who signed in, and who signed out', () => {
+  it('records the code being sent, then the sign-in, then the sign-out', () => {
     setAuditActor(null)
-    const found = useAuth.getState().signInWithPin(person('kelly').pin)
-    expect(found?.id).toBe('kelly')
+    const kelly = person('kelly')
+
+    const begun = useAuth.getState().beginSignIn(kelly.username, kelly.password)
+    expect(begun.ok).toBe(true)
+    expect(actions()[0]).toBe('session.code_sent')
+    // The masked address never gives the whole thing away.
+    expect(written()[0].summary).toContain('@')
+    expect(written()[0].summary).not.toContain(kelly.email)
+
+    const code = useAuth.getState().pending!.code
+    const done = useAuth.getState().submitCode(code)
+    expect(done.ok).toBe(true)
     expect(actions()[0]).toBe('session.signed_in')
-    expect(written()[0].actorName).toBe('Kelly Tew')
 
     useAuth.getState().signOut()
     expect(actions()[0]).toBe('session.signed_out')
   })
 
-  it('records a wrong PIN without recording the PIN', () => {
+  it('records a refusal without recording the password', () => {
     setAuditActor(null)
-    expect(useAuth.getState().signInWithPin('704318')).toBeNull()
+    const result = useAuth.getState().beginSignIn('kellytew', 'not-the-password-1')
+    expect(result.ok).toBe(false)
     const entry = written()[0]
-    expect(entry.action).toBe('session.pin_failed')
-    expect(JSON.stringify(entry)).not.toContain('704318')
+    expect(entry.action).toBe('session.sign_in_failed')
+    expect(JSON.stringify(entry)).not.toContain('not-the-password-1')
+  })
+
+  it('says the same thing whether the username or the password was wrong', () => {
+    setAuditActor(null)
+    const nobody = useAuth.getState().beginSignIn('nosuchperson', 'whatever-123')
+    const wrongPassword = useAuth.getState().beginSignIn('kellytew', 'whatever-123')
+    expect(nobody.error).toBe(wrongPassword.error)
+  })
+
+  it('will not sign in on the password alone', () => {
+    setAuditActor(null)
+    const kelly = person('kelly')
+    useAuth.getState().beginSignIn(kelly.username, kelly.password)
+    // The password was right, but nobody is signed in until the code is.
+    expect(useAuth.getState().personId).toBeNull()
+    expect(useAuth.getState().pending).not.toBeNull()
+  })
+
+  it('refuses a wrong code, and gives up after five', () => {
+    setAuditActor(null)
+    const kelly = person('kelly')
+    useAuth.getState().beginSignIn(kelly.username, kelly.password)
+    const real = useAuth.getState().pending!.code
+    const wrong = real === '000000' ? '111111' : '000000'
+
+    for (let i = 0; i < 4; i++) {
+      expect(useAuth.getState().submitCode(wrong).ok).toBe(false)
+    }
+    const last = useAuth.getState().submitCode(wrong)
+    expect(last.ok).toBe(false)
+    expect(useAuth.getState().pending).toBeNull()
+    expect(actions()[0]).toBe('session.code_failed')
+  })
+
+  it('refuses a code that has expired', () => {
+    setAuditActor(null)
+    const kelly = person('kelly')
+    useAuth.getState().beginSignIn(kelly.username, kelly.password)
+    const pending = useAuth.getState().pending!
+    useAuth.setState({ pending: { ...pending, expiresAt: Date.now() - 1 } })
+
+    const result = useAuth.getState().submitCode(pending.code)
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/expired/i)
+  })
+
+  it('will not let a disabled login through', () => {
+    setAuditActor(null)
+    const kim = person('kim')
+    useData.getState().setUserActive('kim', false)
+    const result = useAuth.getState().beginSignIn(kim.username, kim.password)
+    expect(result.ok).toBe(false)
   })
 })
 

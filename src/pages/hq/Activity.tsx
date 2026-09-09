@@ -33,7 +33,7 @@ const KINDS: AuditKind[] = [
   'order',
   'sale',
   'correction',
-  'pin',
+  'password',
   'login',
   'promotion',
   'target',
@@ -107,7 +107,7 @@ export function Activity() {
   // the real clock — so this counts from the demo day onward rather than on it,
   // and a change made now shows up here straight away.
   const todayCount = audit.filter((e) => e.at.slice(0, 10) >= data.today).length
-  const pinCount = audit.filter((e) => e.kind === 'pin').length
+  const passwordCount = audit.filter((e) => e.kind === 'password').length
   const people = useMemo(() => {
     const seen = new Map<string, string>()
     for (const e of audit) if (!seen.has(e.actorId)) seen.set(e.actorId, e.actorName)
@@ -170,8 +170,8 @@ export function Activity() {
           icon="doc"
         />
         <StatTile
-          label="PIN changes and look-ups"
-          value={pinCount}
+          label="Password resets"
+          value={passwordCount}
           format={(n) => num(Math.round(n))}
           footnote="every one is recorded"
           tone="cyan"

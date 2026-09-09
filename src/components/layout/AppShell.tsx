@@ -7,8 +7,8 @@ import { NAV } from './nav'
 import { useAuth, useCan, useCurrentUser } from '../../store/useAuth'
 import { useData } from '../../store/useData'
 import { locationById, tradingLocations } from '../../data/locations'
-import { ROLE_LABEL, ROLE_ACCESS, ACCENT_GRADIENT, canChangeOwnPin } from '../../data/people'
-import { PinDialog } from '../PinDialog'
+import { ROLE_LABEL, ROLE_ACCESS, ACCENT_GRADIENT, canChangeOwnPassword } from '../../data/people'
+import { PasswordDialog } from '../PasswordDialog'
 import { addDays, formatDate } from '../../lib/dates'
 import { rm } from '../../lib/format'
 import { emptyFilter, selectKpis, selectNotFiled } from '../../store/selectors'
@@ -65,7 +65,7 @@ export function AppShell() {
   return (
     <div className="flex min-h-screen flex-col">
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
-      <PinDialog open={pinOpen} target={user} onClose={() => setPinOpen(false)} />
+      <PasswordDialog open={pinOpen} target={user} onClose={() => setPinOpen(false)} />
 
       <header className="no-print sticky top-0 z-40">
         <div className="relative bg-grad-command">
@@ -252,7 +252,7 @@ export function AppShell() {
                     </p>
 
                     <div className="border-t border-line">
-                      {canChangeOwnPin(user) ? (
+                      {canChangeOwnPassword(user) ? (
                         <button
                           onClick={() => {
                             setSwitcherOpen(false)
@@ -261,12 +261,12 @@ export function AppShell() {
                           className="flex w-full items-center gap-2 px-3 py-2.5 text-[12.5px] text-ink-2 transition-colors hover:bg-sunken hover:text-ink"
                         >
                           <Icon name="lock" className="h-3.5 w-3.5" />
-                          Change my PIN
+                          Change my password
                         </button>
                       ) : (
                         <p className="flex items-start gap-2 px-3 py-2.5 text-[11.5px] leading-snug text-ink-3">
                           <Icon name="lock" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                          Your PIN is set for you. Ask a senior if you need a new one.
+                          Ask Davy, Kelly, Chloe or Imran if you need a new password.
                         </p>
                       )}
                       {capability.manageUsers && (

@@ -14,71 +14,73 @@ const person = (id: string): Person => {
   return p
 }
 
-const pinOf = (id: string) => person(id).pin
-
 beforeEach(() => {
   useData.getState().resetDemo()
 })
 
-describe('changing a PIN', () => {
-  it('lets Davy change anyone’s, and remembers the old one', () => {
-    const before = pinOf('siew-fang')
-    const result = useData.getState().changePin({
+describe('setting a password', () => {
+  it('lets Davy reset anyone, and remembers the old one', () => {
+    const before = person('siew-fang').password
+    const result = useData.getState().setPassword({
       actor: person('davy'),
       targetId: 'siew-fang',
-      pin: '704318',
+      password: 'kebaya-tanjung-417',
+      issued: true,
     })
 
     expect(result.ok).toBe(true)
-    expect(pinOf('siew-fang')).toBe('704318')
-    expect(person('siew-fang').pinHistory).toContain(before)
-    expect(person('siew-fang').pinSetBy).toBe('Lim Davy')
+    expect(person('siew-fang').password).toBe('kebaya-tanjung-417')
+    expect(person('siew-fang').passwordHistory).toContain(before)
+    expect(person('siew-fang').passwordSetBy).toBe('Lim Davy')
+    // Issued by somebody else, so they have to choose their own.
+    expect(person('siew-fang').mustChangePassword).toBe(true)
   })
 
-  it('never gives a person a PIN back', () => {
-    const original = pinOf('an')
-    useData.getState().changePin({ actor: person('davy'), targetId: 'an', pin: '704318' })
+  it('does not ask you to change one you chose yourself', () => {
+    useData.getState().setPassword({
+      actor: person('siew-fang'),
+      targetId: 'siew-fang',
+      password: 'kebaya-tanjung-417',
+    })
+    expect(person('siew-fang').mustChangePassword).toBe(false)
+  })
+
+  it('never gives a person one back', () => {
+    const original = person('an').password
+    useData.getState().setPassword({
+      actor: person('davy'),
+      targetId: 'an',
+      password: 'kebaya-tanjung-417',
+    })
 
     const again = useData
       .getState()
-      .changePin({ actor: person('davy'), targetId: 'an', pin: original })
+      .setPassword({ actor: person('davy'), targetId: 'an', password: original })
 
     expect(again.ok).toBe(false)
-    expect(again.error).toMatch(/used that PIN before/i)
-    expect(pinOf('an')).toBe('704318')
+    expect(again.error).toMatch(/used before/i)
+    expect(person('an').password).toBe('kebaya-tanjung-417')
   })
 
-  it('refuses a PIN another login already holds', () => {
-    const kellys = pinOf('kelly')
-    const result = useData
-      .getState()
-      .changePin({ actor: person('davy'), targetId: 'ivvi', pin: kellys })
-
-    expect(result.ok).toBe(false)
-    expect(result.error).toMatch(/already uses/i)
-  })
-
-  it('keeps every PIN unique after a run of changes', () => {
-    const changes = ['704318', '815427', '260973', '539164']
-    const targets = ['siew-fang', 'ivvi', 'an', 'loong']
-    targets.forEach((id, i) => {
-      const r = useData.getState().changePin({ actor: person('davy'), targetId: id, pin: changes[i] })
-      expect(r.ok, id).toBe(true)
+  it('stops a promoter touching anybody else', () => {
+    const target = person('tanshimin')
+    const result = useData.getState().setPassword({
+      actor: person('teokoknian'),
+      targetId: target.id,
+      password: 'kebaya-tanjung-417',
     })
 
-    const pins = useData.getState().users.map((u) => u.pin)
-    expect(new Set(pins).size).toBe(pins.length)
+    expect(result.ok).toBe(false)
+    expect(person('tanshimin').password).toBe(target.password)
   })
 
-  it('stops a promoter changing their own PIN', () => {
-    const target = person('promoter-pavilion')
-    const result = useData
-      .getState()
-      .changePin({ actor: target, targetId: target.id, pin: '704318' })
-
-    expect(result.ok).toBe(false)
-    expect(result.error).toMatch(/ask a senior/i)
-    expect(pinOf('promoter-pavilion')).toBe(target.pin)
+  it('lets a promoter change their own', () => {
+    const result = useData.getState().setPassword({
+      actor: person('teokoknian'),
+      targetId: 'teokoknian',
+      password: 'kebaya-tanjung-417',
+    })
+    expect(result.ok).toBe(true)
   })
 
   it('stops Kelly and Chloe reaching each other or Davy', () => {
@@ -88,39 +90,39 @@ describe('changing a PIN', () => {
       ['kelly', 'davy'],
       ['chloe', 'davy'],
     ]) {
-      const before = pinOf(target)
+      const before = person(target).password
       const result = useData
         .getState()
-        .changePin({ actor: person(actor), targetId: target, pin: '704318' })
+        .setPassword({ actor: person(actor), targetId: target, password: 'kebaya-tanjung-417' })
 
-      expect(result.ok, `${actor} → ${target}`).toBe(false)
-      expect(pinOf(target)).toBe(before)
+      expect(result.ok, `${actor} -> ${target}`).toBe(false)
+      expect(person(target).password).toBe(before)
     }
   })
 
-  it('lets Imran change Davy’s PIN', () => {
+  it('lets Imran reset Davy', () => {
     const result = useData
       .getState()
-      .changePin({ actor: person('imran'), targetId: 'davy', pin: '704318' })
+      .setPassword({ actor: person('imran'), targetId: 'davy', password: 'kebaya-tanjung-417' })
 
     expect(result.ok).toBe(true)
-    expect(pinOf('davy')).toBe('704318')
+    expect(person('davy').password).toBe('kebaya-tanjung-417')
   })
 
-  it('refuses an obvious PIN, whoever is asking', () => {
+  it('refuses a weak one, whoever is asking', () => {
     const result = useData
       .getState()
-      .changePin({ actor: person('davy'), targetId: 'kim', pin: '123456' })
+      .setPassword({ actor: person('davy'), targetId: 'kim', password: 'legendary123' })
 
     expect(result.ok).toBe(false)
     expect(result.error).toMatch(/too easy/i)
   })
 
-  it('refuses anything that is not six digits', () => {
-    for (const bad of ['1234', '1234567', '12a456']) {
+  it('refuses anything too short', () => {
+    for (const bad of ['abc1', 'orchid1', 'kebaya12']) {
       const result = useData
         .getState()
-        .changePin({ actor: person('davy'), targetId: 'kim', pin: bad })
+        .setPassword({ actor: person('davy'), targetId: 'kim', password: bad })
       expect(result.ok, bad).toBe(false)
     }
   })

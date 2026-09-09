@@ -121,7 +121,7 @@ Three decisions inside it are worth stating:
 - **The log never contains a PIN**, old or new. It records that one was changed, and by
   whom. A log of PINs would undo the point of encrypting them.
 - **Looking at somebody's PIN is itself an action** and leaves a line, which is what makes
-  the arrangement in [`pin-security.md`](./pin-security.md) defensible rather than merely
+  the arrangement in [`auth.md`](./auth.md) defensible rather than merely
   permitted.
 - **It is append-only in the database.** The insert and select policies exist; the update and
   delete policies do not, and under row-level security an operation with no policy is denied.
@@ -180,7 +180,7 @@ And three decisions only the client can make:
 - **Q82** — is Singapore hosting acceptable, or must the servers be physically in Malaysia?
   This is the difference between RM 60 a year and roughly RM 6,000.
 - **PIN visibility** — should senior staff be able to *look up* a colleague's current PIN, or
-  is *setting* them a new one enough? See [`pin-security.md`](./pin-security.md).
+  is *setting* them a new one enough? See [`auth.md`](./auth.md).
 - **Who reads the activity log** — currently the Director, Davy, Kelly, Chloe and Imran.
   Should Finance be included, given the chart says they can access all data?
 
