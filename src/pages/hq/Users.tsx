@@ -14,7 +14,9 @@ import { useToasts } from '../../components/ui/Toast'
 import {
   can,
   canResetPasswordOf,
+  canSeePasswordOf,
   canSeeUser,
+  needsTwoStep,
   emailFor,
   initialsOf,
   suggestPassword,
@@ -54,20 +56,19 @@ const blank = (defaultLocationId: string): Person => ({
   passwordHistory: [],
   passwordSetAt: new Date().toISOString(),
   passwordSetBy: '',
-  mustChangePassword: true,
   active: true,
 })
 
 /**
  * Logins.
  *
- * Creating staff sits with the Managing Director, the Operational Manager, the
- * PA and IT. Who may reset whose password is narrower still, and the rules live
- * in `data/people.ts` so this screen and the store agree.
+ * Everybody's username and password, managed here. Creating staff sits with the
+ * Managing Director, the Operational Manager, the PA and IT; who may set and
+ * see whose password is narrower still, and the rules live in `data/people.ts`
+ * so this screen and the store agree.
  *
- * There is no column showing a password and no way to reveal one. They are
- * stored so that they cannot be read back — by anyone, including the four
- * people on this screen — which is the point of the arrangement.
+ * A password is shown only on request, through the store, and every look-up is
+ * written to the activity log.
  *
  * IT's own login is hidden from everyone else, so the list you see depends on
  * who you are.
@@ -79,6 +80,7 @@ export function Users() {
   const addUser = useData((s) => s.addUser)
   const updateUser = useData((s) => s.updateUser)
   const setUserActive = useData((s) => s.setUserActive)
+  const revealPassword = useData((s) => s.revealPassword)
   const push = useToasts((s) => s.push)
 
   const [editing, setEditing] = useState<Person | null>(null)
@@ -86,6 +88,22 @@ export function Users() {
   const [firstPassword, setFirstPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [passwordTarget, setPasswordTarget] = useState<Person | null>(null)
+  /** id → the password, once it has been asked for. Cleared when it is hidden. */
+  const [revealed, setRevealed] = useState<Record<string, string>>({})
+
+  const toggleReveal = (p: Person) => {
+    if (revealed[p.id]) {
+      setRevealed(({ [p.id]: _gone, ...rest }) => rest)
+      return
+    }
+    if (!me) return
+    const result = revealPassword({ actor: me, targetId: p.id })
+    if (!result.ok || !result.password) {
+      push(result.error ?? 'That password cannot be shown.', 'critical')
+      return
+    }
+    setRevealed((r) => ({ ...r, [p.id]: result.password! }))
+  }
 
   const mainStores = locationsInChannel('main').filter((l) => l.status === 'open')
 
@@ -151,7 +169,6 @@ export function Users() {
       id: isNew ? username : editing.id,
       password: isNew ? firstPassword.trim() : editing.password,
       passwordSetBy: isNew ? me.name : editing.passwordSetBy,
-      mustChangePassword: isNew ? true : editing.mustChangePassword,
       placeholder: false,
     }
 
@@ -220,19 +237,37 @@ export function Users() {
     {
       key: 'password',
       header: 'Password',
-      width: '150px',
-      render: (p) => (
-        <div>
-          <p className="text-[12px] text-ink-2">
-            {p.mustChangePassword ? 'Not yet chosen' : 'Set by ' + p.passwordSetBy}
-          </p>
-          <p className="readout text-[10.5px] text-ink-3">{p.passwordSetAt.slice(0, 10)}</p>
-        </div>
-      ),
+      width: '190px',
+      render: (p) => {
+        if (!me || !canSeePasswordOf(me, p)) {
+          return <span className="text-[12px] text-ink-3">••••••••</span>
+        }
+        const shown = revealed[p.id]
+        return (
+          <div className="flex items-center gap-1.5">
+            <span className="readout max-w-[140px] truncate text-[12.5px] font-semibold text-ink">
+              {shown ?? '••••••••'}
+            </span>
+            <button
+              onClick={() => toggleReveal(p)}
+              aria-label={shown ? `Hide ${p.name}'s password` : `Show ${p.name}'s password`}
+              className="shrink-0 text-ink-3 transition-colors hover:text-primary"
+            >
+              <Icon name={shown ? 'eyeOff' : 'eye'} className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )
+      },
+    },
+    {
+      key: 'twostep',
+      header: 'Code by e-mail',
+      align: 'right',
+      width: '112px',
+      render: (p) => tick(needsTwoStep(p)),
     },
     { key: 'edit', header: 'Can edit', align: 'right', width: '80px', render: (p) => tick(can(p.role).canEdit) },
     { key: 'approve', header: 'Approves', align: 'right', width: '92px', render: (p) => tick(can(p.role).approvePurchaseOrders) },
-    { key: 'users', header: 'Adds staff', align: 'right', width: '96px', render: (p) => tick(can(p.role).manageUsers) },
     {
       key: 'actions',
       header: '',
@@ -242,7 +277,7 @@ export function Users() {
         <div className="flex justify-end gap-1">
           {me && canResetPasswordOf(me, p) && (
             <Button size="sm" variant="ghost" onClick={() => setPasswordTarget(p)}>
-              {p.id === me.id ? 'My password' : 'Reset'}
+              {p.id === me.id ? 'My password' : 'Set password'}
             </Button>
           )}
           {capability.manageUsers && (
@@ -278,7 +313,7 @@ export function Users() {
     )
 
   const active = users.filter((u) => u.active)
-  const awaiting = active.filter((u) => u.mustChangePassword).length
+  const twoStep = active.filter((u) => needsTwoStep(u)).length
 
   return (
     <div className="space-y-5">
@@ -287,8 +322,8 @@ export function Users() {
           <p className="eyebrow">Head Office</p>
           <h1 className="page-title mt-1">Logins</h1>
           <p className="mt-1 max-w-2xl text-[13px] text-ink-2">
-            Everyone signs in with a username and password, then a six-digit code sent to their
-            work e-mail. Davy, Kelly, Chloe and Imran can add staff.
+            Everyone signs in with a username and password; leadership also gets a code by
+            e-mail. Davy, Kelly, Chloe and Imran add staff and set their passwords.
           </p>
         </div>
         <div className="flex gap-2">
@@ -306,9 +341,9 @@ export function Users() {
       <div className="flex flex-wrap items-start gap-2.5 rounded-xl border border-line bg-surface-2 px-4 py-3">
         <Icon name="lock" className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
         <p className="flex-1 text-[12.5px] leading-relaxed text-ink-2">
-          <b className="text-ink">No password can be looked up here, by anyone.</b> They are
-          stored so that they cannot be read back — not by Davy, not by IT, and not by somebody
-          holding a copy of the database. If a person forgets theirs, set them a new one.
+          Store promoters use the password they are given and cannot change it themselves;
+          Finance and the Warehouse can change their own. <b className="text-ink">Showing a
+          password is recorded</b> — who looked, whose, and when — on the Activity screen.
         </p>
       </div>
 
@@ -323,12 +358,12 @@ export function Users() {
           icon="doc"
         />
         <StatTile
-          label="Yet to choose a password"
-          value={awaiting}
+          label="Also get a code by e-mail"
+          value={twoStep}
           format={(n) => num(Math.round(n))}
-          footnote={awaiting === 0 ? 'everybody has' : 'still on the one they were given'}
-          tone={awaiting === 0 ? 'teal' : 'cyan'}
-          icon="alert"
+          footnote="leadership and IT"
+          tone="cyan"
+          icon="lock"
         />
       </div>
 

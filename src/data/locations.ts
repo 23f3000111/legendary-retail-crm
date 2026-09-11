@@ -10,7 +10,9 @@
  *   Main Stores (Daily sales, SKU sold, countries) .. 12
  *   Dealer (Daily sales, SKU sold) .................. 44
  *   Consignment (Monthly sales, SKU sold) ............ 6
- *   Online .......................................... 4
+ *
+ * There used to be an Online channel here, built from the discovery form's Q5
+ * and Q13. The client has since asked for it to go, so it has.
  *
  * ── The two things Revision 2 added ─────────────────────────────────────────
  *
@@ -25,7 +27,7 @@
 
 import type { PriceBasis } from './products'
 
-export type Channel = 'main' | 'dealer' | 'consignment' | 'online'
+export type Channel = 'main' | 'dealer' | 'consignment'
 
 export type Region =
   | 'Kuala Lumpur'
@@ -35,7 +37,6 @@ export type Region =
   | 'Airports'
   | 'Sabah'
   | 'Nationwide'
-  | 'Online'
   /** Dealer towns were not supplied; these are pending the client's address list. */
   | 'To confirm'
 
@@ -62,14 +63,6 @@ export interface Location {
   marginPct?: number
   /** Nationalities over-represented here, strongest first. Main stores only. */
   originProfile?: string[]
-  /**
-   * Whether this location holds and counts its own stock.
-   *
-   * Every physical place does. Online does not: the client wants the website
-   * and the shops on the same stock numbers (Q13), so an online order is picked
-   * from the warehouse and never sits on a shelf of its own.
-   */
-  holdsOwnStock: boolean
   openedOn?: string
 }
 
@@ -78,7 +71,6 @@ export const CHANNEL_HEADING: Record<Channel, string> = {
   main: 'Main Stores (Daily sales, SKU sold, countries)',
   dealer: 'Dealer (Daily sales, SKU sold)',
   consignment: 'Consignment (Monthly sales, SKU sold)',
-  online: 'Online (Daily sales, SKU sold)',
 }
 
 // ── Main stores ────────────────────────────────────────────────────────────
@@ -130,7 +122,6 @@ const mainStores: Location[] = mainSeeds.map((m) => ({
   traffic: m.traffic,
   monthlyTargetMYR: m.target,
   originProfile: m.origins,
-  holdsOwnStock: true,
   openedOn: m.openedOn,
 }))
 
@@ -159,7 +150,6 @@ const consignment: Location[] = consignmentSeeds.map(([name, code, region, margi
   priceBasis: basis,
   traffic: [0.9, 0.7, 1.1, 1.0, 0.5, 0.8][i],
   marginPct: margin,
-  holdsOwnStock: true,
 }))
 
 // ── Dealers ────────────────────────────────────────────────────────────────
@@ -232,56 +222,27 @@ const dealers: Location[] = dealerNames.map((name, i) => ({
   recordsCountries: false,
   priceBasis: 'promotion' as const,
   marginPct: 70,
-  holdsOwnStock: true,
   // A spread of sizes so the league table is not flat, derived deterministically
   // from position rather than randomly, so it stays stable between runs.
   traffic: 0.08 + ((i * 37) % 23) / 100,
 }))
 
-// ── Online ─────────────────────────────────────────────────────────────────
-// Daily sales and product sold, picked from the warehouse rather than from a
-// shelf. No country: the capture rule is "main outlets only" (Q29).
-
-const onlineNames: [string, string][] = [
-  ['Legendary Website', 'WEB'],
-  ['Shopee', 'SHP'],
-  ['Lazada', 'LZD'],
-  ['TikTok Shop', 'TTS'],
-]
-
-const online: Location[] = onlineNames.map(([name, code], i) => ({
-  id: `web-${code.toLowerCase()}`,
-  code,
-  name,
-  shortName: name,
-  channel: 'online' as const,
-  region: 'Online' as const,
-  status: 'open' as const,
-  cadence: 'daily' as const,
-  recordsCountries: false,
-  priceBasis: 'promotion' as const,
-  holdsOwnStock: false,
-  traffic: [0.34, 0.52, 0.38, 0.29][i],
-}))
-
-export const locations: Location[] = [...mainStores, ...consignment, ...dealers, ...online]
+export const locations: Location[] = [...mainStores, ...consignment, ...dealers]
 
 export const CHANNEL_LABEL: Record<Channel, string> = {
   main: 'Main store',
   dealer: 'Dealer',
   consignment: 'Consignment',
-  online: 'Online',
 }
 
 export const CHANNEL_PLURAL: Record<Channel, string> = {
   main: 'Main stores',
   dealer: 'Dealers',
   consignment: 'Consignment',
-  online: 'Online',
 }
 
 /** Display order, used by every channel switch and every donut. */
-export const CHANNELS: Channel[] = ['main', 'dealer', 'consignment', 'online']
+export const CHANNELS: Channel[] = ['main', 'dealer', 'consignment']
 
 export const regions: Region[] = [
   'Kuala Lumpur',
@@ -291,7 +252,6 @@ export const regions: Region[] = [
   'Airports',
   'Sabah',
   'Nationwide',
-  'Online',
   'To confirm',
 ]
 
@@ -312,7 +272,7 @@ export const locationsInChannel = (channel: Channel) =>
 /**
  * Stores grouped under the client's own headings, for every store picker.
  *
- * A flat list of 66 names in a dropdown is unusable — you cannot tell a dealer
+ * A flat list of 62 names in a dropdown is unusable — you cannot tell a dealer
  * from a main store, and the one you want is somewhere in the middle.
  */
 export const locationGroups = (

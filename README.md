@@ -1,7 +1,7 @@
 # Legendary · Retail CRM
 
 A working wireframe of the production CRM for **Legendary**, a Malaysian perfume house selling
-through 66 locations across four channels.
+through 62 locations across three channels.
 
 Built from the client's own answers: the 96-question discovery form, the company hierarchy, and
 the store list. Those three documents are the client's own and are kept out of this repository;
@@ -13,7 +13,7 @@ say what is built and what is still missing.
 ```bash
 npm install
 npm run dev      # http://localhost:5180
-npm test         # 178 tests
+npm test         # 190 tests
 npm run build    # typecheck + production bundle into dist/
 ```
 
@@ -21,7 +21,7 @@ npm run build    # typecheck + production bundle into dist/
 
 ## What the business actually looks like
 
-The demo assumed nine identical outlets. The real estate is **66 locations that report
+The demo assumed nine identical outlets. The real estate is **62 locations that report
 differently**, and channel is the primary dimension in the system:
 
 | Channel | Count | Reports | Country per sale? | How often | Own stock? |
@@ -29,30 +29,23 @@ differently**, and channel is the primary dimension in the system:
 | **Main store** | 12 (9 open, 3 coming) | Sales, product, country | **Yes, exactly** | Daily | Yes |
 | **Dealer** | 44 | Sales, product | No | Daily | Yes |
 | **Consignment** | 6 | Sales, product, margin | No | Monthly | No |
-| **Online** | 4 | Sales, product | No | Daily | No — picked from the warehouse |
 
 Channel decides which closing form a location gets, what it is asked for, and how often it is due.
-
-The first three come from the client's store list. **Online** comes from the discovery form: they
-sell online (Q5) and the website shares the shops' stock numbers (Q13), so those four storefronts
-file sales daily but hold no shelf of their own.
 
 ---
 
 ## Signing in
 
-**Username, password, then a six-digit code sent to the person's work e-mail.**
-No PINs, no Google accounts.
+**Username and password.** Leadership and IT also get a six-digit code by e-mail; everybody else
+is in as soon as the password is right.
 
-Passwords are stored as a one-way hash, so nobody can read one back — not Davy, not IT, not
-somebody holding a copy of the database. Who may *reset* whose is a table the client set out
-precisely, and every row of it has a test: promoters, Finance and the Warehouse reach only
-themselves; Kelly and Chloe reach down but not across; Davy and Imran reach everyone. See
-[`docs/spec/auth.md`](docs/spec/auth.md).
+Everything else works the way the PINs did, at the client's request: seniors issue passwords,
+promoters keep the one they are given, and Davy, Imran, Kelly and Chloe can look up the passwords
+within their reach — every look-up recorded on the Activity screen. The rules, and what they cost,
+are in [`docs/spec/auth.md`](docs/spec/auth.md).
 
-The sign-in screen carries a demo panel listing the logins and showing the code that would
-have been e-mailed. **It is one flag in the code and must be turned off before real staff use
-the system.**
+The sign-in screen carries a demo panel listing the logins. **It is one flag in the code and must
+be turned off before real staff use the system.**
 
 ---
 
@@ -195,7 +188,7 @@ it.
 
 ## Testing
 
-178 Vitest tests over the pure layer:
+190 Vitest tests over the pure layer:
 
 - **Seed** — determinism, revenue reconciling against its own sale lines, payment splitting three
   ways, every product counted every night, never selling stock a store did not have, never selling
@@ -231,8 +224,7 @@ Listed in full in the decisions document. The ones that matter most:
 3. **What "BSAS" is** — listed as a main store, we cannot place it.
 4. **Dealer towns** — 56 names, no addresses, so they cannot be grouped by region yet.
 5. **The staff list** from Chloe, so promoters get real names and real PINs.
-6. **Which online platforms they actually run** — four are assumed from the wording of Q5.
-7. **A Zeoniq export** and a **sales history sample**, to size the integration and the migration.
+6. **A Zeoniq export** and a **sales history sample**, to size the integration and the migration.
 
 A full walk through all three client documents, saying what is built and what is still missing, is
 in [`docs/spec/2026-08-23-coverage-check.md`](docs/spec/2026-08-23-coverage-check.md).

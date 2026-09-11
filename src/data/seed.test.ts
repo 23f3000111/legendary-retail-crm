@@ -27,13 +27,8 @@ describe('the estate', () => {
     expect(locationsInChannel('consignment').length).toBe(6)
   })
 
-  // Online is not in the stores document — it comes from Q5 and Q13.
-  it('carries the online storefronts the client said to include', () => {
-    expect(locationsInChannel('online').length).toBe(4)
-    for (const l of locationsInChannel('online')) {
-      expect(l.holdsOwnStock, l.name).toBe(false)
-      expect(l.recordsCountries, l.name).toBe(false)
-    }
+  it('carries no online channel — the client asked for it to go', () => {
+    expect(tradingLocations.some((l) => l.id.startsWith('web-'))).toBe(false)
   })
 
   it('only trades at open locations — the three coming soon file nothing', () => {
@@ -47,8 +42,7 @@ describe('the estate', () => {
 
 describe('daily channels', () => {
   const daily = data.closings.filter((c) => c.periodType === 'day')
-  // Online sells out of the warehouse, so it files sales without a shelf count.
-  const counted = daily.filter((c) => c.channel !== 'online')
+  const counted = daily
 
   it('covers 90 days ending on the demo today', () => {
     const dates = [...new Set(daily.map((c) => c.period))].sort()

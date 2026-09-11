@@ -15,11 +15,11 @@
  * ── What is sold, what is counted, what is ordered ──────────────────────────
  *
  *   retail / set   sold, counted, ordered
- *   vial           counted and ordered, never sold
  *   tester         ordered only — not sold, and not part of the nightly count
  *
- * That split comes straight from Revision 2: testers and travel sizes come out
- * of the stock count, vials go in, and testers get their own ordering list.
+ * Testers and travel sizes came out of the stock count in Revision 2, and the
+ * vials Revision 2 added have since been taken out again at the client's
+ * request.
  *
  * There is deliberately no cost price anywhere. The client was explicit that
  * only revenue is recorded (Q58, Q65); the one margin figure in the system sits
@@ -28,12 +28,11 @@
 
 export type CollectionId = 'signature' | 'nyonya' | 'three-wishes' | 'spirit'
 
-export type Variant = 'retail' | 'set' | 'vial' | 'tester'
+export type Variant = 'retail' | 'set' | 'tester'
 
 export const VARIANT_LABEL: Record<Variant, string> = {
   retail: 'Bottle',
   set: 'Set',
-  vial: 'Vial',
   tester: 'Tester',
 }
 
@@ -70,7 +69,7 @@ export interface Sku {
   /** Relative share of units sold, used by the demo data generator. */
   popularity: number
   bestseller: boolean
-  /** Testers and vials are never sold. */
+  /** Testers are never sold. */
   sellable: boolean
   /** Testers are ordered but never counted on the shelf (Revision 2). */
   counted: boolean
@@ -137,18 +136,6 @@ const sellableSeeds: SellableSeed[] = [
 ]
 
 /**
- * Vials, one per fragrance.
- *
- * "Include Vial for all products" (Revision 2). They are counted on the shelf
- * and can be ordered, but never sold — so they carry no price.
- */
-const vialProducts = [
-  'orchid', 'violet', 'mahsuri', 'man',
-  'nyonya-aromatic', 'kebaya-blooms', 'ondeh-delights',
-  'life', 'passion', 'dream', 'love', 'hope', 'confidence',
-]
-
-/**
  * The tester list, exactly as Revision 2 gives it.
  *
  * Testers are ordered from HQ and are deliberately **not** part of the nightly
@@ -189,7 +176,6 @@ const productName = (id: string) => products.find((p) => p.id === id)?.name ?? i
 const VARIANT_CODE: Record<Variant, string> = {
   retail: 'R',
   set: 'S',
-  vial: 'V',
   tester: 'X',
 }
 
@@ -226,23 +212,6 @@ const sellable: Sku[] = sellableSeeds.map((s) => ({
   counted: true,
 }))
 
-const vials: Sku[] = vialProducts.map((productId) => ({
-  id: `${productId}-vial`,
-  code: codeFor(productId, 'vial', '2'),
-  productId,
-  label: `${productName(productId)} · Vial`,
-  variant: 'vial' as const,
-  size: '2ml',
-  retailPriceMYR: 0,
-  promotionPriceMYR: 0,
-  reorderPoint: 40,
-  caseSize: 50,
-  popularity: 0,
-  bestseller: false,
-  sellable: false,
-  counted: true,
-}))
-
 const testers: Sku[] = testerSeeds.map(([productId, size]) => ({
   id: `${productId}-tester-${size}`,
   code: codeFor(productId, 'tester', size),
@@ -261,7 +230,7 @@ const testers: Sku[] = testerSeeds.map(([productId, size]) => ({
   counted: false,
 }))
 
-export const skus: Sku[] = [...sellable, ...vials, ...testers]
+export const skus: Sku[] = [...sellable, ...testers]
 
 export const collections: { id: CollectionId; name: string; slot: 1 | 2 | 3 | 4 }[] = [
   { id: 'signature', name: 'Signature', slot: 1 },

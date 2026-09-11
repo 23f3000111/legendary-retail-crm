@@ -1,14 +1,13 @@
 /**
  * Signing in.
  *
- * Three things, in order: a username, a password, and a six-digit code sent to
- * the person's company e-mail. The PIN keypad is gone.
+ * A username and a password. For the people at the top of the chart — the four
+ * who can read everybody else's password, and the Director — a six-digit code
+ * to their work e-mail as well. For everyone else, the password is enough.
  *
- * The second step is what makes this worth doing. A password on its own can be
- * shoulder-surfed at a counter, guessed, or reused from somewhere that has
- * already been breached; a code that arrives on the person's own mailbox means
- * knowing the password is not enough. It costs one extra screen and about ten
- * seconds, once per device.
+ * The split follows the risk. A promoter's account opens one store's sales; a
+ * leadership account opens every password in the company. The code is worth
+ * its friction on the second kind and was not on the first.
  *
  * **In this wireframe there is no server**, so no mail is actually sent — the
  * code is generated here and shown on screen behind a clearly marked panel. In
@@ -21,6 +20,7 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import {
   can,
   maskEmail,
+  needsTwoStep,
   newSignInCode,
   personByUsername,
   CODE_TTL_MINUTES,
@@ -52,11 +52,14 @@ interface AuthState {
   /** Epoch ms until which sign-in is refused after too many wrong passwords. */
   lockedUntil: number | null
 
-  /** Step one. Returns where the code went, never who the person is. */
+  /**
+   * Step one. Either signs the person straight in (`person` is set), or — for
+   * the roles that need a second step — sends a code and says where it went.
+   */
   beginSignIn: (
     username: string,
     password: string,
-  ) => { ok: boolean; sentTo?: string; error?: string }
+  ) => { ok: boolean; person?: Person; sentTo?: string; error?: string }
   /** Step two. */
   submitCode: (code: string) => { ok: boolean; person?: Person; error?: string }
   /** Sends a fresh code for the attempt in progress. */
@@ -114,6 +117,22 @@ export const useAuth = create<AuthState>()(
         }
 
         failedTries = 0
+
+        // Most people are in with the password alone.
+        if (!needsTwoStep(person!)) {
+          set({ personId: person!.id, pending: null, lockedUntil: null })
+          setAuditActor(person!.id)
+          data.record({
+            kind: 'session',
+            action: 'session.signed_in',
+            summary: `${person!.name} signed in`,
+            entityId: person!.id,
+            locationId: person!.locationId,
+            actor: { id: person!.id, name: person!.name, role: person!.role },
+          })
+          return { ok: true, person: person! }
+        }
+
         const code = newSignInCode()
         set({
           pending: {

@@ -7,6 +7,7 @@ import { useToasts } from './ui/Toast'
 import { useCurrentUser } from '../store/useAuth'
 import { useData } from '../store/useData'
 import {
+  canSeePasswordOf,
   passwordStrength,
   suggestPassword,
   PASSWORD_MIN,
@@ -25,14 +26,13 @@ const STRENGTH = [
 /**
  * Setting a password.
  *
- * The same dialog serves "change my own" from the account menu and "reset it
- * for someone" from the Logins screen, because the rules are identical — they
- * live in `data/people.ts` and are enforced again in the store, so this
- * component only has to collect the thing and report what came back.
+ * The same dialog serves "change my own" from the account menu and "set one for
+ * someone" from the Logins screen, because the rules are identical — they live
+ * in `data/people.ts` and are enforced again in the store.
  *
- * There is deliberately no way to *see* an existing password. It is stored as a
- * one-way hash in production, so there is nothing to show — which is the whole
- * reason this is safer than the PIN arrangement it replaced.
+ * The current password is shown only on request, behind a button that says the
+ * look-up is recorded. Opening the dialog to *set* a new one should not log a
+ * look-up that never happened.
  */
 export function PasswordDialog({
   open,
@@ -45,12 +45,14 @@ export function PasswordDialog({
 }) {
   const me = useCurrentUser()
   const setPassword = useData((s) => s.setPassword)
+  const revealPassword = useData((s) => s.revealPassword)
   const push = useToasts((s) => s.push)
 
   const [value, setValue] = useState('')
   const [confirm, setConfirm] = useState('')
   const [show, setShow] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [current, setCurrent] = useState<string | null>(null)
 
   const isSelf = target?.id === me?.id
 
@@ -60,23 +62,17 @@ export function PasswordDialog({
       setConfirm('')
       setShow(false)
       setError(null)
+      setCurrent(null)
     }
   }, [open, target?.id])
 
   const save = () => {
     if (!target || !me) return
     if (value !== confirm) return setError('The two do not match.')
-    const result = setPassword({
-      actor: me,
-      targetId: target.id,
-      password: value,
-      issued: !isSelf,
-    })
+    const result = setPassword({ actor: me, targetId: target.id, password: value })
     if (!result.ok) return setError(result.error ?? 'That password could not be set.')
     push(
-      isSelf
-        ? 'Your password has been changed'
-        : `${target.name} can sign in with the new password`,
+      isSelf ? 'Your password has been changed' : `${target.name} can sign in with the new password`,
       'good',
     )
     onClose()
@@ -88,12 +84,10 @@ export function PasswordDialog({
     <Modal
       open={open && target !== null}
       onClose={onClose}
-      title={isSelf ? 'Change my password' : `Reset the password for ${target?.name}`}
+      title={isSelf ? 'Change my password' : `Set a password for ${target?.name}`}
       subtitle={
         target
-          ? isSelf
-            ? 'You will use it the next time you sign in.'
-            : `${ROLE_LABEL[target.role]} · last set ${formatTimestamp(target.passwordSetAt)} by ${target.passwordSetBy}`
+          ? `${target.username} · ${ROLE_LABEL[target.role]} · last set ${formatTimestamp(target.passwordSetAt)} by ${target.passwordSetBy}`
           : undefined
       }
       footer={
@@ -109,13 +103,34 @@ export function PasswordDialog({
     >
       {target && (
         <div className="space-y-4">
-          {!isSelf && (
-            <div className="flex items-start gap-2.5 rounded-xl border border-line bg-surface-2 px-3.5 py-3">
-              <Icon name="lock" className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+          {me && canSeePasswordOf(me, target) && (
+            <div className="rounded-xl border border-line bg-surface-2 px-3.5 py-3">
+              <p className="eyebrow mb-1">Current password</p>
+              {current ? (
+                <p className="readout break-all text-[16px] font-semibold text-ink">{current}</p>
+              ) : (
+                <button
+                  onClick={() => {
+                    const result = revealPassword({ actor: me, targetId: target.id })
+                    if (result.ok && result.password) setCurrent(result.password)
+                    else push(result.error ?? 'That password cannot be shown.', 'critical')
+                  }}
+                  className="flex items-center gap-1.5 text-[12.5px] text-primary hover:underline"
+                >
+                  <Icon name="eye" className="h-3.5 w-3.5" />
+                  Show it — this is recorded
+                </button>
+              )}
+            </div>
+          )}
+
+          {isSelf && (
+            <div className="flex items-start gap-2.5 rounded-xl border border-warn/30 bg-warn/8 px-3.5 py-3">
+              <Icon name="alert" className="mt-0.5 h-4 w-4 shrink-0 text-warn" />
               <p className="text-[12.5px] leading-relaxed text-ink-2">
-                Nobody can see an existing password, including you — it is stored so that it
-                cannot be read back. Set a new one here and hand it over; {target.name} will be
-                asked to choose their own the next time they sign in.
+                <b className="text-ink">Do not reuse a password from anywhere else.</b> Senior
+                staff can look this one up, so it should be used for this system only — never
+                the one on your personal e-mail or bank.
               </p>
             </div>
           )}

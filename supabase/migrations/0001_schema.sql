@@ -16,10 +16,10 @@
 --   * Country lives on the sale line, not on the closing, because the client
 --     needs to know exactly which nationality bought which perfume (Q29).
 --   * Figures exclude SST (Q24).
---   * Everyone signs in with a username and password, then a six-digit code
---     sent to their work e-mail. Passwords are stored as an Argon2 hash and
---     nothing else — nobody can read one back, including the Managing Director
---     and IT. See docs/spec/auth.md.
+--   * Everyone signs in with a username and password; leadership and IT also
+--     get a six-digit code by e-mail. Senior staff can look a password up, as
+--     they could the PIN, so each is held twice — an Argon2 hash to check it and
+--     an encrypted copy for the look-up. See docs/spec/auth.md.
 -- ============================================================================
 
 -- pgcrypto gives us gen_random_uuid() and the digest used for the sign-in
@@ -30,10 +30,10 @@ create extension if not exists "pgcrypto";
 
 -- ── Enums ───────────────────────────────────────────────────────────────────
 
-create type channel        as enum ('main', 'dealer', 'consignment', 'online');
+create type channel        as enum ('main', 'dealer', 'consignment');
 create type cadence        as enum ('daily', 'monthly');
 create type location_status as enum ('open', 'coming', 'closed');
-create type variant        as enum ('retail', 'set', 'vial', 'tester');
+create type variant        as enum ('retail', 'set', 'tester');
 -- Which of the two prices a location's revenue is counted on (Revision 2).
 create type price_basis    as enum ('retail', 'promotion');
 create type app_role       as enum ('director','md','ops','pa','finance','warehouse','promoter','it');
@@ -71,18 +71,11 @@ create table locations (
   -- promotion, and the two differ by more than 20% — so a figure computed on
   -- the wrong one is simply wrong.
   price_basis       price_basis not null default 'promotion',
-  -- False for online storefronts: the website and the shops share one set of
-  -- stock numbers (Q13), so an online order is picked from the warehouse and
-  -- never sits on a shelf of its own. Those locations file sales with no
-  -- nightly count and never raise a top-up order.
-  holds_own_stock   boolean not null default true,
   opened_on         date,
   created_at        timestamptz not null default now(),
 
   constraint countries_only_on_main
-    check (records_countries = false or channel = 'main'),
-  constraint only_online_shares_stock
-    check (holds_own_stock or channel = 'online')
+    check (records_countries = false or channel = 'main')
 );
 
 create index on locations (channel, status);
@@ -113,7 +106,7 @@ create table skus (
   offer_myr           numeric(10,2),
   reorder_point  integer not null default 0 check (reorder_point >= 0),
   case_size      integer not null default 12 check (case_size > 0),
-  -- Testers and vials are never sold.
+  -- Testers are never sold.
   sellable       boolean not null default true,
   -- Testers are ordered but never counted on a shelf (Revision 2).
   counted        boolean not null default true,
@@ -130,18 +123,20 @@ create index on skus (product_id) where active;
 
 -- ── People ──────────────────────────────────────────────────────────────────
 --
--- Sign-in is a username, a password, and a six-digit code sent to the person's
--- work e-mail. The PIN keypad is gone, and with it the one uncomfortable
--- compromise in the old design: a PIN had to be *readable* so a senior could
--- look it up, which meant keeping a recoverable copy. A password does not, so
--- there is nothing here that anybody can read back.
+-- Sign-in is a username and a password. Leadership and IT also get a six-digit
+-- code by e-mail (see two_step_roles() below).
 --
---   password_hash   Argon2id. One way. Not reversible by anyone, at all.
---   login_codes     the second step, hashed the same way and short-lived.
+-- Everything else works as the PINs did, at the client's instruction —
+-- including that senior staff can look a password up. A hash cannot be read
+-- back, so each password is held twice:
 --
--- What carries over from the PIN model is the *authority table* — who may reset
--- whose credentials is exactly who could change whose PIN. Only the verb
--- changed, because a hash can be replaced but never revealed.
+--   password_hash    Argon2id. Checked at sign-in. Not reversible.
+--   password_cipher  pgp_sym_encrypt with a key held in Supabase Vault. Read
+--                    only through reveal_password(), which checks authority
+--                    first and writes the look-up to the activity log.
+--
+-- The key is never in this file, the application, or a database dump, so a
+-- stolen copy of the tables is not a list of everybody's password.
 
 create table app_users (
   id              uuid primary key default gen_random_uuid(),
@@ -155,12 +150,12 @@ create table app_users (
   title           text,
   -- Promoters belong to one store; everyone else is head office.
   location_id     uuid references locations(id) on delete restrict,
-  -- Argon2id. There is no second copy and no way back to the password.
+  -- Argon2id, for checking at sign-in.
   password_hash   text not null,
+  -- The recoverable copy. Meaningless without the Vault key.
+  password_cipher bytea not null,
   password_set_at timestamptz not null default now(),
   password_set_by uuid references app_users(id),
-  -- Set when a senior issues one, cleared once the person chooses their own.
-  must_change_password boolean not null default true,
   initials        text not null,
   accent          text not null default 'blue',
   active          boolean not null default true,
@@ -188,9 +183,9 @@ create table password_history (
   primary key (user_id, password_hash)
 );
 
--- The second step. A code lives for ten minutes, is good for one use, and is
--- stored hashed — a table of live codes in clear text would undo the point of
--- having a second step at all.
+-- The second step, for the roles in two_step_roles() only. A code lives for
+-- ten minutes, is good for one use, and is stored hashed — a table of live
+-- codes in clear text would undo the point of having a second step at all.
 create table login_codes (
   id          uuid primary key default gen_random_uuid(),
   user_id     uuid not null references app_users(id) on delete cascade,
@@ -487,11 +482,9 @@ create index on audit_log (kind, at desc);
 create index on audit_log (entity_id, at desc);
 create index on audit_log (table_name, entity_id, at desc);
 
--- ── Passwords: who may reset whose ──────────────────────────────────────────
+-- ── Passwords: who may set and see whose ────────────────────────────────────
 --
--- Straight from the client's instruction, and unchanged from the PIN rules that
--- came before it. Only the verb is different: a hash can be replaced, never
--- revealed, so there is no "who may see whose" any more.
+-- Exactly the PIN rules, which the client set out and asked to keep:
 --
 --   IT ................. anyone, including the Managing Director and itself
 --   Managing Director .. anyone visible to him, including the Director and himself
@@ -499,14 +492,14 @@ create index on audit_log (table_name, entity_id, at desc);
 --                        but not each other, and not the Managing Director
 --   Finance ............ themselves only
 --   Warehouse .......... themselves only
---   Store Promoter ..... their own only
---   Director ........... his own only; the role cannot edit anything else
+--   Store Promoter ..... nobody; they use the password a senior gave them
+--   Director ........... nobody; the role cannot edit anything
 --
--- This mirrors canResetPasswordOf() in src/data/people.ts. The two are
--- deliberately duplicated: the browser copy decides which buttons appear, this
--- copy decides what actually happens.
+-- Seeing a password follows the same table as setting one. This mirrors
+-- canResetPasswordOf() in src/data/people.ts: the browser copy decides which
+-- buttons appear, this copy decides what actually happens.
 
-create or replace function reset_targets(actor app_role)
+create or replace function password_targets(actor app_role)
 returns app_role[]
 language sql immutable
 as $fn$
@@ -517,8 +510,7 @@ as $fn$
     when 'pa'        then array['pa','finance','warehouse','promoter']::app_role[]
     when 'finance'   then array['finance']::app_role[]
     when 'warehouse' then array['warehouse']::app_role[]
-    when 'promoter'  then array['promoter']::app_role[]
-    else array['director']::app_role[]
+    else array[]::app_role[]
   end;
 $fn$;
 
@@ -536,23 +528,44 @@ language sql immutable
 as $fn$
   select
     can_see_user(actor, target)
-    and target.role = any (reset_targets(actor.role))
+    and target.role = any (password_targets(actor.role))
     and case
       -- Ops and the PA reach their own role only for themselves, never a colleague.
       when actor.role in ('ops','pa') and actor.role = target.role then actor.id = target.id
-      -- These four reach nobody but themselves.
-      when actor.role in ('finance','warehouse','promoter','director') then actor.id = target.id
+      -- Finance and the Warehouse change their own only.
+      when actor.role in ('finance','warehouse') then actor.id = target.id
       else true
     end;
 $fn$;
 
+create or replace function can_see_password_of(actor app_users, target app_users)
+returns boolean
+language sql immutable
+as $fn$
+  select can_reset_password_of(actor, target);
+$fn$;
+
+-- Who gets the second step: the four who can read other people's passwords,
+-- and the Director. One line to widen.
+create or replace function two_step_roles()
+returns app_role[]
+language sql immutable
+as $fn$
+  select array['director','md','ops','pa','it']::app_role[];
+$fn$;
+
+create or replace function password_key() returns text
+language sql stable security definer as $fn$
+  select decrypted_secret from vault.decrypted_secrets where name = 'password_key';
+$fn$;
+
 -- ── Setting a password ──────────────────────────────────────────────────────
 --
--- The hash arrives already computed. Argon2id belongs in the Edge Function, not
--- here: hashing in SQL would mean the password itself travelling through the
--- query log and the statement cache on its way in.
+-- The hash and the encrypted copy both arrive already computed. They are made
+-- in the Edge Function, not here: doing either in SQL would mean the password
+-- itself travelling through the query log and the statement cache on its way in.
 
-create or replace function set_password(target_id uuid, new_hash text, issued boolean default false)
+create or replace function set_password(target_id uuid, new_hash text, new_cipher bytea)
 returns void
 language plpgsql security definer as $fn$
 declare
@@ -582,9 +595,9 @@ begin
 
   update app_users
   set password_hash = new_hash,
+      password_cipher = new_cipher,
       password_set_at = now(),
-      password_set_by = actor.id,
-      must_change_password = (issued and actor.id <> target_id)
+      password_set_by = actor.id
   where id = target_id;
 
   insert into audit_log (actor_id, actor_name, actor_role, kind, action, summary,
@@ -597,12 +610,42 @@ begin
           target_id, 'app_users');
 end $fn$;
 
+-- Reads a password back. The client asked for this, as they had for PINs; the
+-- authority check and the audit row are what make it defensible.
+create or replace function reveal_password(target_id uuid)
+returns text
+language plpgsql security definer as $fn$
+declare
+  actor  app_users;
+  target app_users;
+begin
+  actor := current_app_user();
+  select * into target from app_users where id = target_id;
+  if actor is null or target is null then raise exception 'Not permitted'; end if;
+  if not can_see_password_of(actor, target) then
+    raise exception 'You cannot see the password for %', target.name;
+  end if;
+
+  -- The look-up is the thing worth recording, never the password.
+  insert into audit_log (actor_id, actor_name, actor_role, kind, action, summary,
+                         entity_id, table_name)
+  values (actor.id, actor.name, actor.role, 'password', 'password.revealed',
+          case when actor.id = target.id
+               then 'Looked at their own password'
+               else format('Looked at the password for %s', target.name) end,
+          target_id, 'app_users');
+
+  return pgp_sym_decrypt(target.password_cipher, password_key());
+end $fn$;
+
 -- ── Signing in ──────────────────────────────────────────────────────────────
 --
--- Two steps. The first checks the password and issues a code; the second
--- redeems it. Both return NULL rather than raising on failure, so the row
--- recording the attempt survives — `raise exception` rolls the transaction back
--- and would take the evidence with it.
+-- The first call checks the password. For most people that is the whole of it
+-- and it returns their id; for the roles in two_step_roles() it issues a code
+-- and returns the code's id instead, to be redeemed by the second call. Both
+-- return NULL rather than raising on failure, so the row recording the attempt
+-- survives — `raise exception` rolls the transaction back and would take the
+-- evidence with it.
 
 create or replace function begin_sign_in(
   p_username text,
@@ -641,6 +684,16 @@ begin
     values ('Someone signing in', 'session', 'session.sign_in_failed',
             'A sign-in was refused — wrong username or password');
     return null;
+  end if;
+
+  -- Most people are in on the password alone. The caller sees a NULL code id
+  -- with a signed-in audit row, and issues the session.
+  if not (found.role = any (two_step_roles())) then
+    insert into audit_log (actor_id, actor_name, actor_role, kind, action, summary,
+                           entity_id, location_id)
+    values (found.id, found.name, found.role, 'session', 'session.signed_in',
+            format('%s signed in', found.name), found.id, found.location_id);
+    return found.id;
   end if;
 
   insert into login_codes (user_id, code_hash, expires_at, device_id)
@@ -940,9 +993,9 @@ end $fn$;
 -- The safety net. Attached to every table that holds something worth tracing,
 -- so a change made outside the application is still recorded.
 --
--- It deliberately drops app_users.password_hash from its diffs. The hash gives
--- nothing away on its own, but a log full of them is a free head start for
--- anybody cracking offline. set_password() writes its own readable row.
+-- It deliberately drops app_users.password_hash and password_cipher from its
+-- diffs. A log full of either is a head start for anybody with the key or the
+-- patience. set_password() and reveal_password() write their own rows.
 -- Which category a table's changes belong to, so the trigger's rows sit
 -- alongside the application's on the same Activity screen.
 create or replace function kind_for_table(t text)
@@ -977,11 +1030,11 @@ begin
   )::uuid;
 
   payload := case tg_op
-    when 'INSERT' then jsonb_build_object('new', to_jsonb(new) - 'password_hash')
-    when 'DELETE' then jsonb_build_object('old', to_jsonb(old) - 'password_hash')
+    when 'INSERT' then jsonb_build_object('new', to_jsonb(new) - 'password_hash' - 'password_cipher')
+    when 'DELETE' then jsonb_build_object('old', to_jsonb(old) - 'password_hash' - 'password_cipher')
     else jsonb_build_object(
-      'old', to_jsonb(old) - 'password_hash',
-      'new', to_jsonb(new) - 'password_hash'
+      'old', to_jsonb(old) - 'password_hash' - 'password_cipher',
+      'new', to_jsonb(new) - 'password_hash' - 'password_cipher'
     )
   end;
 

@@ -22,15 +22,16 @@
  *
  * ── Signing in ──────────────────────────────────────────────────────────────
  *
- * Username and password, then a six-digit code sent to the person's e-mail.
- * This replaces the PIN keypad entirely at the client's instruction, and it is
- * a straightforwardly better arrangement: a password is stored as a one-way
- * hash, so nobody — not Davy, not IT, not somebody holding a stolen copy of the
- * database — can read it back. The uncomfortable trade-off that the old PIN
- * design carried simply goes away.
+ * Username and password. Everything else works the way the PINs did, at the
+ * client's instruction: the same people issue them, the same people can change
+ * whose, and the same four people can look one up — which means a password is
+ * held so that it can be read back, exactly as the PIN was. See
+ * `docs/spec/auth.md` for what that costs.
  *
- * What survives from the PIN model is the *authority table*: who may reset
- * whose credentials is exactly who could previously change whose PIN.
+ * Only the people at the top of the chart get a second step — a six-digit code
+ * to their work e-mail. Those accounts can read everybody else's password, so
+ * one of them being guessed would give the whole company away; for a promoter
+ * at a counter the code was more friction than it was worth.
  */
 
 export type Role =
@@ -152,6 +153,18 @@ export const PASSWORD_MIN = 10
 export const CODE_TTL_MINUTES = 10
 export const CODE_LENGTH = 6
 
+/**
+ * Who gets the second step.
+ *
+ * The four who can read other people's passwords, and the Director, who can
+ * read every figure in the business. Everybody else signs in with a username
+ * and password alone. One line to change if the client wants it wider.
+ */
+export const TWO_STEP_ROLES: Role[] = ['director', 'md', 'ops', 'pa', 'it']
+
+export const needsTwoStep = (person: Pick<Person, 'role'>): boolean =>
+  TWO_STEP_ROLES.includes(person.role)
+
 export interface Person {
   id: string
   /** Unique, lower case, no spaces. What they type to sign in. */
@@ -170,19 +183,17 @@ export interface Person {
   /**
    * The password.
    *
-   * Held in readable form **in this wireframe only**, because there is no
-   * server to hash against and a walkthrough has to be able to sign in. The
-   * production schema stores an Argon2 hash and nothing else — see
-   * `docs/spec/auth.md` and `supabase/migrations/0001_schema.sql`. No screen in
-   * the application ever reads this back.
+   * Readable, because the client requires senior staff to be able to look one
+   * up, as they could the PIN. The production schema keeps an Argon2 hash to
+   * check it against and a separately encrypted copy for the look-up — see
+   * `docs/spec/auth.md`. Screens never read this field directly; they ask the
+   * store, which checks authority and writes the look-up to the activity log.
    */
   password: string
   /** What they have used before. A password is never reused. */
   passwordHistory: string[]
   passwordSetAt: string
   passwordSetBy: string
-  /** Set when a senior issues a password, cleared once they choose their own. */
-  mustChangePassword?: boolean
   active: boolean
   /** Hidden from every other person's Logins screen. IT only. */
   hidden?: boolean
@@ -201,11 +212,10 @@ export const HOME_FOR_ROLE: Record<Role, string> = {
   it: '/users',
 }
 
-// ── Who may reset whose password ────────────────────────────────────────────
+// ── Who may set and see whose password ──────────────────────────────────────
 //
-// The client set this out precisely for PINs, and it carries over unchanged to
-// passwords — only the verb is different, because a hashed password can be
-// *reset* but never *read*:
+// Exactly the PIN rules, which the client set out precisely and has asked to
+// keep. Only the credential changed:
 //
 //   IT ................. anyone, including the Managing Director and itself
 //   Managing Director .. anyone visible to him, including the Director and himself
@@ -213,18 +223,20 @@ export const HOME_FOR_ROLE: Record<Role, string> = {
 //                        but not each other, and not the Managing Director
 //   Finance ............ themselves only
 //   Warehouse .......... themselves only
-//   Store Promoter ..... their own only
-//   Director ........... his own only; the role cannot edit anything else
+//   Store Promoter ..... nobody; they use the password a senior gave them
+//   Director ........... nobody; the role cannot edit anything
+//
+// Seeing a password follows the same table as setting one.
 
-const RESET_TARGETS: Record<Role, Role[]> = {
+const PASSWORD_TARGETS: Record<Role, Role[]> = {
   it: ['director', 'md', 'ops', 'pa', 'finance', 'warehouse', 'promoter', 'it'],
   md: ['director', 'md', 'ops', 'pa', 'finance', 'warehouse', 'promoter'],
   ops: ['ops', 'finance', 'warehouse', 'promoter'],
   pa: ['pa', 'finance', 'warehouse', 'promoter'],
   finance: ['finance'],
   warehouse: ['warehouse'],
-  promoter: ['promoter'],
-  director: ['director'],
+  promoter: [],
+  director: [],
 }
 
 /** Whether `actor` may see `target` at all. IT is hidden from everyone else. */
@@ -236,32 +248,27 @@ export const canSeeUser = (actor: Person, target: Person): boolean =>
  *
  * Ops and the PA may change their *own* but not each other's, which the role
  * table alone cannot express — hence the same-role guard below.
- *
- * One thing differs from the old PIN rules: **everyone can now change their
- * own**. A promoter could not change their own PIN because a senior had to be
- * able to look it up; with a hash nobody can look anything up, so the reason
- * for that restriction is gone.
  */
 export const canResetPasswordOf = (actor: Person, target: Person): boolean => {
   if (!canSeeUser(actor, target)) return false
-  if (!RESET_TARGETS[actor.role].includes(target.role)) return false
+  if (!PASSWORD_TARGETS[actor.role].includes(target.role)) return false
 
   // Ops and the PA reach their own role only for themselves, never a colleague.
   if ((actor.role === 'ops' || actor.role === 'pa') && actor.role === target.role) {
     return actor.id === target.id
   }
-  if (
-    actor.role === 'finance' ||
-    actor.role === 'warehouse' ||
-    actor.role === 'promoter' ||
-    actor.role === 'director'
-  ) {
+  // Finance and the Warehouse change their own only.
+  if (actor.role === 'finance' || actor.role === 'warehouse') {
     return actor.id === target.id
   }
   return true
 }
 
-/** Whether this person can change their own password. Everyone can. */
+/** Whether `actor` may read `target`'s current password. Same table. */
+export const canSeePasswordOf = (actor: Person, target: Person): boolean =>
+  canResetPasswordOf(actor, target)
+
+/** Whether this person can change their own. Promoters and the Director cannot. */
 export const canChangeOwnPassword = (person: Person): boolean =>
   canResetPasswordOf(person, person)
 
@@ -460,12 +467,12 @@ const promoters: Seed[] = promoterGroups.flatMap((g) =>
 /**
  * Starting passwords.
  *
- * Everyone is issued one and told to change it the first time they sign in,
- * which is what `mustChangePassword` drives. In the real system these are
+ * Issued by a senior, the way the PINs were. Promoters keep the one they are
+ * given; everybody else may change theirs. In the real system these are
  * generated once and handed over; here they are derived so a walkthrough is
- * repeatable. Note that they deliberately avoid the word "Legendary" — the
- * rules below reject it, and a starting password the system would refuse to
- * accept is a confusing thing to hand somebody.
+ * repeatable. They deliberately avoid the word "Legendary" — the rules below
+ * reject it, and a password the system would refuse is a confusing thing to
+ * hand somebody.
  */
 export const startingPassword = (username: string) => `Start-${username.slice(0, 5)}-26`
 
@@ -485,7 +492,6 @@ const toPerson = (s: Seed): Person => ({
   passwordHistory: [],
   passwordSetAt: SEEDED_AT,
   passwordSetBy: 'Imran',
-  mustChangePassword: false,
   active: true,
   ...(s.hidden ? { hidden: true } : {}),
   ...(unconfirmedStore.has(s.username) ? { placeholder: true } : {}),

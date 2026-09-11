@@ -24,11 +24,9 @@ type Step = 'credentials' | 'code'
 /**
  * The front door.
  *
- * Username and password, then a six-digit code sent to the person's company
- * e-mail. Two steps rather than one, because a password alone can be
- * shoulder-surfed at a counter or reused from a site that has already been
- * breached — and a code that lands in the person's own mailbox means knowing
- * the password is not enough.
+ * Username and password. Leadership then gets a six-digit code to their work
+ * e-mail, because their accounts can read everybody else's password; everyone
+ * else is in as soon as the password is right.
  *
  * The failure messages are deliberately unhelpful to an attacker: a wrong
  * username and a wrong password produce the same sentence, because saying
@@ -71,6 +69,13 @@ export function Login() {
     const result = beginSignIn(username, password)
     setBusy(false)
     if (!result.ok) return setError(result.error ?? 'That did not work.')
+    // Most people are in straight away; only leadership gets the code step.
+    if (result.person) {
+      setGreeting(result.person.name)
+      const home = result.person.home
+      setTimeout(() => navigate(home), 550)
+      return
+    }
     setCode('')
     setStep('code')
   }
@@ -149,7 +154,7 @@ export function Login() {
                 <div className="mb-1 text-center">
                   <p className="font-display text-[17px] font-semibold text-ink">Sign in</p>
                   <p className="mt-1 text-[12.5px] text-ink-2">
-                    We will send a code to your work e-mail.
+                    With the username and password you were given.
                   </p>
                 </div>
 

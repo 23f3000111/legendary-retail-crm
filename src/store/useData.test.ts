@@ -4,7 +4,7 @@ import type { Person } from '../data/people'
 
 /**
  * The store is the last line. A screen can be wrong — it can show a button it
- * should not, or skip a check — so every PIN rule is enforced here too, and
+ * should not, or skip a check — so every password rule is enforced here too, and
  * these tests go straight at that layer rather than through a component.
  */
 
@@ -25,24 +25,21 @@ describe('setting a password', () => {
       actor: person('davy'),
       targetId: 'siew-fang',
       password: 'kebaya-tanjung-417',
-      issued: true,
     })
 
     expect(result.ok).toBe(true)
     expect(person('siew-fang').password).toBe('kebaya-tanjung-417')
     expect(person('siew-fang').passwordHistory).toContain(before)
     expect(person('siew-fang').passwordSetBy).toBe('Lim Davy')
-    // Issued by somebody else, so they have to choose their own.
-    expect(person('siew-fang').mustChangePassword).toBe(true)
   })
 
-  it('does not ask you to change one you chose yourself', () => {
-    useData.getState().setPassword({
+  it('lets Finance change their own', () => {
+    const result = useData.getState().setPassword({
       actor: person('siew-fang'),
       targetId: 'siew-fang',
       password: 'kebaya-tanjung-417',
     })
-    expect(person('siew-fang').mustChangePassword).toBe(false)
+    expect(result.ok).toBe(true)
   })
 
   it('never gives a person one back', () => {
@@ -74,13 +71,26 @@ describe('setting a password', () => {
     expect(person('tanshimin').password).toBe(target.password)
   })
 
-  it('lets a promoter change their own', () => {
+  it('stops a promoter changing their own — they use the one they were given', () => {
+    const before = person('teokoknian').password
     const result = useData.getState().setPassword({
       actor: person('teokoknian'),
       targetId: 'teokoknian',
       password: 'kebaya-tanjung-417',
     })
-    expect(result.ok).toBe(true)
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/ask a senior/i)
+    expect(person('teokoknian').password).toBe(before)
+  })
+
+  it('lets Davy read a password, and refuses Kelly reading Davy’s', () => {
+    const seen = useData.getState().revealPassword({ actor: person('davy'), targetId: 'kim' })
+    expect(seen.ok).toBe(true)
+    expect(seen.password).toBe(person('kim').password)
+
+    const refused = useData.getState().revealPassword({ actor: person('kelly'), targetId: 'davy' })
+    expect(refused.ok).toBe(false)
+    expect(refused.password).toBeUndefined()
   })
 
   it('stops Kelly and Chloe reaching each other or Davy', () => {
@@ -130,14 +140,14 @@ describe('setting a password', () => {
 
 describe('targets', () => {
   it('sets a target where the seed had none, and keeps it', () => {
-    useData.getState().setTarget('web-shp', '2026-08', 40_000)
+    useData.getState().setTarget('bsas', '2026-08', 40_000)
     const found = useData
       .getState()
-      .targets.find((t) => t.locationId === 'web-shp' && t.month === '2026-08')
+      .targets.find((t) => t.locationId === 'bsas' && t.month === '2026-08')
 
     expect(found?.amountMYR).toBe(40_000)
     expect(useData.getState().overlay.changedTargets).toContainEqual({
-      locationId: 'web-shp',
+      locationId: 'bsas',
       month: '2026-08',
       amountMYR: 40_000,
     })

@@ -202,7 +202,7 @@ export function Locations() {
         </Button>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-3">
         <StatTile
           label="Main stores"
           value={locationsInChannel('main').length}
@@ -227,14 +227,6 @@ export function Locations() {
           tone="cyan"
           icon="wallet"
         />
-        <StatTile
-          label="Online"
-          value={locationsInChannel('online').length}
-          format={(n) => num(Math.round(n))}
-          footnote="daily · from warehouse stock"
-          tone="teal"
-          icon="box"
-        />
       </div>
 
       <Panel>
@@ -246,8 +238,6 @@ export function Locations() {
               ? 'Consignment partners report monthly. Margin rates are placeholders until you confirm them.'
               : view === 'dealer'
                 ? 'Dealers report daily sales and products. Their towns are still to be confirmed.'
-                : view === 'online'
-                  ? 'Online orders are picked from the warehouse, so these storefronts share the warehouse stock rather than holding their own.'
                   : undefined
           }
           action={
@@ -266,7 +256,6 @@ export function Locations() {
                   { value: 'main', label: 'Main' },
                   { value: 'dealer', label: 'Dealers' },
                   { value: 'consignment', label: 'Consignment' },
-                  { value: 'online', label: 'Online' },
                   { value: 'all', label: 'All' },
                 ]}
               />

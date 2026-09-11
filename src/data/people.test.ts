@@ -3,7 +3,10 @@ import {
   can,
   canChangeOwnPassword,
   canResetPasswordOf,
+  canSeePasswordOf,
   canSeeUser,
+  needsTwoStep,
+  TWO_STEP_ROLES,
   checkPassword,
   maskEmail,
   passwordStrength,
@@ -138,15 +141,21 @@ describe('the revised staff list', () => {
 // ── Who may reset whose password ────────────────────────────────────────────
 
 describe('password authority', () => {
-  it('lets everybody change their own', () => {
-    for (const p of seedPeople) {
-      expect(canChangeOwnPassword(p), p.username).toBe(true)
+  it('never lets a Store Promoter change a password, their own included', () => {
+    expect(canChangeOwnPassword(promoter)).toBe(false)
+    for (const target of seedPeople) {
+      expect(canResetPasswordOf(promoter, target), target.id).toBe(false)
     }
   })
 
-  it('stops a Store Promoter touching anybody else', () => {
-    for (const target of seedPeople.filter((p) => p.id !== promoter.id)) {
-      expect(canResetPasswordOf(promoter, target), target.id).toBe(false)
+  it('lets Finance and the Warehouse change their own', () => {
+    expect(canChangeOwnPassword(siewFang)).toBe(true)
+    expect(canChangeOwnPassword(an)).toBe(true)
+  })
+
+  it('lets Ops, the PA, Davy and IT change their own', () => {
+    for (const p of [kelly, chloe, davy, imran]) {
+      expect(canChangeOwnPassword(p), p.username).toBe(true)
     }
   })
 
@@ -191,10 +200,62 @@ describe('password authority', () => {
     }
   })
 
-  it('gives the Director no authority over anybody else', () => {
-    for (const target of seedPeople.filter((p) => p.id !== vins.id)) {
+  it('gives the Director no authority at all, not even over his own', () => {
+    for (const target of seedPeople) {
       expect(canResetPasswordOf(vins, target), target.id).toBe(false)
     }
+  })
+})
+
+// ── Who can read a password ─────────────────────────────────────────────────
+
+describe('reading a password', () => {
+  it('ties reading a password to the authority to set it', () => {
+    for (const actor of seedPeople) {
+      for (const target of seedPeople) {
+        expect(canSeePasswordOf(actor, target), `${actor.id} -> ${target.id}`).toBe(
+          canResetPasswordOf(actor, target),
+        )
+      }
+    }
+  })
+
+  it('lets Davy and Imran read every password they can see', () => {
+    for (const target of seedPeople.filter((p) => !p.hidden)) {
+      expect(canSeePasswordOf(davy, target), target.id).toBe(true)
+    }
+    for (const target of seedPeople) {
+      expect(canSeePasswordOf(imran, target), target.id).toBe(true)
+    }
+  })
+
+  it('lets Kelly and Chloe read the staff within their reach, and nobody above', () => {
+    for (const actor of [kelly, chloe]) {
+      expect(canSeePasswordOf(actor, siewFang), actor.id).toBe(true)
+      expect(canSeePasswordOf(actor, promoter), actor.id).toBe(true)
+      expect(canSeePasswordOf(actor, davy), actor.id).toBe(false)
+    }
+    expect(canSeePasswordOf(kelly, chloe)).toBe(false)
+  })
+})
+
+// ── The second step ─────────────────────────────────────────────────────────
+
+describe('who gets a code by e-mail', () => {
+  it('asks leadership and IT for a code', () => {
+    for (const p of [vins, davy, kelly, chloe, imran]) {
+      expect(needsTwoStep(p), p.username).toBe(true)
+    }
+  })
+
+  it('lets everybody else in on the password alone', () => {
+    for (const p of [siewFang, ivvi, an, loong, promoter]) {
+      expect(needsTwoStep(p), p.username).toBe(false)
+    }
+  })
+
+  it('covers exactly the roles that can read other people’s passwords, plus the Director', () => {
+    expect([...TWO_STEP_ROLES].sort()).toEqual(['director', 'it', 'md', 'ops', 'pa'])
   })
 })
 

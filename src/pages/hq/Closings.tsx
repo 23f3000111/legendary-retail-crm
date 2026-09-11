@@ -87,7 +87,6 @@ export function Closings() {
             { value: 'main', label: 'Main stores' },
             { value: 'dealer', label: 'Dealers' },
             { value: 'consignment', label: 'Consignment' },
-            { value: 'online', label: 'Online' },
           ]}
         />
       </div>

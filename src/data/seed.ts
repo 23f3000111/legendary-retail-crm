@@ -1,12 +1,10 @@
 /**
  * Demonstration history, generated deterministically.
  *
- * The four channels are simulated differently because they genuinely behave
+ * The three channels are simulated differently because they genuinely behave
  * differently: main stores trade daily and record the buyer's nationality
  * against every line; dealers trade daily without nationality; consignment
- * partners report once a month and hold no counted stock; online storefronts
- * trade daily and are picked from the warehouse, so they have no shelf to count
- * and never raise a top-up.
+ * partners report once a month and hold no counted stock.
  *
  * Every run produces byte-identical data, so a walkthrough on Tuesday matches
  * the one on Friday.
@@ -287,7 +285,6 @@ function build(r: () => number): CrmData {
 
   const kelly = people.find((p) => p.role === 'ops')!
   const davy = people.find((p) => p.role === 'md')!
-  const chloe = people.find((p) => p.role === 'pa')!
   const warehouse = people.find((p) => p.role === 'warehouse')!
   const promoterFor = (loc: Location) =>
     people.find((p) => p.locationId === loc.id)?.name ?? `${loc.code} promoter`
@@ -298,7 +295,7 @@ function build(r: () => number): CrmData {
   // Opening stock for every location that counts stock.
   const stock = new Map<string, number>()
   const key = (l: string, s: string) => `${l}::${s}`
-  for (const loc of dailyLocations.filter((l) => l.holdsOwnStock)) {
+  for (const loc of dailyLocations) {
     for (const s of countedSkus) {
       const base = loc.channel === 'main' ? 2.6 : 1.6
       stock.set(key(loc.id, s.id), Math.round(s.reorderPoint * (base + r() * 1.6)))
@@ -324,42 +321,6 @@ function build(r: () => number): CrmData {
   // ── Daily channels ───────────────────────────────────────────────────────
   for (const [dayIndex, date] of days.entries()) {
     for (const loc of dailyLocations) {
-      // Online: picked from the warehouse, so there is no shelf to count and no
-      // top-up to raise. Sales and how they were paid, and nothing else.
-      if (!loc.holdsOwnStock) {
-        const f = dayFactor(date, dayIndex, r)
-        const units = Math.max(1, Math.round(14 * loc.traffic * f))
-        const popTotal = sellableSkus.reduce((a, s) => a + s.popularity, 0)
-        const soldBySku = new Map<string, number>()
-        let revenueMYR = 0
-        for (const s of sellableSkus) {
-          const qty = Math.round((s.popularity / popTotal) * units * jitter(r, 0.9))
-          if (qty <= 0) continue
-          soldBySku.set(s.id, qty)
-          revenueMYR += qty * priceOf(s, loc.priceBasis)
-        }
-        if (soldBySku.size === 0) continue
-
-        // Marketplaces settle by card and wallet; there is no cash online.
-        const ewallet = roundTo(revenueMYR * (0.42 + (r() - 0.5) * 0.1), 1)
-        closings.push({
-          id: `${loc.id}-${date}`,
-          locationId: loc.id,
-          channel: loc.channel,
-          period: date,
-          periodType: 'day',
-          revenueMYR,
-          tender: { cash: 0, ewallet, card: roundTo(revenueMYR - ewallet, 1) },
-          lines: [...soldBySku].map(([skuId, qty]) => ({ skuId, qty })),
-          staffSales: { qty: 0, revenueMYR: 0 },
-          stockCount: [],
-          writeOffs: [],
-          submittedBy: chloe.name,
-          submittedAt: `${date}T23:${String(Math.floor(r() * 55)).padStart(2, '0')}:00+08:00`,
-        })
-        continue
-      }
-
       const received = new Map<string, number>()
       for (const d of deliveries) {
         if (d.locationId !== loc.id || d.date !== date) continue

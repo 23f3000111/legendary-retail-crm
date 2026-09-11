@@ -90,9 +90,9 @@ export function Targets() {
         }
       })
       // A target only means something where somebody is accountable for it, so
-      // this is main stores plus online — not the 56 dealers, who buy from us
-      // rather than sell for us.
-      .filter((r) => r.channel === 'main' || r.channel === 'online')
+      // this is the main stores — not the dealers, who buy from us rather than
+      // sell for us.
+      .filter((r) => r.channel === 'main')
       .sort((a, b) => b.lastMonth - a.lastMonth)
   }, [data, month, thisMonth])
 

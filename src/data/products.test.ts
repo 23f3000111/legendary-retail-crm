@@ -82,7 +82,7 @@ describe('which price counts', () => {
   })
 
   it('puts every location on one basis or the other', () => {
-    for (const id of ['pavilion-5', 'bsas', 'cons-sas', 'cons-wat', 'web-shp']) {
+    for (const id of ['pavilion-5', 'bsas', 'cons-sas', 'cons-wat', 'dlr-beauty-scent']) {
       expect(['retail', 'promotion']).toContain(locationById(id)!.priceBasis)
     }
   })
@@ -99,14 +99,13 @@ describe('what is counted, and what is only ordered', () => {
     expect(testerSkus).toHaveLength(25)
   })
 
-  it('counts a vial for every fragrance', () => {
-    const vials = skus.filter((s) => s.variant === 'vial')
-    expect(vials).toHaveLength(13)
-    for (const v of vials) {
-      expect(v.counted, v.label).toBe(true)
-      expect(v.sellable, v.label).toBe(false)
-      expect(v.label).toMatch(/· Vial$/)
-    }
+  it('has no vials — the client took them back out of the stock', () => {
+    expect(skus.some((s) => /Vial/.test(s.label))).toBe(false)
+  })
+
+  it('counts exactly the sixteen sellable lines on the shelf', () => {
+    expect(countedSkus).toHaveLength(16)
+    expect(countedSkus.every((s) => s.sellable)).toBe(true)
   })
 
   it('has no travel size or refill left — Revision 2 removed them', () => {

@@ -318,21 +318,13 @@ export function StoreDetail() {
         />
         <Rule />
         <PanelBody>
-          {location.holdsOwnStock ? (
-            <DataTable
-              columns={stockColumns}
-              rows={stock}
-              rowKey={(r) => r.skuId}
-              dense
-              onRowClick={setItem}
-            />
-          ) : (
-            <EmptyState
-              icon="box"
-              title="No shelf of its own"
-              body="Online orders are picked from the warehouse, so this storefront shares the warehouse stock rather than holding its own."
-            />
-          )}
+          <DataTable
+            columns={stockColumns}
+            rows={stock}
+            rowKey={(r) => r.skuId}
+            dense
+            onRowClick={setItem}
+          />
         </PanelBody>
       </Panel>
 

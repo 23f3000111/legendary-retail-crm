@@ -24,7 +24,7 @@ import { downloadCsv } from '../../lib/exportCsv'
 import { num } from '../../lib/format'
 
 const MECHANICS: PromotionMechanic[] = ['discount', 'bundle', 'gift', 'member', 'other']
-const CHANNELS: Channel[] = ['main', 'dealer', 'consignment', 'online']
+const CHANNELS: Channel[] = ['main', 'dealer', 'consignment']
 
 const STATE_TONE: Record<PromotionState, 'good' | 'active' | 'neutral'> = {
   running: 'good',

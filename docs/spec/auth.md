@@ -1,72 +1,104 @@
 # Signing in
 
-**Date:** 2026-09-09
-**Status:** Built. Replaces the PIN design entirely.
+**Date:** 2026-09-11
+**Status:** Built.
 
 ---
 
 ## What the client asked for
 
-> *"Client wants a secure way to login — a login with username and password and
-> then a two-step verification like a login link on mail or a code on mail.
-> Remove PIN login."*
+> *"Remove 2-step verification for staff — only the main people at HQ have 2-step
+> login. Manage Logins now manages staff username and password. All things will
+> be like previous, but instead of PIN it's username and password."*
 
-So: **username → password → six-digit code sent to their work e-mail.** The
-keypad is gone.
+So:
 
----
-
-## This is a straight improvement, and worth saying why
-
-The PIN design carried one uncomfortable compromise, written up at the time and
-flagged again at every hand-over: the client wanted senior staff to be able to
-*look up* a colleague's current PIN, and a system that can show you a credential
-cannot store it as a one-way hash. So a recoverable copy had to exist, encrypted
-with a key that four people could reach.
-
-**That whole problem disappears.** A password is stored as an Argon2id hash and
-nothing else. Nobody can read one back — not Davy, not Imran, not somebody
-holding a stolen copy of the database. There is no recoverable copy, no
-encryption key to protect, and no "who may see whose credential" question,
-because the answer is now *nobody*.
-
-The second step is what the client actually asked for and it is the right
-instinct. A password alone can be shoulder-surfed at a counter, guessed, or
-reused from a site that has already been breached. A code that lands in the
-person's own mailbox means knowing the password is not enough.
+- **Everyone signs in with a username and a password.**
+- **Leadership and IT also get a six-digit code by e-mail.** Everyone else is in
+  as soon as the password is right.
+- **Everything else works exactly as the PINs did** — who issues them, who can
+  change whose, and who can look them up.
 
 ---
 
-## Who may reset whose password
+## Who gets the code
 
-The authority table is unchanged from the PIN rules. Only the verb is different,
-because a hash can be replaced but never revealed.
+| | Code by e-mail? |
+|---|---|
+| Vins Lim — Director | Yes |
+| Lim Davy — Managing Director | Yes |
+| Kelly Tew — Operational Manager | Yes |
+| Chloe Chock — PA | Yes |
+| Imran — IT | Yes |
+| Finance, Warehouse, Store Promoters | No |
 
-| Who they are | Can reset | Cannot reset |
+"The main people at HQ" was read as the top of the chart, plus IT. That is also
+the right line on security grounds: **the four who can read other people's
+passwords are exactly the four whose accounts would give the whole company away
+if one were guessed**, and the Director can read every figure in the business.
+For a promoter at a counter, the code was more friction than it was worth.
+
+It is one list — `TWO_STEP_ROLES` in [`people.ts`](../../src/data/people.ts), and
+`two_step_roles()` in the schema — if the client wants it wider or narrower.
+
+---
+
+## Who may set and see whose password
+
+Exactly the PIN rules:
+
+| Who they are | Can set and see | Cannot |
 |---|---|---|
-| **Store Promoter** | their own | anyone else's |
+| **Store Promoter** | nobody — they use the one they were given | everything, their own included |
 | **Warehouse Team** | their own | anyone else's |
 | **Finance Department** | their own | anyone else's |
 | **Operational Manager** (Kelly) | her own, Finance, Warehouse, Promoters | Chloe's, Davy's, the Director's |
 | **Davy's PA** (Chloe) | her own, Finance, Warehouse, Promoters | Kelly's, Davy's, the Director's |
 | **Managing Director** (Davy) | anyone, his own included | — |
 | **IT** (Imran) | anyone, Davy's included | — |
-| **Director** (Vins) | his own | everyone else's — the role cannot edit anything |
+| **Director** (Vins) | nobody — the role cannot edit anything | everything |
 
-**Nobody can reset Davy's password except Davy and Imran.** Kelly and Chloe hold
-the same authority as each other and deliberately cannot reach across.
+**Nobody can set or see Davy's password except Davy and Imran.** Imran's own login
+stays hidden from everybody else's Logins screen.
 
-One thing did change: **everybody can now set their own.** A promoter could not
-change their own PIN because a senior had to be able to look it up. With a hash
-nobody can look anything up, so the reason for that restriction is gone.
-
-Imran's own login stays **hidden** — it does not appear on anyone else's Logins
-screen.
-
-This lives once in [`src/data/people.ts`](../../src/data/people.ts) as
-`canResetPasswordOf()`, again in the database as `can_reset_password_of()`, and
-every row of the table above is covered by a test in
+Every row of this table has a test in
 [`people.test.ts`](../../src/data/people.test.ts).
+
+---
+
+## The trade-off, said plainly
+
+Being able to *look up* a password means the system has to keep one it can read
+back. This is the same compromise the PIN design carried, and it is worth being
+clear that **it is worse for passwords than it was for PINs**:
+
+- Nobody reuses a six-digit PIN on their bank. People **do** reuse passwords. If
+  somebody sets their CRM password to the one on their personal e-mail, four
+  people in the company can now read their personal e-mail password.
+- A stolen copy of the database is not a list of passwords — the readable copy is
+  encrypted with a key held in Supabase Vault, outside the tables. But anybody
+  who can reach the Vault can read every one.
+
+### What is in place to contain it
+
+1. **Promoters never choose a password at all.** A senior issues it and they keep
+   it, so the largest group of staff cannot reuse a personal one.
+2. **Anybody who *can* choose their own is warned**, in the dialog where they do
+   it, not to reuse one from anywhere else — and told why.
+3. **Every look-up is recorded** on the Activity screen: who looked, whose, and
+   when. The password itself is never written to the log.
+4. **The accounts that can look passwords up are the ones with the second step.**
+   Guessing one of those passwords is not enough.
+5. **Passwords are never unique across people.** The PIN rule that no two people
+   share one does not carry over — for a password, enforcing it would tell
+   whoever tried a clashing one that it belongs to somebody else.
+
+### What would remove it entirely
+
+Drop the look-up. Seniors would *set* a new password and hand it over, rather
+than *read* the current one — the same day-to-day experience for the person who
+forgot theirs, and the readable copy disappears. The last round was built that
+way; it is a small change back if the client ever wants it.
 
 ---
 
@@ -74,87 +106,48 @@ every row of the table above is covered by a test in
 
 | Stored | What it is |
 |---|---|
-| `password_hash` | Argon2id. One way. Not reversible by anyone. |
-| `password_history` | Hashes of everything they have used before, so a password is never reissued. |
-| `login_codes` | The second step — hashed too, single use, ten minutes. |
-| `login_attempts` | Who tried, from what device, and whether it worked. **Never what they typed.** |
+| `password_hash` | Argon2id. Checked at sign-in. Not reversible. |
+| `password_cipher` | Encrypted with a Vault key. Read only through `reveal_password()`. |
+| `password_history` | Every password they have held, hashed, so none is ever reissued. |
+| `login_codes` | The second step, for leadership and IT only. Hashed, single use, ten minutes. |
+| `login_attempts` | Who tried and whether it worked. **Never what they typed.** |
 
-Hashing happens in the Edge Function, not in SQL. A password should not travel
-as far as a SQL statement, where it would pass through the query log and the
-statement cache on the way in.
+The hash and the encrypted copy are made in the Edge Function, not in SQL — a
+password should not pass through the query log on its way in.
 
 ---
 
 ## The rules a password must pass
 
-Checked in the browser so the message is immediate, and again in the database so
-no path can skip them:
+Checked in the browser for an immediate message, and again in the database:
 
-- at least **10 characters**
-- letters and at least one number
+- at least **10 characters**, with letters and a number
 - not an obvious one — anything containing `password`, `legendary`, `qwerty`,
   `perfume` and the rest of the usual list
-- not the one already in use
-- **never one this person has used before**
-
-Length is weighted above everything else because length is what actually
-matters. The meter beside the box says so rather than demanding a symbol.
+- not the one already in use, and **never one this person has had before**
 
 ---
 
-## Signing in, step by step
+## Signing in
 
 1. **Username and password.** A wrong username and a wrong password produce the
-   *same* sentence — "That username and password do not match." Saying which
-   half was wrong hands over the other half.
-2. **Five wrong attempts holds the account for a minute.** Counted in the
-   database against the account, not in the browser against the device.
-3. **A six-digit code goes to their work address.** The screen shows it masked —
-   `ke••••••@legendary.com.my` — so an onlooker learns nothing.
-4. **The code lasts ten minutes and is good once.** Five wrong codes throws the
-   whole attempt away and returns to step one.
-5. A **disabled login** cannot sign in and cannot hold an open session.
-
-Every one of those events is on the Activity screen: codes sent, sign-ins,
-sign-outs, refusals and lock-outs. What is never recorded is the password or the
-code itself — a log of guesses would be a list of candidate passwords.
+   same sentence, so nobody learns which half they had right.
+2. **Five wrong attempts holds the account for a minute**, counted against the
+   account in the database, not the device.
+3. **Leadership and IT then get a code** at their work address, shown masked on
+   screen. Ten minutes, single use; five wrong codes and they start again.
+4. Everybody else is in.
+5. A disabled login cannot sign in and cannot hold an open session.
 
 ---
 
-## Starting passwords
+## Before real staff use this
 
-Everybody is issued one when their login is created and asked to choose their
-own the first time they sign in (`must_change_password`). The Logins screen
-counts how many people are still on the one they were given.
-
----
-
-## Before the client's staff use this for real
-
-Two things:
-
-1. **Turn off the walkthrough panel.** `SHOW_DEMO_HELP` in
+1. **Turn off the walkthrough panel** — `SHOW_DEMO_HELP` in
    [`src/pages/Login.tsx`](../../src/pages/Login.tsx). It lists the demo logins
-   and shows the code that would have been e-mailed. In production the code
-   never reaches the browser at all, so there would be nothing to show — but the
-   login list would still be there.
-2. **Wire the mail.** Right now no mail is sent; the code is generated in the
-   browser. In production `beginSignIn` becomes one request to an Edge Function
-   that hashes the password, issues the code, sends it, and returns nothing but
-   *"we sent it"*. That is the whole difference, and it is contained in
-   [`src/store/useAuth.ts`](../../src/store/useAuth.ts).
-
----
-
-## Two things to confirm with the client
-
-**The e-mail addresses.** Revision 2 gave usernames but no addresses. Every
-account is currently `‹username›@legendary.com.my`, which is a guess — and the
-code goes to whatever is on the account, so these have to be right before
-anybody relies on them.
-
-**Whether a code every time is too much.** As built, every sign-in asks for one.
-The usual compromise is to remember a device for thirty days, so a promoter on
-the shop iPad enters a code once a month rather than every morning, while any
-new device still needs one. That is a small change and a real difference to how
-the counter feels. Worth a sentence from Davy.
+   and shows the code that would have been e-mailed.
+2. **Wire the mail.** No mail is sent in this build. In production
+   `beginSignIn` becomes one request to an Edge Function that checks the
+   password, sends the code where one is needed, and returns only "sent".
+3. **Confirm the e-mail addresses.** Every account is currently
+   `‹username›@legendary.com.my`. The code goes to whatever is on the account.

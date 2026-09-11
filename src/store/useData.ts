@@ -18,6 +18,7 @@ import { canTransition } from '../lib/po-machine'
 import {
   can,
   canResetPasswordOf,
+  canSeePasswordOf,
   checkPassword,
   seedPeople,
   ROLE_LABEL,
@@ -246,19 +247,26 @@ export interface DataState extends CrmData {
    * in the form — a screen can be wrong, the store is the last line.
    */
   /**
-   * Sets somebody's password.
-   *
-   * There is no matching "read it back" — a password is stored as a one-way
-   * hash in production, so nobody can look one up, and this is the only way a
-   * credential changes.
+   * Sets somebody's password. Authority and rules are checked here, not only
+   * in the form — a screen can be wrong, the store is the last line.
    */
   setPassword: (args: {
     actor: Person
     targetId: string
     password: string
-    /** True when a senior issues it, so the person is asked to change it. */
-    issued?: boolean
   }) => { ok: boolean; error?: string }
+  /**
+   * Reads somebody's password back, and writes down that it happened.
+   *
+   * The client requires senior staff to be able to look one up, as they could
+   * the PIN. Screens never read `person.password` directly; going through here
+   * is what makes "who looked at whose password" answerable.
+   */
+  revealPassword: (args: { actor: Person; targetId: string }) => {
+    ok: boolean
+    password?: string
+    error?: string
+  }
 
   addPromotion: (promotion: Promotion) => void
   updatePromotion: (id: string, changes: Partial<Promotion>) => void
@@ -684,7 +692,7 @@ export const useData = create<DataState>()(
         })
       },
 
-      setPassword: ({ actor, targetId, password, issued }) => {
+      setPassword: ({ actor, targetId, password }) => {
         const state = get()
         const target = state.users.find((u) => u.id === targetId)
         if (!target) return { ok: false, error: 'That login no longer exists.' }
@@ -693,7 +701,7 @@ export const useData = create<DataState>()(
             ok: false,
             error:
               actor.id === target.id
-                ? 'Your role cannot change its own password.'
+                ? 'Your role cannot change its own password. Ask a senior for a new one.'
                 : `You cannot set the password for ${target.name}.`,
           }
         }
@@ -708,8 +716,6 @@ export const useData = create<DataState>()(
             passwordHistory: [...target.passwordHistory, target.password],
             passwordSetAt: new Date().toISOString(),
             passwordSetBy: actor.name,
-            // Issued by somebody else means they have to choose their own.
-            mustChangePassword: issued === true && actor.id !== targetId,
           },
           { silent: true },
         )
@@ -723,13 +729,28 @@ export const useData = create<DataState>()(
           entityId: targetId,
           // Never the password itself. A log of passwords would be worse than
           // no log at all.
-          detail:
-            actor.id === targetId
-              ? undefined
-              : 'They will be asked to choose their own when they next sign in',
           actor: { id: actor.id, name: actor.name, role: actor.role },
         })
         return { ok: true }
+      },
+
+      revealPassword: ({ actor, targetId }) => {
+        const target = get().users.find((u) => u.id === targetId)
+        if (!target) return { ok: false, error: 'That login no longer exists.' }
+        if (!canSeePasswordOf(actor, target)) {
+          return { ok: false, error: `You cannot see the password for ${target.name}.` }
+        }
+        get().record({
+          kind: 'password',
+          action: 'password.revealed',
+          summary:
+            actor.id === targetId
+              ? 'Looked at their own password'
+              : `Looked at the password for ${target.name}, ${ROLE_LABEL[target.role]}`,
+          entityId: targetId,
+          actor: { id: actor.id, name: actor.name, role: actor.role },
+        })
+        return { ok: true, password: target.password }
       },
 
       // ── Promotions ───────────────────────────────────────────────────

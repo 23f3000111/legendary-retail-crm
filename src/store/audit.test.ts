@@ -74,7 +74,7 @@ describe('every action leaves a line', () => {
     expect(entry.action).toBe('target.changed')
     expect(entry.detail).toMatch(/Was RM/)
 
-    useData.getState().setTarget('web-shp', '2026-08', 40_000)
+    useData.getState().setTarget('dlr-beauty-scent', '2026-08', 40_000)
     expect(written()[0].action).toBe('target.set')
     expect(written()[0].detail).toBeUndefined()
   })
@@ -243,6 +243,38 @@ describe('sign-in in the log', () => {
 
     useAuth.getState().signOut()
     expect(actions()[0]).toBe('session.signed_out')
+  })
+
+  it('signs a promoter straight in on the password alone — no code', () => {
+    setAuditActor(null)
+    const promoter = person('teokoknian')
+    const result = useAuth.getState().beginSignIn(promoter.username, promoter.password)
+
+    expect(result.ok).toBe(true)
+    expect(result.person?.id).toBe('teokoknian')
+    expect(useAuth.getState().personId).toBe('teokoknian')
+    expect(useAuth.getState().pending).toBeNull()
+    expect(actions()[0]).toBe('session.signed_in')
+    expect(actions()).not.toContain('session.code_sent')
+  })
+
+  it('signs Finance and the Warehouse straight in too', () => {
+    for (const id of ['siew-fang', 'an']) {
+      setAuditActor(null)
+      useAuth.setState({ personId: null, pending: null, lockedUntil: null })
+      const p = person(id)
+      const result = useAuth.getState().beginSignIn(p.username, p.password)
+      expect(result.person?.id, id).toBe(id)
+    }
+  })
+
+  it('records a look-up of somebody’s password, and never the password', () => {
+    const kim = person('kim')
+    useData.getState().revealPassword({ actor: person('davy'), targetId: 'kim' })
+    const entry = written()[0]
+    expect(entry.action).toBe('password.revealed')
+    expect(entry.summary).toMatch(/Looked at the password for Kim Lim/)
+    expect(JSON.stringify(entry)).not.toContain(kim.password)
   })
 
   it('records a refusal without recording the password', () => {

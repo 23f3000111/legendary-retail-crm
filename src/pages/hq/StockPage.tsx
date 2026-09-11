@@ -166,12 +166,9 @@ export function StockPage() {
         <div className="flex flex-wrap items-center gap-2">
           {!isPromoter && (
             <>
-              {/* Only places that hold a shelf of their own — online is
-                  picked from the warehouse and has nothing to count. */}
               <StorePicker
                 value={locationId}
                 onChange={setLocationId}
-                only={(l) => l.holdsOwnStock}
                 className="h-9 w-[210px] text-[12.5px]"
               />
               <Button

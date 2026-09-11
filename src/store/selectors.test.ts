@@ -47,7 +47,7 @@ describe('totals', () => {
   it('splits the group across its channels without losing revenue', () => {
     const f = last30()
     const whole = totalsFor(data, f).revenue
-    const parts = (['main', 'dealer', 'consignment', 'online'] as const).reduce(
+    const parts = (['main', 'dealer', 'consignment'] as const).reduce(
       (a, channel) => a + totalsFor(data, { ...f, channels: [channel] }).revenue,
       0,
     )
