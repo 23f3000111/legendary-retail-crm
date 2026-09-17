@@ -13,7 +13,7 @@ import { useCurrentUser } from '../../store/useAuth'
 import { useToasts } from '../../components/ui/Toast'
 import { emptyFilter, originSlicesFrom, selectTimeSeries } from '../../store/selectors'
 import { locationById } from '../../data/locations'
-import { priceOf, skuById } from '../../data/products'
+import { lineUnitPrice, skuById } from '../../data/products'
 import { addDays, daysBetween, formatDayShort } from '../../lib/dates'
 import { downloadCsv } from '../../lib/exportCsv'
 import { num, rm, rmCompact } from '../../lib/format'
@@ -206,7 +206,7 @@ export function History() {
                       if (!l.countryCode) return m
                       const b = m.get(l.countryCode) ?? { units: 0, revenue: 0 }
                       b.units += l.qty
-                      b.revenue += l.qty * priceOf(skuById(l.skuId), basis)
+                      b.revenue += l.qty * lineUnitPrice(l.skuId, l.priceTier, basis)
                       m.set(l.countryCode, b)
                       return m
                     }, new Map<string, { units: number; revenue: number }>()),

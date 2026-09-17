@@ -3,6 +3,7 @@ import type { Channel } from './locations'
 import type { Promotion } from './promotions'
 import type { AuditEntry } from '../lib/audit'
 import type { MalaysiaSegment } from './countries'
+import type { PriceTier } from './products'
 
 /** `YYYY-MM-DD`. For monthly consignment periods this is the 1st of the month. */
 export type DateStr = string
@@ -20,6 +21,14 @@ export interface SaleLine {
   skuId: string
   qty: number
   countryCode?: string
+  /**
+   * Which price was charged for this line.
+   *
+   * Left undefined where nobody chose one — the seeded history, and the dealer
+   * and consignment channels, which report a figure rather than ringing up a
+   * sale. Those fall back to the location's own basis.
+   */
+  priceTier?: PriceTier
   /**
    * Malaysian customers only, and never guessed.
    *

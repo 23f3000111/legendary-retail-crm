@@ -39,6 +39,23 @@ export const VARIANT_LABEL: Record<Variant, string> = {
 /** Which price a location's revenue is counted on (the store list's column). */
 export type PriceBasis = 'retail' | 'promotion'
 
+/**
+ * What was actually charged for one line of a sale.
+ *
+ * The store's basis is the default — most things go at the promotion price —
+ * but the counter decides per sale. A customer paying full price is a retail
+ * line; a Wish added on to a bottle goes at the offer price. Recording which
+ * one was charged is the only way the revenue can be right, and it is also the
+ * only way to answer "how much did we sell at full price?"
+ */
+export type PriceTier = 'retail' | 'promotion' | 'offer'
+
+export const TIER_LABEL: Record<PriceTier, string> = {
+  retail: 'Retail',
+  promotion: 'Promotion',
+  offer: 'Offer',
+}
+
 export interface Product {
   id: string
   name: string
@@ -271,3 +288,37 @@ export const priceOf = (sku: Sku | undefined, basis: PriceBasis): number =>
 
 export const priceOfId = (skuId: string, basis: PriceBasis): number =>
   priceOf(skuById(skuId), basis)
+
+/** What one unit costs at a named tier. */
+export const priceAtTier = (sku: Sku | undefined, tier: PriceTier): number => {
+  if (!sku) return 0
+  if (tier === 'retail') return sku.retailPriceMYR
+  if (tier === 'offer') return sku.offerMYR ?? sku.promotionPriceMYR
+  return sku.promotionPriceMYR
+}
+
+/**
+ * The tiers this item can be sold at, in the order the counter should see them.
+ *
+ * The store's own basis comes first, since that is the price it charges nine
+ * times in ten. Only the three Wishes carry an offer price, so only they get a
+ * third button.
+ */
+export const tiersFor = (sku: Sku | undefined, basis: PriceBasis = 'promotion'): PriceTier[] => {
+  if (!sku) return []
+  const usual: PriceTier[] = basis === 'retail' ? ['retail', 'promotion'] : ['promotion', 'retail']
+  return sku.offerMYR ? [...usual, 'offer'] : usual
+}
+
+/**
+ * What one line of a sale is worth.
+ *
+ * The line's own tier where the counter chose one, and the store's basis where
+ * it did not — which is every line of the seeded history and every dealer and
+ * consignment line, since those report a figure rather than ringing up a sale.
+ */
+export const lineUnitPrice = (
+  skuId: string,
+  tier: PriceTier | undefined,
+  basis: PriceBasis,
+): number => (tier ? priceAtTier(skuById(skuId), tier) : priceOfId(skuId, basis))

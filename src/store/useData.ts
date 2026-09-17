@@ -26,7 +26,7 @@ import {
   type Role,
 } from '../data/people'
 import { daysBetween, formatDate } from '../lib/dates'
-import { skuLabel } from '../data/products'
+import { skuLabel, TIER_LABEL } from '../data/products'
 import { countryName, MALAYSIA_SEGMENT_LABEL, type MalaysiaSegment } from '../data/countries'
 import { locationName } from '../data/locations'
 import { rm } from '../lib/format'
@@ -389,10 +389,14 @@ export const useData = create<DataState>()(
           }
         })
         const units = stamped.reduce((a, l) => a + l.qty, 0)
+        // The same bottle at two prices is two lines but one product.
+        const distinct = new Set(stamped.map((l) => l.skuId)).size
         const what =
           stamped.length === 1
-            ? `${stamped[0].qty} × ${skuLabel(stamped[0].skuId)}`
-            : `${units} units across ${stamped.length} products`
+            ? `${stamped[0].qty} × ${skuLabel(stamped[0].skuId)}${
+                stamped[0].priceTier ? ` at the ${TIER_LABEL[stamped[0].priceTier].toLowerCase()} price` : ''
+              }`
+            : `${units} units across ${distinct} ${distinct === 1 ? 'product' : 'products'}`
         get().record({
           kind: 'sale',
           action: 'sale.recorded',

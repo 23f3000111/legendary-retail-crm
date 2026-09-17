@@ -13,7 +13,16 @@ import { useCurrentUser } from '../../store/useAuth'
 import { useToasts } from '../../components/ui/Toast'
 import { originSlicesFrom } from '../../store/selectors'
 import { locationById } from '../../data/locations'
-import { priceOf, products, skuById, sellableSkus } from '../../data/products'
+import {
+  lineUnitPrice,
+  priceAtTier,
+  products,
+  skuById,
+  sellableSkus,
+  tiersFor,
+  TIER_LABEL,
+  type PriceTier,
+} from '../../data/products'
 import {
   countryByCode,
   topCountries,
@@ -36,6 +45,11 @@ import type { SaleLine } from '../../data/types'
  * perfume" (Q29) survive a busy Saturday: the promoter is answering one
  * question per customer, not one per bottle. Everything is sized for a finger
  * on an iPad (Q78).
+ *
+ * Every item is offered at each price it can go for — promotion, retail, and
+ * the offer price on the Wishes — because the same bottle is rung up at more
+ * than one price in a day and the takings are only right if the line records
+ * which. The same item at two prices is two lines in the basket.
  */
 export function Sell() {
   const user = useCurrentUser()
@@ -64,11 +78,11 @@ export function Sell() {
 
   const basketUnits = basket.reduce((a, l) => a + l.qty, 0)
   const basketTotal = basket.reduce(
-    (a, l) => a + l.qty * priceOf(skuById(l.skuId), basis),
+    (a, l) => a + l.qty * lineUnitPrice(l.skuId, l.priceTier, basis),
     0,
   )
 
-  const todayTotal = lines.reduce((a, l) => a + l.qty * priceOf(skuById(l.skuId), basis), 0)
+  const todayTotal = lines.reduce((a, l) => a + l.qty * lineUnitPrice(l.skuId, l.priceTier, basis), 0)
   const todayUnits = lines.reduce((a, l) => a + l.qty, 0)
 
   const mix = useMemo(() => {
@@ -77,24 +91,29 @@ export function Sell() {
       if (!l.countryCode) continue
       const b = tally.get(l.countryCode) ?? { units: 0, revenue: 0 }
       b.units += l.qty
-      b.revenue += l.qty * priceOf(skuById(l.skuId), basis)
+      b.revenue += l.qty * lineUnitPrice(l.skuId, l.priceTier, basis)
       tally.set(l.countryCode, b)
     }
     return originSlicesFrom(tally)
   }, [lines])
 
-  const add = (skuId: string) =>
+  // A basket line is an item *at a price*, so the same bottle at retail and at
+  // promotion sit side by side rather than merging.
+  const same = (l: SaleLine, skuId: string, tier: PriceTier) =>
+    l.skuId === skuId && l.priceTier === tier
+
+  const add = (skuId: string, tier: PriceTier) =>
     setBasket((b) => {
-      const found = b.find((l) => l.skuId === skuId)
+      const found = b.find((l) => same(l, skuId, tier))
       return found
-        ? b.map((l) => (l.skuId === skuId ? { ...l, qty: l.qty + 1 } : l))
-        : [...b, { skuId, qty: 1 }]
+        ? b.map((l) => (same(l, skuId, tier) ? { ...l, qty: l.qty + 1 } : l))
+        : [...b, { skuId, qty: 1, priceTier: tier }]
     })
 
-  const bump = (skuId: string, by: number) =>
+  const bump = (skuId: string, tier: PriceTier, by: number) =>
     setBasket((b) =>
       b
-        .map((l) => (l.skuId === skuId ? { ...l, qty: l.qty + by } : l))
+        .map((l) => (same(l, skuId, tier) ? { ...l, qty: l.qty + by } : l))
         .filter((l) => l.qty > 0),
     )
 
@@ -163,7 +182,7 @@ export function Sell() {
         <PanelHeader
           eyebrow="Step 1"
           title="What are they buying?"
-          meta="Tap each item. Tap again for a second one."
+          meta="Tap the price they paid. Tap again for a second one."
           action={
             basket.length > 0 ? (
               <Button size="sm" variant="ghost" icon="x" onClick={() => setBasket([])}>
@@ -181,31 +200,69 @@ export function Sell() {
               return (
                 <div key={p.id}>
                   <p className="eyebrow mb-2">{p.name}</p>
-                  <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+                  <div className="space-y-2">
                     {variants.map((v) => {
-                      const inBasket = basket.find((l) => l.skuId === v.id)
+                      const tiers = tiersFor(v, basis)
+                      const taken = basket
+                        .filter((l) => l.skuId === v.id)
+                        .reduce((a, l) => a + l.qty, 0)
                       return (
-                        <button
+                        <div
                           key={v.id}
-                          onClick={() => add(v.id)}
-                          className={`relative min-h-[56px] rounded-xl border px-4 py-2.5 text-left transition-all duration-200 active:scale-[0.98] sm:min-w-[130px] sm:hover:-translate-y-0.5 ${
-                            inBasket
-                              ? 'border-primary bg-primary/12 shadow-glass'
-                              : 'border-line bg-surface sm:hover:border-primary/45 sm:hover:shadow-glass'
+                          className={`rounded-xl border p-2 transition-colors sm:flex sm:items-center sm:gap-3 sm:p-2.5 ${
+                            taken ? 'border-primary/40 bg-primary/6' : 'border-line bg-surface-2'
                           }`}
                         >
-                          <span className="block text-[13.5px] font-medium text-ink">
-                            {v.variant === 'set' ? 'Set' : v.size}
-                          </span>
-                          <span className="readout block text-[11.5px] text-ink-3">
-                            {rm(priceOf(v, basis))}
-                          </span>
-                          {inBasket && (
-                            <span className="readout absolute right-2 top-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[11px] font-semibold text-white">
-                              {inBasket.qty}
+                          <div className="mb-2 flex items-center justify-between gap-2 px-1 sm:mb-0 sm:w-[112px] sm:shrink-0">
+                            <span className="text-[13.5px] font-medium text-ink">
+                              {v.variant === 'set' ? 'Set' : v.size}
                             </span>
-                          )}
-                        </button>
+                            {taken > 0 && (
+                              <span className="readout flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-semibold text-white">
+                                {taken}
+                              </span>
+                            )}
+                          </div>
+                          <div
+                            className={`grid gap-2 sm:flex sm:flex-1 sm:flex-wrap ${
+                              tiers.length === 3 ? 'grid-cols-3' : 'grid-cols-2'
+                            }`}
+                          >
+                            {tiers.map((t) => {
+                              const inBasket = basket.find((l) => same(l, v.id, t))
+                              const usual = t === basis
+                              return (
+                                <button
+                                  key={t}
+                                  onClick={() => add(v.id, t)}
+                                  className={`relative min-h-[56px] rounded-lg border px-2.5 py-2 text-left transition-all duration-200 active:scale-[0.98] sm:min-w-[124px] sm:px-3.5 sm:hover:-translate-y-0.5 ${
+                                    inBasket
+                                      ? 'border-primary bg-primary/14 shadow-glass'
+                                      : usual
+                                        ? 'border-primary/35 bg-surface sm:hover:border-primary/60 sm:hover:shadow-glass'
+                                        : 'border-line bg-surface sm:hover:border-primary/45 sm:hover:shadow-glass'
+                                  }`}
+                                >
+                                  <span
+                                    className={`block text-[10.5px] font-semibold uppercase tracking-[0.08em] ${
+                                      inBasket || usual ? 'text-primary' : 'text-ink-3'
+                                    }`}
+                                  >
+                                    {TIER_LABEL[t]}
+                                  </span>
+                                  <span className="readout mt-0.5 block text-[14px] font-semibold text-ink">
+                                    {rm(priceAtTier(v, t))}
+                                  </span>
+                                  {inBasket && (
+                                    <span className="readout absolute right-1.5 top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[11px] font-semibold text-white">
+                                      {inBasket.qty}
+                                    </span>
+                                  )}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
                       )
                     })}
                   </div>
@@ -236,33 +293,43 @@ export function Sell() {
               <PanelBody className="space-y-2">
                 {basket.map((l) => {
                   const s = skuById(l.skuId)
+                  const tier = l.priceTier ?? basis
                   return (
                     <div
-                      key={l.skuId}
-                      className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5"
+                      key={`${l.skuId}-${tier}`}
+                      className="rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 sm:flex sm:items-center sm:gap-3"
                     >
-                      <span className="min-w-0 flex-1 basis-full truncate text-[13.5px] text-ink sm:basis-auto">
-                        {s?.label}
-                      </span>
-                      <span className="readout text-[12.5px] text-ink-2">
-                        {rm(l.qty * priceOf(s, basis))}
-                      </span>
-                      <div className="ml-auto flex items-center gap-2">
-                        <IconButton
-                          name="minus"
-                          label="One fewer"
-                          onClick={() => bump(l.skuId, -1)}
-                          className="h-10 w-10 border border-line bg-surface"
-                        />
-                        <span className="readout w-8 text-center font-display text-[19px] font-semibold text-ink">
-                          {l.qty}
+                      {/* Phone: name and total on one row, price and quantity on the next. */}
+                      <div className="flex items-center justify-between gap-3 sm:min-w-0 sm:flex-1">
+                        <span className="min-w-0 truncate text-[13.5px] text-ink">{s?.label}</span>
+                        <span className="readout text-[12.5px] text-ink-2 sm:hidden">
+                          {rm(l.qty * lineUnitPrice(l.skuId, l.priceTier, basis))}
                         </span>
-                        <IconButton
-                          name="plus"
-                          label="One more"
-                          onClick={() => bump(l.skuId, 1)}
-                          className="h-10 w-10 border border-primary/40 bg-primary/10 text-primary"
-                        />
+                      </div>
+                      <div className="mt-2 flex items-center gap-3 sm:mt-0">
+                        <Badge tone={tier === basis ? 'neutral' : 'active'}>
+                          {TIER_LABEL[tier]} · {rm(lineUnitPrice(l.skuId, l.priceTier, basis))}
+                        </Badge>
+                        <span className="readout hidden text-[12.5px] text-ink-2 sm:inline">
+                          {rm(l.qty * lineUnitPrice(l.skuId, l.priceTier, basis))}
+                        </span>
+                        <div className="ml-auto flex items-center gap-2">
+                          <IconButton
+                            name="minus"
+                            label="One fewer"
+                            onClick={() => bump(l.skuId, tier, -1)}
+                            className="h-10 w-10 border border-line bg-surface"
+                          />
+                          <span className="readout w-8 text-center font-display text-[19px] font-semibold text-ink">
+                            {l.qty}
+                          </span>
+                          <IconButton
+                            name="plus"
+                            label="One more"
+                            onClick={() => bump(l.skuId, tier, 1)}
+                            className="h-10 w-10 border border-primary/40 bg-primary/10 text-primary"
+                          />
+                        </div>
                       </div>
                     </div>
                   )
@@ -349,6 +416,9 @@ export function Sell() {
                   >
                     <span className="readout text-[13px] font-semibold text-ink">{l.qty} ×</span>
                     <span className="min-w-0 flex-1 truncate text-[13px] text-ink">{s?.label}</span>
+                    {l.priceTier && l.priceTier !== basis && (
+                      <Badge tone="neutral">{TIER_LABEL[l.priceTier]}</Badge>
+                    )}
                     {c && (
                       <Badge tone="active">
                         {c.flag} {c.name}
@@ -356,7 +426,7 @@ export function Sell() {
                       </Badge>
                     )}
                     <span className="readout text-[12.5px] text-ink-2">
-                      {rm(l.qty * priceOf(s, basis))}
+                      {rm(l.qty * lineUnitPrice(l.skuId, l.priceTier, basis))}
                     </span>
                     <IconButton
                       name="x"

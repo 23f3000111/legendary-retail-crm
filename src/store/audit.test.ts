@@ -451,6 +451,29 @@ describe('recording a whole basket', () => {
     expect(written()[0].detail).toBe('Customer from China')
   })
 
+  it('keeps the price the counter chose, and says so in the log', () => {
+    useData.getState().recordSale({
+      locationId: 'pavilion-5',
+      lines: [{ skuId: 'orchid-retail', qty: 1, priceTier: 'retail' }],
+      countryCode: 'SG',
+    })
+    const live = useData.getState().liveLines['pavilion-5']
+    expect(live[live.length - 1].priceTier).toBe('retail')
+    expect(written()[0].summary).toMatch(/1 × Orchid · 30ml at the retail price/)
+  })
+
+  it('counts the same bottle at two prices as one product', () => {
+    useData.getState().recordSale({
+      locationId: 'pavilion-5',
+      lines: [
+        { skuId: 'orchid-retail', qty: 1, priceTier: 'retail' },
+        { skuId: 'orchid-retail', qty: 1, priceTier: 'promotion' },
+      ],
+      countryCode: 'SG',
+    })
+    expect(written()[0].summary).toMatch(/2 units across 1 product at/)
+  })
+
   it('records nothing at all for an empty basket', () => {
     const before = written().length
     useData.getState().recordSale({ locationId: 'pavilion-5', lines: [] })

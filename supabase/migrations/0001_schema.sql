@@ -36,6 +36,9 @@ create type location_status as enum ('open', 'coming', 'closed');
 create type variant        as enum ('retail', 'set', 'tester');
 -- Which of the two prices a location's revenue is counted on (Revision 2).
 create type price_basis    as enum ('retail', 'promotion');
+-- Which price the counter actually charged for one line (Revision 4). The
+-- offer price exists only on the Wishes.
+create type price_tier     as enum ('retail', 'promotion', 'offer');
 create type app_role       as enum ('director','md','ops','pa','finance','warehouse','promoter','it');
 create type po_status      as enum ('draft','submitted','approved','rejected','accounts_cleared','packed','in_transit','received');
 create type write_off_reason as enum ('tester','damaged','sample');
@@ -251,6 +254,10 @@ create table sale_lines (
   -- Main stores only. Null everywhere else, and excluded — never estimated —
   -- when a report filters by country.
   country_code  char(2) references countries(code),
+  -- What this line went for. Null where nobody chose — dealer and consignment
+  -- figures, and history from before Revision 4 — and the location's own
+  -- basis then applies.
+  price_tier    price_tier,
   sold_at       timestamptz,
   created_at    timestamptz not null default now()
 );
@@ -267,10 +274,13 @@ select
   c.location_id,
   c.period,
   c.period_type,
-  -- Counted on whichever price this location is counted on.
+  -- Each line at the price the counter chose; where none was chosen, the
+  -- price this location is counted on. An item without an offer price never
+  -- sells for nothing.
   coalesce(
-    sum(sl.qty * case l.price_basis
-                   when 'retail' then s.retail_price_myr
+    sum(sl.qty * case coalesce(sl.price_tier::text, l.price_basis::text)
+                   when 'retail'  then s.retail_price_myr
+                   when 'offer'   then coalesce(s.offer_myr, s.promotion_price_myr)
                    else s.promotion_price_myr
                  end),
     0

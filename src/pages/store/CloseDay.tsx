@@ -10,7 +10,13 @@ import { useCurrentUser } from '../../store/useAuth'
 import { useToasts } from '../../components/ui/Toast'
 import { selectClosingFor, selectStock, selectSuggestedPoLines } from '../../store/selectors'
 import { locationById } from '../../data/locations'
-import { orderableSkus, testerSkus, priceOf, skuById } from '../../data/products'
+import {
+  lineUnitPrice,
+  orderableSkus,
+  skuById,
+  testerSkus,
+  TIER_LABEL,
+} from '../../data/products'
 import { formatDate } from '../../lib/dates'
 import { num, rm } from '../../lib/format'
 import type { Closing, PurchaseOrder, StockCount } from '../../data/types'
@@ -32,6 +38,10 @@ import type { Closing, PurchaseOrder, StockCount } from '../../data/types'
  * On a normal night that makes closing: check it, type the cash, press the
  * button. No steps, no Next and Back, and no difference column to worry about
  * — the client asked for that to go.
+ *
+ * Most closings are filed on a phone, so below `sm` every list here is a stack
+ * of cards with the box to type in always on screen. The shelf table only
+ * appears where there is room for it.
  *
  * The deadline is 11pm and anyone at the counter may file it (Q17, Q18).
  */
@@ -55,7 +65,7 @@ export function CloseDay() {
   const [tried, setTried] = useState(false)
   const [showLines, setShowLines] = useState(false)
 
-  const revenue = lines.reduce((a, l) => a + l.qty * priceOf(skuById(l.skuId), basis), 0)
+  const revenue = lines.reduce((a, l) => a + l.qty * lineUnitPrice(l.skuId, l.priceTier, basis), 0)
   const units = lines.reduce((a, l) => a + l.qty, 0)
 
   /** What sold of each product today, from the sales recorded at the counter. */
@@ -222,11 +232,16 @@ export function CloseDay() {
               {num(already.lines.reduce((a, l) => a + l.qty, 0))}
             </p>
           </div>
-          <div className="ml-auto flex gap-2">
+          <div className="flex w-full flex-wrap gap-2 sm:ml-auto sm:w-auto">
             <Button variant="ghost" onClick={() => navigate('/today')}>
               Back to today
             </Button>
-            <Button variant="primary" icon="clipboard" onClick={() => setRefiling(true)}>
+            <Button
+              variant="primary"
+              icon="clipboard"
+              className="flex-1 sm:flex-none"
+              onClick={() => setRefiling(true)}
+            >
               File it again
             </Button>
           </div>
@@ -235,9 +250,20 @@ export function CloseDay() {
     )
   }
 
-  const changedCounts = stock.filter(
-    (s) => Number(counted[s.skuId]) !== expectedOf(s.skuId, s.onHand),
-  ).length
+  const shelf = stock.map((s) => {
+    const expected = expectedOf(s.skuId, s.onHand)
+    const value = counted[s.skuId] ?? ''
+    return {
+      ...s,
+      sold: soldToday.get(s.skuId) ?? 0,
+      expected,
+      value,
+      changed: value !== '' && Number(value) !== expected,
+    }
+  })
+  const changedCounts = shelf.filter((s) => s.changed).length
+  const setCount = (skuId: string, value: string) =>
+    setCounted((v) => ({ ...v, [skuId]: value }))
 
   return (
     <div className="mx-auto max-w-3xl space-y-5">
@@ -297,8 +323,11 @@ export function CloseDay() {
                         <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink">
                           {s?.label}
                         </span>
+                        {l.priceTier && l.priceTier !== basis && (
+                          <Badge tone="neutral">{TIER_LABEL[l.priceTier]}</Badge>
+                        )}
                         <span className="readout text-[12px] text-ink-2">
-                          {rm(l.qty * priceOf(s, basis))}
+                          {rm(l.qty * lineUnitPrice(l.skuId, l.priceTier, basis))}
                         </span>
                       </li>
                     )
@@ -360,8 +389,38 @@ export function CloseDay() {
         />
         <Rule />
         <PanelBody>
-          <div className="scroll-x">
-            <table className="w-full min-w-[420px] border-collapse">
+          {/* Phone: one card per product, the box always in reach of a thumb. */}
+          <div className="space-y-2 sm:hidden">
+            {shelf.map((s) => (
+              <div
+                key={s.skuId}
+                className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 ${
+                  s.changed ? 'border-warn/50 bg-warn/5' : 'border-line bg-surface-2'
+                }`}
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px] leading-tight text-ink">{s.label}</p>
+                  <p className="mt-1 text-[11.5px] text-ink-3">
+                    {s.sold > 0 ? `Sold ${num(s.sold)} today · ` : ''}
+                    should be <span className="readout font-medium text-ink-2">{num(s.expected)}</span>
+                  </p>
+                </div>
+                <div className="w-[84px] shrink-0">
+                  <NumberInput
+                    aria-label={`On the shelf: ${s.label}`}
+                    className={`text-right ${s.changed ? 'border-warn/60 bg-warn/5' : ''}`}
+                    min={0}
+                    value={s.value}
+                    onChange={(e) => setCount(s.skuId, e.target.value)}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Wider screens: the same thing as a table. */}
+          <div className="scroll-x hidden sm:block">
+            <table className="w-full border-collapse">
               <thead>
                 <tr className="border-b border-line">
                   {['Product', 'Sold today', 'Should be', 'On the shelf'].map((h, i) => (
@@ -375,38 +434,33 @@ export function CloseDay() {
                 </tr>
               </thead>
               <tbody>
-                {stock.map((s) => {
-                  const sold = soldToday.get(s.skuId) ?? 0
-                  const expected = expectedOf(s.skuId, s.onHand)
-                  const value = counted[s.skuId] ?? ''
-                  const changed = value !== '' && Number(value) !== expected
-                  return (
-                    <tr key={s.skuId} className="border-b border-line/70 last:border-0">
-                      <td className="py-2">
-                        <p className="text-[13px] leading-tight text-ink">{s.label}</p>
-                        <p className="readout text-[10.5px] text-ink-3">{s.code}</p>
-                      </td>
-                      <td
-                        className={`readout py-2 pr-3 text-right text-[13px] ${sold > 0 ? 'text-ink' : 'text-ink-3'}`}
-                      >
-                        {sold > 0 ? num(sold) : '—'}
-                      </td>
-                      <td className="readout py-2 pr-3 text-right text-[13px] text-ink-2">
-                        {num(expected)}
-                      </td>
-                      <td className="py-2 text-right">
+                {shelf.map((s) => (
+                  <tr key={s.skuId} className="border-b border-line/70 last:border-0">
+                    <td className="py-2">
+                      <p className="text-[13px] leading-tight text-ink">{s.label}</p>
+                      <p className="readout text-[10.5px] text-ink-3">{s.code}</p>
+                    </td>
+                    <td
+                      className={`readout py-2 pr-3 text-right text-[13px] ${s.sold > 0 ? 'text-ink' : 'text-ink-3'}`}
+                    >
+                      {s.sold > 0 ? num(s.sold) : '—'}
+                    </td>
+                    <td className="readout py-2 pr-3 text-right text-[13px] text-ink-2">
+                      {num(s.expected)}
+                    </td>
+                    <td className="py-2">
+                      <div className="ml-auto w-[88px]">
                         <NumberInput
-                          className={`ml-auto w-[88px] text-right ${changed ? 'border-warn/60 bg-warn/5' : ''}`}
+                          aria-label={`On the shelf: ${s.label}`}
+                          className={`text-right ${s.changed ? 'border-warn/60 bg-warn/5' : ''}`}
                           min={0}
-                          value={value}
-                          onChange={(e) =>
-                            setCounted((v) => ({ ...v, [s.skuId]: e.target.value }))
-                          }
+                          value={s.value}
+                          onChange={(e) => setCount(s.skuId, e.target.value)}
                         />
-                      </td>
-                    </tr>
-                  )
-                })}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -435,7 +489,7 @@ export function CloseDay() {
         <Rule />
         <PanelBody className="space-y-4">
           <div className="flex flex-wrap items-end gap-2">
-            <Field label="Add something else" className="min-w-[220px] flex-1">
+            <Field label="Add something else" className="min-w-0 flex-1 basis-full sm:basis-auto sm:min-w-[220px]">
               <Select
                 value={addSku}
                 onChange={(e) => setAddSku(e.target.value)}
@@ -463,6 +517,7 @@ export function CloseDay() {
             <Button
               variant="secondary"
               icon="plus"
+              className="w-full sm:w-auto"
               disabled={!raisePo || !addSku}
               onClick={() => {
                 if (!addSku) return
@@ -481,9 +536,9 @@ export function CloseDay() {
             return (
               <div
                 key={line.skuId}
-                className="flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface-2 px-3.5 py-3"
+                className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-line bg-surface-2 px-3.5 py-3"
               >
-                <div className="min-w-[160px] flex-1">
+                <div className="min-w-0 flex-1 basis-full sm:basis-0 sm:min-w-[160px]">
                   <p className="text-[13px] text-ink">{sku?.label ?? line.skuId}</p>
                   <p className="text-[11px] text-ink-3">
                     {row
@@ -501,30 +556,34 @@ export function CloseDay() {
                   </Badge>
                 )}
                 {sku?.variant === 'tester' && <Badge tone="active">Tester</Badge>}
-                <NumberInput
-                  className="w-24"
-                  min={0}
-                  step={sku?.caseSize ?? 12}
-                  value={poQty[line.skuId] ?? 0}
-                  onChange={(e) =>
-                    setPoQty((q) => ({
-                      ...q,
-                      [line.skuId]: Math.max(0, Number(e.target.value)),
-                    }))
-                  }
-                  disabled={!raisePo}
-                />
-                <IconButton
-                  name="x"
-                  label={`Take ${sku?.label ?? 'this'} off the order`}
-                  onClick={() =>
-                    setPoQty((q) => {
-                      const next = { ...q }
-                      delete next[line.skuId]
-                      return next
-                    })
-                  }
-                />
+                <div className="ml-auto flex items-center gap-2">
+                  <div className="w-24">
+                    <NumberInput
+                      aria-label={`Units of ${sku?.label ?? line.skuId} to order`}
+                      min={0}
+                      step={sku?.caseSize ?? 12}
+                      value={poQty[line.skuId] ?? 0}
+                      onChange={(e) =>
+                        setPoQty((q) => ({
+                          ...q,
+                          [line.skuId]: Math.max(0, Number(e.target.value)),
+                        }))
+                      }
+                      disabled={!raisePo}
+                    />
+                  </div>
+                  <IconButton
+                    name="x"
+                    label={`Take ${sku?.label ?? 'this'} off the order`}
+                    onClick={() =>
+                      setPoQty((q) => {
+                        const next = { ...q }
+                        delete next[line.skuId]
+                        return next
+                      })
+                    }
+                  />
+                </div>
               </div>
             )
           })}
@@ -554,16 +613,16 @@ export function CloseDay() {
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-3 pb-2">
-        <Button variant="ghost" icon="chevronLeft" onClick={() => navigate('/today')}>
+      <div className="flex flex-col-reverse gap-3 pb-2 sm:flex-row sm:items-center">
+        <Button
+          variant="ghost"
+          icon="chevronLeft"
+          className="self-start sm:self-auto"
+          onClick={() => navigate('/today')}
+        >
           Not yet
         </Button>
-        <Button
-          variant="primary"
-          icon="check"
-          className="ml-auto"
-          onClick={finish}
-        >
+        <Button variant="primary" icon="check" className="w-full sm:ml-auto sm:w-auto" onClick={finish}>
           {raisePo && orderLines.length ? 'Close the day and send the order' : 'Close the day'}
         </Button>
       </div>

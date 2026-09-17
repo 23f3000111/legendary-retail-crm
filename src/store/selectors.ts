@@ -28,6 +28,7 @@ import {
   countedSkus,
   skuById,
   collections,
+  lineUnitPrice,
   priceOfId,
   productById,
   type CollectionId,
@@ -164,7 +165,7 @@ export const totalsFor = (data: CrmData, f: Filter): Totals => {
     for (const line of c.lines) {
       if (!lineMatches(line, allowed, f)) continue
       // Counted on whichever price this location is counted on (Revision 2).
-      const price = priceOfId(line.skuId, basisOf(c.locationId))
+      const price = lineUnitPrice(line.skuId, line.priceTier, basisOf(c.locationId))
       t.revenue += line.qty * price
       t.units += line.qty
       if (line.countryCode) t.attributedUnits += line.qty
@@ -247,7 +248,7 @@ export const selectTimeSeries = (data: CrmData, f: Filter, metric: Metric): Seri
     const bucket = byDate.get(c.period) ?? { revenue: 0, units: 0 }
     for (const line of c.lines) {
       if (!lineMatches(line, allowed, f)) continue
-      bucket.revenue += line.qty * priceOfId(line.skuId, basisOf(c.locationId))
+      bucket.revenue += line.qty * lineUnitPrice(line.skuId, line.priceTier, basisOf(c.locationId))
       bucket.units += line.qty
     }
     byDate.set(c.period, bucket)
@@ -323,7 +324,7 @@ export const selectOriginMix = (data: CrmData, f: Filter, top = 6): OriginSlice[
       if (!lineMatches(line, allowed, f)) continue
       const bucket = tally.get(line.countryCode) ?? { units: 0, revenue: 0 }
       bucket.units += line.qty
-      bucket.revenue += line.qty * priceOfId(line.skuId, basisOf(c.locationId))
+      bucket.revenue += line.qty * lineUnitPrice(line.skuId, line.priceTier, basisOf(c.locationId))
       tally.set(line.countryCode, bucket)
     }
   }
@@ -342,7 +343,7 @@ export const selectSkusForCountry = (data: CrmData, f: Filter, countryCode: stri
       if (!allowed.has(line.skuId)) continue
       const b = tally.get(line.skuId) ?? { units: 0, revenue: 0 }
       b.units += line.qty
-      b.revenue += line.qty * priceOfId(line.skuId, basisOf(c.locationId))
+      b.revenue += line.qty * lineUnitPrice(line.skuId, line.priceTier, basisOf(c.locationId))
       tally.set(line.skuId, b)
     }
   }
@@ -382,7 +383,7 @@ export const selectSkuPerformance = (data: CrmData, f: Filter): SkuPerformance[]
       if (!lineMatches(line, allowed, f)) continue
       const b = tally.get(line.skuId) ?? { units: 0, revenue: 0 }
       b.units += line.qty
-      b.revenue += line.qty * priceOfId(line.skuId, basisOf(c.locationId))
+      b.revenue += line.qty * lineUnitPrice(line.skuId, line.priceTier, basisOf(c.locationId))
       tally.set(line.skuId, b)
     }
   }
@@ -457,7 +458,7 @@ export const selectLocationRows = (
         .filter((c) => c.locationId === l.id && monthKey(c.period) === month)
         .reduce(
           (a, c) =>
-            a + c.lines.reduce((s, ln) => s + ln.qty * priceOfId(ln.skuId, l.priceBasis), 0),
+            a + c.lines.reduce((s, ln) => s + ln.qty * lineUnitPrice(ln.skuId, ln.priceTier, l.priceBasis), 0),
           0,
         )
 

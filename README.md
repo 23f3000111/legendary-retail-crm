@@ -115,10 +115,11 @@ consignment partner.
 
 1. **Lim Davy** — the overview opens with the three stores he checks first every morning
    (Q71: Pavilion KL, KLIA T2, KLCC Isetan), then the group, then what needs him.
-2. **Pavilion KL promoter** — *Record a sale*: tap Orchid 30ml, tap China. That is the whole
-   interaction, sized for a finger on an iPad (Q78).
-3. **Close the day** — four steps: check the sales you logged → split the money three ways →
-   count every perfume → send Kelly a top-up. Raising an order is a confirmation, not typing.
+2. **Pavilion KL promoter** — *Record a sale*: tap the price Orchid 30ml went for, tap China.
+   That is the whole interaction, sized for a finger on an iPad or a phone (Q78).
+3. **Close the day** — one page, already filled in from the day's sales: type the cash, change
+   any count that is actually different, press the button. The top-up to Kelly is on the same
+   page with anything low already on it.
 4. **Kelly Tew** — the order is at the top of her queue. She approves every order (Q46).
 5. **Finance** clears it, **Warehouse** picks and dispatches, the promoter confirms it arrived.
 6. **Vins Lim** — the same screens with every button gone.
@@ -210,8 +211,9 @@ it.
 - **Countries** — that all 200 of the client's own list are present with unique ISO codes, and
   that search puts a name starting with your query above one that merely contains it.
 - **Catalogue** — the sixteen priced lines and their two prices, that no two SKUs share a code,
-  that nothing unsellable carries a price, and that BSAS counts on retail while everyone else
-  counts on promotion.
+  that nothing unsellable carries a price, that BSAS counts on retail while everyone else
+  counts on promotion, and that a line sold at a chosen price counts at that price whatever
+  the store is on.
 
 ---
 

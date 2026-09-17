@@ -24,7 +24,7 @@ import {
   selectTimeSeries,
 } from '../../store/selectors'
 import { locationById } from '../../data/locations'
-import { priceOf, skuById } from '../../data/products'
+import { lineUnitPrice } from '../../data/products'
 import { addDays, formatDate, relativeDay } from '../../lib/dates'
 import { num, rm, rmCompact } from '../../lib/format'
 
@@ -52,7 +52,7 @@ export function Today() {
   const mix = selectOriginMix(data, window30)
   const row = selectLocationRows(data, window30)[0]
 
-  const liveRevenue = lines.reduce((a, l) => a + l.qty * priceOf(skuById(l.skuId), basis), 0)
+  const liveRevenue = lines.reduce((a, l) => a + l.qty * lineUnitPrice(l.skuId, l.priceTier, basis), 0)
   const liveUnits = lines.reduce((a, l) => a + l.qty, 0)
 
   const todayMix = useMemo(() => {
@@ -62,7 +62,7 @@ export function Today() {
       if (!l.countryCode) continue
       const b = tally.get(l.countryCode) ?? { units: 0, revenue: 0 }
       b.units += l.qty
-      b.revenue += l.qty * priceOf(skuById(l.skuId), basis)
+      b.revenue += l.qty * lineUnitPrice(l.skuId, l.priceTier, basis)
       tally.set(l.countryCode, b)
     }
     return originSlicesFrom(tally)

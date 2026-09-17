@@ -84,6 +84,27 @@ describe('totals', () => {
     const t = totalsFor(data, emptyFilter('2020-01-01', '2020-01-31'))
     expect(t).toMatchObject({ revenue: 0, units: 0, attributedUnits: 0 })
   })
+
+  it('counts a line at the price the counter chose, not the store’s usual one', () => {
+    // Pavilion is counted on the promotion price. A customer who paid full
+    // price is a retail line, and the takings must say so.
+    const day = '2031-01-01'
+    const closing = {
+      ...data.closings.find((c) => c.locationId === 'pavilion-5')!,
+      id: 'test-tier',
+      period: day,
+      lines: [
+        { skuId: 'orchid-retail', qty: 1, priceTier: 'retail' as const },
+        { skuId: 'orchid-retail', qty: 1, priceTier: 'promotion' as const },
+        { skuId: 'orchid-retail', qty: 1 },
+        { skuId: 'wish-1-set', qty: 2, priceTier: 'offer' as const },
+      ],
+    }
+    const withTiers = { ...data, closings: [...data.closings, closing] }
+    const t = totalsFor(withTiers, emptyFilter(day, day))
+    expect(t.revenue).toBe(238 + 188 + 188 + 2 * 10)
+    expect(t.units).toBe(5)
+  })
 })
 
 describe('country attribution is exact, not estimated', () => {

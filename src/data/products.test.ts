@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   countedSkus,
+  lineUnitPrice,
+  priceAtTier,
   priceOf,
   priceOfId,
   products,
@@ -8,6 +10,7 @@ import {
   skuById,
   skus,
   testerSkus,
+  tiersFor,
 } from './products'
 import { basisOf, locationById } from './locations'
 
@@ -85,6 +88,46 @@ describe('which price counts', () => {
     for (const id of ['pavilion-5', 'bsas', 'cons-sas', 'cons-wat', 'dlr-beauty-scent']) {
       expect(['retail', 'promotion']).toContain(locationById(id)!.priceBasis)
     }
+  })
+})
+
+describe('the price the counter chooses', () => {
+  const orchid = skuById('orchid-retail')
+  const wish = skuById('wish-1-set')
+
+  it('offers every item at promotion and retail, the store’s own price first', () => {
+    expect(tiersFor(orchid, 'promotion')).toEqual(['promotion', 'retail'])
+    expect(tiersFor(orchid, 'retail')).toEqual(['retail', 'promotion'])
+    expect(tiersFor(undefined)).toEqual([])
+  })
+
+  it('offers the Wishes at the offer price as well, and nothing else', () => {
+    expect(tiersFor(wish, 'promotion')).toEqual(['promotion', 'retail', 'offer'])
+    for (const s of sellableSkus.filter((k) => !k.productId.startsWith('wish-'))) {
+      expect(tiersFor(s), s.label).not.toContain('offer')
+    }
+  })
+
+  it('prices each tier off the list', () => {
+    expect(priceAtTier(orchid, 'retail')).toBe(238)
+    expect(priceAtTier(orchid, 'promotion')).toBe(188)
+    expect(priceAtTier(wish, 'offer')).toBe(10)
+    expect(priceAtTier(undefined, 'retail')).toBe(0)
+  })
+
+  it('never lets an item without an offer price be sold for nothing', () => {
+    // Asking for a tier the item does not have falls back to the everyday price.
+    expect(priceAtTier(orchid, 'offer')).toBe(188)
+  })
+
+  it('counts a line at the price the counter chose, whatever the store is on', () => {
+    expect(lineUnitPrice('orchid-retail', 'retail', 'promotion')).toBe(238)
+    expect(lineUnitPrice('orchid-retail', 'promotion', 'retail')).toBe(188)
+  })
+
+  it('falls back to the store’s basis where nobody chose — the whole seeded history', () => {
+    expect(lineUnitPrice('orchid-retail', undefined, 'retail')).toBe(238)
+    expect(lineUnitPrice('orchid-retail', undefined, 'promotion')).toBe(188)
   })
 })
 
