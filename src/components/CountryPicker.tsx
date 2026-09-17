@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Icon } from './ui/icons'
+import { Flag } from './ui/Flag'
 import {
   byInitial,
   searchCountries,
@@ -132,7 +133,7 @@ export function CountryPicker({
                             onClick={() => choose(c)}
                             className="flex min-h-[46px] items-center gap-2 rounded-xl border border-line bg-surface-2 px-3 py-2 text-left transition-colors hover:border-primary/45 hover:bg-primary/8"
                           >
-                            <span className="shrink-0 text-[17px] leading-none">{c.flag}</span>
+                            <Flag code={c.code} size={22} />
                             <span className="min-w-0 truncate text-[13px] text-ink">{c.name}</span>
                           </button>
                         ))}
@@ -155,7 +156,7 @@ export function CountryPicker({
                               onClick={() => choose(c)}
                               className="flex min-h-[44px] items-center gap-2.5 rounded-lg px-2 text-left transition-colors hover:bg-sunken"
                             >
-                              <span className="shrink-0 text-[17px] leading-none">{c.flag}</span>
+                              <Flag code={c.code} size={22} />
                               <span className="min-w-0 flex-1 truncate text-[13.5px] text-ink">
                                 {c.name}
                               </span>
@@ -198,7 +199,7 @@ function SegmentStep({
         >
           <Icon name="chevronLeft" className="h-4 w-4" />
         </button>
-        <span className="text-[19px] leading-none">🇲🇾</span>
+        <Flag code="MY" size={26} />
         <h2 className="font-display text-[17px] font-semibold tracking-tight">Malaysian customer</h2>
       </div>
       <p className="mb-4 pl-9 text-[12.5px] text-ink-2">Which group? Ask if you are not sure.</p>

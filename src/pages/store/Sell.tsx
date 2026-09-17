@@ -5,6 +5,7 @@ import { Panel, PanelBody, PanelHeader, Rule } from '../../components/ui/Panel'
 import { Button, IconButton } from '../../components/ui/Button'
 import { Icon } from '../../components/ui/icons'
 import { Badge } from '../../components/ui/Badge'
+import { Flag } from '../../components/ui/Flag'
 import { EmptyState } from '../../components/ui/DataTable'
 import { OriginRibbon } from '../../components/charts/OriginRibbon'
 import { CountryPicker } from '../../components/CountryPicker'
@@ -362,8 +363,8 @@ export function Sell() {
                           }
                           className="min-h-[62px] rounded-xl border border-primary/30 bg-primary/8 px-4 py-2.5 text-left transition-all duration-200 active:scale-[0.98] sm:min-w-[128px] sm:hover:-translate-y-0.5 sm:hover:border-primary/60 sm:hover:bg-primary/14"
                         >
-                          <span className="block text-[19px] leading-none">{c.flag}</span>
-                          <span className="mt-1 block truncate text-[13px] font-medium text-ink">
+                          <Flag code={c.code} size={28} className="block" />
+                          <span className="mt-1.5 block truncate text-[13px] font-medium text-ink">
                             {c.name}
                           </span>
                         </button>
@@ -421,7 +422,8 @@ export function Sell() {
                     )}
                     {c && (
                       <Badge tone="active">
-                        {c.flag} {c.name}
+                        <Flag code={c.code} size={14} />
+                        {c.name}
                         {l.segment ? ` · ${MALAYSIA_SEGMENT_LABEL[l.segment]}` : ''}
                       </Badge>
                     )}

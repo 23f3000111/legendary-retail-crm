@@ -3,6 +3,7 @@ import { Icon } from './ui/icons'
 import { Button } from './ui/Button'
 import { Badge } from './ui/Badge'
 import { ChipToggle, SegmentedControl } from './ui/Field'
+import { Flag } from './ui/Flag'
 import {
   locations,
   regions,
@@ -286,7 +287,12 @@ export function FilterBar({
             {countries.map((c) => (
               <ChipToggle
                 key={c.code}
-                label={`${c.flag} ${c.name}`}
+                label={
+                  <>
+                    <Flag code={c.code} size={14} />
+                    {c.name}
+                  </>
+                }
                 active={filter.countryCodes.includes(c.code)}
                 onClick={() => toggle('countryCodes', c.code)}
               />

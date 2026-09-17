@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { seriesColor, OTHER, INK } from './palette'
 import { num } from '../../lib/format'
+import { Flag } from '../ui/Flag'
 import type { OriginSlice } from '../../store/selectors'
 
 /**
@@ -67,8 +68,9 @@ export function OriginRibbon({
               title={`${s.name} · ${num(s.units)} units · ${s.share.toFixed(1)}%`}
             >
               {roomForLabel && (
-                <span className="truncate px-2 text-[11px] font-semibold text-white">
-                  {s.flag} {Math.round(s.share)}%
+                <span className="flex items-center gap-1 truncate px-2 text-[11px] font-semibold text-white">
+                  <Flag code={s.countryCode} size={14} alt={s.name} fallback={s.flag} />
+                  {Math.round(s.share)}%
                 </span>
               )}
             </motion.div>
@@ -89,8 +91,9 @@ export function OriginRibbon({
               style={{ background: s.countryCode === 'OTHER' ? OTHER : seriesColor(i) }}
               aria-hidden="true"
             />
-            <span className="text-[11.5px] text-ink-2">
-              {s.flag} {s.name}
+            <span className="flex items-center gap-1.5 text-[11.5px] text-ink-2">
+              <Flag code={s.countryCode} size={14} fallback={s.flag} />
+              {s.name}
             </span>
             <span className="readout text-[11px] text-ink-3">{num(s.units)}</span>
           </li>
@@ -124,11 +127,14 @@ export function OriginTable({ slices }: { slices: OriginSlice[] }) {
         {slices.map((s, i) => (
           <tr key={s.countryCode} className="border-b border-line/70 last:border-0">
             <td className="py-1.5 text-[12.5px] text-ink">
-              <span
-                className="mr-2 inline-block h-2.5 w-2.5 rounded-[3px] align-middle"
-                style={{ background: s.countryCode === 'OTHER' ? OTHER : seriesColor(i) }}
-              />
-              {s.flag} {s.name}
+              <span className="flex items-center gap-2">
+                <span
+                  className="inline-block h-2.5 w-2.5 shrink-0 rounded-[3px]"
+                  style={{ background: s.countryCode === 'OTHER' ? OTHER : seriesColor(i) }}
+                />
+                <Flag code={s.countryCode} size={16} fallback={s.flag} />
+                {s.name}
+              </span>
             </td>
             <td className="readout py-1.5 text-right text-[12.5px] text-ink">
               {num(s.units)}
