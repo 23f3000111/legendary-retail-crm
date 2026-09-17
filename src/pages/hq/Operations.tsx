@@ -75,6 +75,7 @@ export function Operations() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile
           label="Orders to approve"
+          to="/orders"
           value={waitingOnMe.length}
           format={(n) => num(Math.round(n))}
           footnote={waitingOnMe.length ? `${rm(waitingOnMe.reduce((a, p) => a + poValue(p), 0))} of stock` : 'queue clear'}
@@ -83,6 +84,7 @@ export function Operations() {
         />
         <StatTile
           label="Corrections pending"
+          to="/closings"
           value={pendingCorrections.length}
           format={(n) => num(Math.round(n))}
           footnote="only you and Davy can decide"
@@ -91,6 +93,7 @@ export function Operations() {
         />
         <StatTile
           label="Missed the 11pm deadline"
+          to="/closings"
           value={notFiled.length}
           format={(n) => num(Math.round(n))}
           footnote={formatDate(yesterday)}
@@ -99,6 +102,7 @@ export function Operations() {
         />
         <StatTile
           label="Products below reorder"
+          to="/stock"
           value={lowStock.length}
           format={(n) => num(Math.round(n))}
           footnote="across the estate"

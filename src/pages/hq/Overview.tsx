@@ -15,6 +15,7 @@ import { SkuBars, SkuTable } from '../../components/charts/SkuBars'
 import { Sparkline } from '../../components/charts/Sparkline'
 import { useData } from '../../store/useData'
 import { useCan, useCurrentUser } from '../../store/useAuth'
+import { canOpen } from '../../components/layout/nav'
 import {
   emptyFilter,
   poValue,
@@ -66,6 +67,9 @@ const FOUNDER_ALERTS = ['missed_closing', 'correction_pending', 'target_risk']
 export function Overview() {
   const data = useData()
   const user = useCurrentUser()
+  // A tile opens the screen behind its number — but only one this role may
+  // open, since a link that bounces is worse than no link.
+  const open = (path: string) => (user && canOpen(user.role, path) ? path : undefined)
   const capability = useCan()
   const executive = user?.role === 'director'
   const filter = useMemo(() => emptyFilter(addDays(data.today, -29), data.today), [data.today])
@@ -180,6 +184,7 @@ export function Overview() {
       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <StatTile
           label="Revenue · 30 days"
+          to={open('/analytics')}
           value={kpis.current.revenue}
           format={rm}
           delta={kpis.delta.revenue}
@@ -188,6 +193,7 @@ export function Overview() {
         />
         <StatTile
           label="Units sold"
+          to={open('/analytics')}
           value={kpis.current.units}
           format={(n) => num(Math.round(n))}
           delta={kpis.delta.units}
@@ -196,6 +202,7 @@ export function Overview() {
         />
         <StatTile
           label="Orders in flight"
+          to={open('/orders')}
           value={openOrders.length}
           format={(n) => num(Math.round(n))}
           footnote={`${rm(openValue)} of stock`}
@@ -204,6 +211,7 @@ export function Overview() {
         />
         <StatTile
           label="Needs attention"
+          to={open('/alerts')}
           value={alerts.length}
           format={(n) => num(Math.round(n))}
           footnote={urgent.length ? `${urgent.length} urgent` : 'nothing urgent'}

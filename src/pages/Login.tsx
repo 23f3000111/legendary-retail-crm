@@ -6,7 +6,15 @@ import { Button } from '../components/ui/Button'
 import { Field, TextInput } from '../components/ui/Field'
 import { useAuth } from '../store/useAuth'
 import { useData } from '../store/useData'
-import { startingPassword, CODE_LENGTH, CODE_TTL_MINUTES } from '../data/people'
+import {
+  startingPassword,
+  CODE_LENGTH,
+  CODE_TTL_MINUTES,
+  ROLE_LABEL,
+  type Person,
+  type Role,
+} from '../data/people'
+import { locationById } from '../data/locations'
 import { formatDate } from '../lib/dates'
 
 /**
@@ -18,6 +26,24 @@ import { formatDate } from '../lib/dates'
  * browser at all, so there would be nothing to show even if this were left on.
  */
 const SHOW_DEMO_HELP = true
+
+/** The demo list in the order of the company chart, promoters last and by store. */
+const DEMO_ORDER: Role[] = ['director', 'md', 'ops', 'pa', 'finance', 'warehouse', 'it', 'promoter']
+
+const demoGroups = (users: Person[]) =>
+  DEMO_ORDER.map((role) => ({
+    role,
+    label: role === 'promoter' ? 'Store Promoters' : ROLE_LABEL[role],
+    people: users
+      .filter((u) => u.active && u.role === role)
+      .sort((a, b) =>
+        role === 'promoter'
+          ? (locationById(a.locationId ?? '')?.name ?? '').localeCompare(
+              locationById(b.locationId ?? '')?.name ?? '',
+            ) || a.name.localeCompare(b.name)
+          : 0,
+      ),
+  })).filter((g) => g.people.length > 0)
 
 type Step = 'credentials' | 'code'
 
@@ -333,30 +359,39 @@ export function Login() {
                   <code className="readout text-[11px] text-ink">SHOW_DEMO_HELP</code> to false
                   before real staff use the system.
                 </p>
-                <ul className="mt-3 max-h-[240px] space-y-1 overflow-y-auto">
-                  {users
-                    .filter((u) => u.active)
-                    .slice(0, 40)
-                    .map((u) => (
-                      <li key={u.id}>
-                        <button
-                          onClick={() => {
-                            setUsername(u.username)
-                            setPassword(startingPassword(u.username))
-                            setError(null)
-                          }}
-                          className="flex w-full items-center gap-2 rounded-lg bg-surface px-2.5 py-1.5 text-left transition-colors hover:bg-sunken"
-                        >
-                          <span className="readout w-[112px] shrink-0 truncate text-[11.5px] font-semibold text-primary">
-                            {u.username}
-                          </span>
-                          <span className="min-w-0 flex-1 truncate text-[12px] text-ink">
-                            {u.name}
-                          </span>
-                        </button>
-                      </li>
-                    ))}
-                </ul>
+                <div className="mt-3 max-h-[280px] space-y-3 overflow-y-auto pr-1">
+                  {demoGroups(users).map((g) => (
+                    <div key={g.role}>
+                      <p className="eyebrow mb-1 px-1">{g.label}</p>
+                      <ul className="space-y-1">
+                        {g.people.map((u) => (
+                          <li key={u.id}>
+                            <button
+                              onClick={() => {
+                                setUsername(u.username)
+                                setPassword(startingPassword(u.username))
+                                setError(null)
+                              }}
+                              className="flex w-full items-center gap-2 rounded-lg bg-surface px-2.5 py-1.5 text-left transition-colors hover:bg-sunken"
+                            >
+                              <span className="readout w-[112px] shrink-0 truncate text-[11.5px] font-semibold text-primary">
+                                {u.username}
+                              </span>
+                              <span className="min-w-0 flex-1 truncate text-[12px] text-ink">
+                                {u.name}
+                              </span>
+                              {g.role === 'promoter' && u.locationId && (
+                                <span className="shrink-0 truncate text-[10.5px] text-ink-3">
+                                  {locationById(u.locationId)?.shortName}
+                                </span>
+                              )}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
               </motion.div>
             )}
           </div>

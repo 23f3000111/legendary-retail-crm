@@ -8,12 +8,19 @@ export function Panel({
   children,
   className = '',
   as: Tag = 'section',
+  id,
 }: {
   children: ReactNode
   className?: string
   as?: 'section' | 'div' | 'article'
+  /** So a tile higher up the page can scroll to this panel. */
+  id?: string
 }) {
-  return <Tag className={`panel ${className}`}>{children}</Tag>
+  return (
+    <Tag id={id} className={`panel scroll-mt-20 ${className}`}>
+      {children}
+    </Tag>
+  )
 }
 
 export function PanelHeader({

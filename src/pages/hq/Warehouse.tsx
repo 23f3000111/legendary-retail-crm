@@ -26,6 +26,9 @@ import type { PurchaseOrder } from '../../data/types'
  */
 export function Warehouse() {
   const navigate = useNavigate()
+  /** The tiles scroll to their own list further down, since this is the page. */
+  const jumpTo = (id: string) =>
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   const user = useCurrentUser()
   const data = useData()
   const transitionPo = useData((s) => s.transitionPo)
@@ -156,6 +159,7 @@ export function Warehouse() {
       <div className="grid gap-4 sm:grid-cols-3">
         <StatTile
           label="Waiting to pick"
+          onClick={() => jumpTo('queue')}
           value={toPick.length}
           format={(n) => num(Math.round(n))}
           footnote={`${num(pickList.reduce((a, r) => a + r.qty, 0))} units`}
@@ -164,6 +168,7 @@ export function Warehouse() {
         />
         <StatTile
           label="Packed, ready to send"
+          onClick={() => jumpTo('packed')}
           value={toDispatch.length}
           format={(n) => num(Math.round(n))}
           tone="blue"
@@ -171,6 +176,7 @@ export function Warehouse() {
         />
         <StatTile
           label="On the road"
+          onClick={() => jumpTo('on-road')}
           value={onRoad.length}
           format={(n) => num(Math.round(n))}
           footnote={`${rm(onRoad.reduce((a, p) => a + poValue(p), 0))} of stock`}
@@ -218,7 +224,7 @@ export function Warehouse() {
         </PanelBody>
       </Panel>
 
-      <Panel>
+      <Panel id="queue">
         <PanelHeader eyebrow="Queue" title={`${toPick.length} orders to pack`} />
         <Rule />
         <PanelBody>
@@ -233,7 +239,7 @@ export function Warehouse() {
       </Panel>
 
       {toDispatch.length > 0 && (
-        <Panel>
+        <Panel id="packed">
           <PanelHeader eyebrow="Packed" title={`${toDispatch.length} ready to send`} />
           <Rule />
           <PanelBody>
@@ -248,7 +254,7 @@ export function Warehouse() {
       )}
 
       {onRoad.length > 0 && (
-        <Panel>
+        <Panel id="on-road">
           <PanelHeader eyebrow="For reference" title="On the road" />
           <Rule />
           <PanelBody>

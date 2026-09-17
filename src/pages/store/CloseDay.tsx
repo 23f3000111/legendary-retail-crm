@@ -89,9 +89,12 @@ export function CloseDay() {
   const [cash, setCash] = useState('')
   const card = cash === '' ? '' : String(Math.max(0, Math.round((revenue - Number(cash)) * 100) / 100))
 
-  const [poQty, setPoQty] = useState<Record<string, number>>(() =>
+  // Kept as the text in the box, not a number: clearing the box to type a new
+  // figure must not make the line vanish, which is what parsing '' as 0 and
+  // dropping zeroes did. A line only leaves the order by its own cross.
+  const [poQty, setPoQty] = useState<Record<string, string>>(() =>
     Object.fromEntries(
-      selectSuggestedPoLines(data, locationId).map((l) => [l.skuId, l.qtyRequested]),
+      selectSuggestedPoLines(data, locationId).map((l) => [l.skuId, String(l.qtyRequested)]),
     ),
   )
   const [poNotes, setPoNotes] = useState('')
@@ -99,15 +102,15 @@ export function CloseDay() {
   const [addSku, setAddSku] = useState('')
   const [raisePo, setRaisePo] = useState(true)
 
-  /**
-   * What is actually on the order: whatever has a quantity against it, whether
-   * the app suggested it or the promoter added it.
-   */
+  /** Every line on the order, whether the app suggested it or the promoter added it. */
+  const orderRows = useMemo(() => Object.keys(poQty), [poQty])
+
+  /** The ones that will actually be sent: those with a quantity against them. */
   const orderLines = useMemo(
     () =>
       Object.entries(poQty)
-        .filter(([, qty]) => qty > 0)
-        .map(([skuId, qty]) => ({ skuId, qty })),
+        .map(([skuId, qty]) => ({ skuId, qty: Math.max(0, Math.floor(Number(qty)) || 0) }))
+        .filter((l) => l.qty > 0),
     [poQty],
   )
 
@@ -131,6 +134,14 @@ export function CloseDay() {
     if (Number(value) < 0) {
       problems.push(`${s.label} cannot be a negative number.`)
       break
+    }
+  }
+  if (raisePo) {
+    const blank = orderRows.find((skuId) => !orderLines.some((l) => l.skuId === skuId))
+    if (blank) {
+      problems.push(
+        `${skuById(blank)?.label ?? blank} is on the order with no quantity — type one, or take it off with the cross.`,
+      )
     }
   }
 
@@ -471,7 +482,13 @@ export function CloseDay() {
       <Panel>
         <PanelHeader
           eyebrow="Ask HQ for stock"
-          title={orderLines.length ? `${orderLines.length} on the order` : 'Nothing to order'}
+          title={
+            orderRows.length === 0
+              ? 'Nothing to order'
+              : orderRows.length === orderLines.length
+                ? `${orderLines.length} on the order`
+                : `${orderLines.length} on the order · ${orderRows.length - orderLines.length} still to fill in`
+          }
           meta="Anything low is filled in for you. Add anything else, including testers."
           action={
             <button
@@ -522,7 +539,10 @@ export function CloseDay() {
               onClick={() => {
                 if (!addSku) return
                 const caseSize = skuById(addSku)?.caseSize ?? 12
-                setPoQty((q) => ({ ...q, [addSku]: (q[addSku] ?? 0) + caseSize }))
+                setPoQty((q) => ({
+                  ...q,
+                  [addSku]: String((Number(q[addSku]) || 0) + caseSize),
+                }))
                 setAddSku('')
               }}
             >
@@ -530,13 +550,17 @@ export function CloseDay() {
             </Button>
           </div>
 
-          {orderLines.map((line) => {
+          {orderRows.map((skuId) => {
+            const line = { skuId, qty: poQty[skuId] ?? '' }
             const sku = skuById(line.skuId)
             const row = stock.find((x) => x.skuId === line.skuId)
+            const blank = !(Number(line.qty) > 0)
             return (
               <div
                 key={line.skuId}
-                className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-line bg-surface-2 px-3.5 py-3"
+                className={`flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border px-3.5 py-3 ${
+                  blank && raisePo ? 'border-warn/50 bg-warn/5' : 'border-line bg-surface-2'
+                }`}
               >
                 <div className="min-w-0 flex-1 basis-full sm:basis-0 sm:min-w-[160px]">
                   <p className="text-[13px] text-ink">{sku?.label ?? line.skuId}</p>
@@ -562,12 +586,10 @@ export function CloseDay() {
                       aria-label={`Units of ${sku?.label ?? line.skuId} to order`}
                       min={0}
                       step={sku?.caseSize ?? 12}
-                      value={poQty[line.skuId] ?? 0}
+                      value={line.qty}
+                      placeholder="0"
                       onChange={(e) =>
-                        setPoQty((q) => ({
-                          ...q,
-                          [line.skuId]: Math.max(0, Number(e.target.value)),
-                        }))
+                        setPoQty((q) => ({ ...q, [line.skuId]: e.target.value }))
                       }
                       disabled={!raisePo}
                     />
@@ -588,7 +610,7 @@ export function CloseDay() {
             )
           })}
 
-          {orderLines.length > 0 && (
+          {orderRows.length > 0 && (
             <Field label="Note for Kelly (optional)" hint="Anything she should know before deciding.">
               <TextArea
                 value={poNotes}

@@ -100,6 +100,7 @@ export function Today() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile
           label={closedToday ? 'Filed today' : 'Logged so far'}
+          to={closedToday ? '/history' : '/sell'}
           value={closedToday ? closedToday.revenueMYR : liveRevenue}
           format={rm}
           footnote={closedToday ? 'as filed' : 'still open'}
@@ -108,6 +109,7 @@ export function Today() {
         />
         <StatTile
           label="Units"
+          to="/history"
           value={closedToday ? closedToday.lines.reduce((a, l) => a + l.qty, 0) : liveUnits}
           format={(n) => num(Math.round(n))}
           tone="blue"
@@ -115,6 +117,7 @@ export function Today() {
         />
         <StatTile
           label="Below reorder"
+          to="/stock"
           value={low.length}
           format={(n) => num(Math.round(n))}
           footnote={low.length ? 'top-up suggested at closing' : 'all healthy'}
@@ -123,6 +126,7 @@ export function Today() {
         />
         <StatTile
           label="Orders in flight"
+          to="/orders"
           value={openOrders.length}
           format={(n) => num(Math.round(n))}
           footnote={openOrders.length ? 'with HQ or the warehouse' : 'nothing outstanding'}

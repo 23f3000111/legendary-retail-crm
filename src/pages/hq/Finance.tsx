@@ -11,6 +11,7 @@ import { TrendChart } from '../../components/charts/TrendChart'
 import { Donut, DonutTable, type DonutSlice } from '../../components/charts/Donut'
 import { useData } from '../../store/useData'
 import { useCurrentUser } from '../../store/useAuth'
+import { canOpen } from '../../components/layout/nav'
 import {
   emptyFilter,
   filteredClosings,
@@ -36,6 +37,9 @@ import { num, rm, rmCompact } from '../../lib/format'
 export function Finance() {
   const data = useData()
   const user = useCurrentUser()
+  // A tile opens the screen behind its number — but only one this role may
+  // open, since a link that bounces is worse than no link.
+  const open = (path: string) => (user && canOpen(user.role, path) ? path : undefined)
 
   const filter = useMemo(() => emptyFilter(addDays(data.today, -29), data.today), [data.today])
   const kpis = selectKpis(data, filter)
@@ -121,6 +125,7 @@ export function Finance() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile
           label="Revenue · 30 days"
+          to={open('/analytics')}
           value={kpis.current.revenue}
           format={rm}
           delta={kpis.delta.revenue}
@@ -129,6 +134,7 @@ export function Finance() {
         />
         <StatTile
           label="Units sold"
+          to={open('/analytics')}
           value={kpis.current.units}
           format={(n) => num(Math.round(n))}
           delta={kpis.delta.units}
@@ -137,6 +143,7 @@ export function Finance() {
         />
         <StatTile
           label="Orders to clear"
+          to={open('/orders')}
           value={waitingOnMe.length}
           format={(n) => num(Math.round(n))}
           footnote={
@@ -149,6 +156,7 @@ export function Finance() {
         />
         <StatTile
           label="Staff purchases"
+          to={open('/closings')}
           value={staffTotal.revenue}
           format={rm}
           footnote={`${num(staffTotal.units)} units, kept separate`}

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import { Icon, type IconName } from './icons'
 import { signedPct } from '../../lib/format'
 
@@ -48,6 +49,10 @@ function useCountUp(target: number, duration = 820): number {
 /**
  * The headline readouts. A toned tile is a saturated gradient block with white
  * type; `plain` is glass, for secondary rows where four gradients would shout.
+ *
+ * Give it `to` and the whole tile is a link to the screen behind the number —
+ * the client expects a card with "8 orders to approve" on it to open the
+ * orders. It lifts on hover and carries a small arrow so that is discoverable.
  */
 export function StatTile({
   label,
@@ -57,6 +62,8 @@ export function StatTile({
   footnote,
   tone = 'plain',
   icon,
+  to,
+  onClick,
 }: {
   label: string
   value: number
@@ -66,18 +73,26 @@ export function StatTile({
   footnote?: ReactNode
   tone?: TileTone
   icon?: IconName
+  /** Where the tile opens. Leave off for a figure with nowhere to go. */
+  to?: string
+  /** Or what it does — scrolling to the list further down the same page. */
+  onClick?: () => void
 }) {
   const shown = useCountUp(value)
   const toned = tone !== 'plain'
 
-  return (
-    <div
-      className={`relative overflow-hidden rounded-2xl px-4 py-3.5 ${
-        toned
-          ? `${GRADIENT[tone]} text-white shadow-tile`
-          : 'border border-line bg-surface/85 shadow-glass backdrop-blur-xl'
-      }`}
-    >
+  const className = `relative block overflow-hidden rounded-2xl px-4 py-3.5 ${
+    toned
+      ? `${GRADIENT[tone]} text-white shadow-tile`
+      : 'border border-line bg-surface/85 shadow-glass backdrop-blur-xl'
+  } ${
+    to || onClick
+      ? 'transition-all duration-200 ease-luxe hover:-translate-y-0.5 hover:brightness-[1.04] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary active:translate-y-0'
+      : ''
+  }`
+
+  const body = (
+    <>
       {/* A single specular highlight, so the gradient reads as a lit surface. */}
       {toned && (
         <span
@@ -111,9 +126,31 @@ export function StatTile({
             {footnote}
           </span>
         )}
+        {(to || onClick) && (
+          <Icon
+            name={to ? 'chevronRight' : 'chevronDown'}
+            className={`ml-auto h-3.5 w-3.5 shrink-0 ${toned ? 'text-white/70' : 'text-ink-3'}`}
+          />
+        )}
       </div>
-    </div>
+    </>
   )
+
+  if (to) {
+    return (
+      <Link to={to} className={className} aria-label={`${label}: open`}>
+        {body}
+      </Link>
+    )
+  }
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} className={`${className} w-full text-left`}>
+        {body}
+      </button>
+    )
+  }
+  return <div className={className}>{body}</div>
 }
 
 /**
