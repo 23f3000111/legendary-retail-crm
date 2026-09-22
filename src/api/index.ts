@@ -10,8 +10,24 @@ import type { Backend } from './backend'
 import { LocalBackend } from './local'
 import { SupabaseBackend } from './supabase'
 
-const url = import.meta.env.VITE_SUPABASE_URL as string | undefined
-const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
+/**
+ * The project's base address. Supabase shows the URL in more than one place
+ * and some of them carry the `/rest/v1` path; the client adds that itself, so
+ * whatever was pasted in is trimmed back to the origin.
+ */
+export const projectUrl = (raw: string | undefined): string | undefined => {
+  if (!raw) return undefined
+  const trimmed = raw.trim().replace(/\/+$/, '')
+  if (!trimmed) return undefined
+  try {
+    return new URL(trimmed).origin
+  } catch {
+    return trimmed.replace(/\/(rest|auth|realtime|storage)\/v\d.*$/, '')
+  }
+}
+
+const url = projectUrl(import.meta.env.VITE_SUPABASE_URL)
+const key = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim()
 
 let instance: Backend | null = null
 
