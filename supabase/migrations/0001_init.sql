@@ -105,16 +105,24 @@ alter table docs            enable row level security;
 alter table settings        enable row level security;
 revoke all on people, sessions, login_attempts, pending_codes, docs, settings from anon, authenticated;
 
--- The log cannot be rewritten. `clear_all_data()` sets the flag below for its
--- own transaction only — a session-local setting rather than disabling the
--- trigger, which would be table-wide DDL and would leave every other session
--- writing unprotected for as long as the delete took.
+-- The log cannot be rewritten, and there is no flag that turns this off.
+--
+-- An earlier version let `clear_all_data()` lift the guard by setting a
+-- session variable. That is unsafe behind a transaction pooler: the setting
+-- outlives the client on the pooled backend, so a later, unrelated connection
+-- inherits it and the log is unguarded. Starting over disables the trigger
+-- instead — DDL in Postgres is transactional and takes an exclusive lock, so
+-- it is atomic and nobody else can write to the table while it runs.
 create or replace function audit_is_append_only() returns trigger
 language plpgsql as $$
 begin
-  if old.kind = 'audit' and coalesce(current_setting('crm.wiping', true), '') <> 'on' then
+  if old.kind = 'audit' then
     raise exception 'The activity log cannot be edited.';
   end if;
+  -- NEW is null in a DELETE trigger, and returning null from a BEFORE trigger
+  -- cancels the row silently. Returning `new` here swallowed every delete on
+  -- this table, including the one behind "Start over".
+  if tg_op = 'DELETE' then return old; end if;
   return new;
 end $$;
 drop trigger if exists docs_audit_append_only on docs;
@@ -663,11 +671,11 @@ begin
   if s.person_id is null then return jsonb_build_object('ok', false, 'error', 'Sign in again.'); end if;
   if s.role not in ('md','it') then return jsonb_build_object('ok', false, 'error', 'Only Davy or Imran can start over.'); end if;
   -- The append-only rule is for edits through the app; starting over is the
-  -- one deliberate wipe. The flag is local to this transaction, so no other
-  -- session loses the protection while the delete runs.
-  perform set_config('crm.wiping', 'on', true);
+  -- one deliberate wipe. The function is a single transaction and the ALTER
+  -- takes an exclusive lock, so the guard is never off for anybody else.
+  alter table docs disable trigger docs_audit_append_only;
   delete from docs;
-  perform set_config('crm.wiping', 'off', true);
+  alter table docs enable trigger docs_audit_append_only;
   perform _audit(s.person_id, s.name, s.role, 'session', 'data.cleared',
                  s.name || ' cleared every sale, closing and order to start over');
   return jsonb_build_object('ok', true);

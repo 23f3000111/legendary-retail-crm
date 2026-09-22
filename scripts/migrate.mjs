@@ -10,18 +10,13 @@
  */
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import pg from 'pg'
+import { connect } from './db.mjs'
 
-const url = process.env.DATABASE_URL
-if (!url) {
-  console.error('Set DATABASE_URL to the Supabase connection string first.')
-  process.exit(1)
-}
 
 const dir = 'supabase/migrations'
 const files = readdirSync(dir).filter((f) => f.endsWith('.sql')).sort()
 
-const client = new pg.Client({ connectionString: url, ssl: { rejectUnauthorized: false } })
+const client = connect()
 await client.connect()
 try {
   for (const f of files) {

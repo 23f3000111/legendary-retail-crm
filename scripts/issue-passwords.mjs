@@ -10,13 +10,8 @@
  * keep it out of the repository, hand it over, and delete it.
  */
 import { randomBytes } from 'node:crypto'
-import pg from 'pg'
+import { connect } from './db.mjs'
 
-const url = process.env.DATABASE_URL
-if (!url) {
-  console.error('Set DATABASE_URL to the Supabase connection string first.')
-  process.exit(1)
-}
 const only = process.argv.slice(2)
 
 // Two words and a number: long enough for the rules, short enough to read out.
@@ -25,7 +20,7 @@ const WORDS = ['Orchid', 'Mahsuri', 'Violet', 'Kebaya', 'Nyonya', 'Ondeh', 'Spir
 const pick = () => WORDS[randomBytes(1)[0] % WORDS.length]
 const make = () => `${pick()}-${pick()}-${100 + (randomBytes(2).readUInt16BE(0) % 900)}`
 
-const client = new pg.Client({ connectionString: url, ssl: { rejectUnauthorized: false } })
+const client = connect()
 await client.connect()
 try {
   const { rows } = await client.query(

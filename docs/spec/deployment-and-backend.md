@@ -101,7 +101,25 @@ run is green the site at the usual address is talking to the server. The
 footer of every screen says so — "Shared with every device" with a green dot —
 and the sign-in screen no longer shows the sample logins.
 
-### 6. Before the promoters start
+### 6. Check the server enforces its rules
+
+```bash
+DATABASE_URL='postgresql://…' node scripts/verify-server.mjs
+```
+
+Twenty-two checks against the real database: that nothing is readable without
+a session, that a promoter cannot write for another store or set a target,
+that the founder changes nothing, that a line of the activity log cannot be
+edited or deleted while an ordinary document can, that a log line is filed
+against whoever is signed in whatever the browser claims, that passwords obey
+the authority table, that sign-in never says which half was wrong, and that
+"Start over" empties the documents and keeps every login.
+
+The vitest suite runs against the single-browser backend, so it cannot see a
+mistake in the SQL — this is what covers that. It refuses to run if the server
+already holds documents, so it cannot disturb a trial in progress.
+
+### 7. Before the promoters start
 
 - Sign in as Imran and check the Logins screen lists everyone.
 - Sign in as one promoter on a phone and one on a laptop; ring up a sale on
