@@ -10,3 +10,9 @@ dist
 # there, so they stay out of a public repository. Everything that was decided
 # from them is written up in docs/spec/ instead.
 docs/client-input/
+
+# Real keys for a real server. Never committed.
+.env
+.env.*
+docs/.env
+!.env.example
