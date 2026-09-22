@@ -20,6 +20,7 @@ import {
   needsTwoStep,
   maskEmail,
   newSignInCode,
+  storeChoicesFor,
   seedPeople,
   startingPassword,
   ROLE_LABEL,
@@ -342,8 +343,8 @@ export class LocalBackend implements Backend {
   async chooseStore(token: string, locationId: string, locationName?: string): Promise<Result> {
     const s = this.session(token)
     if (!s) return { ok: false, error: 'Sign in again.' }
-    if (!s.person.storeChoices?.includes(locationId)) {
-      return { ok: false, error: 'That is not one of your stores.' }
+    if (!storeChoicesFor(s.person).includes(locationId)) {
+      return { ok: false, error: 'That is not one of the outlets in your town.' }
     }
     this.sessions[token] = { personId: s.person.id, locationId }
     this.audit({

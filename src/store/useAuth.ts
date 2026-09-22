@@ -18,7 +18,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { backend } from '../api'
 import type { Result } from '../api/backend'
-import { can, type Capability, type Person } from '../data/people'
+import { can, picksStore, storeChoicesFor, storeForSession, type Capability, type Person } from '../data/people'
 import { setSession } from '../lib/session'
 import { useData } from './useData'
 
@@ -48,10 +48,12 @@ export const useAuth = create<AuthState>()(
   persist(
     (set, get) => {
       const open = (token: string, person: Person, locationId?: string) => {
-        const at = locationId ?? person.locationId ?? null
+        // A promoter whose town has one outlet is put straight at it; only a
+        // real choice is worth a question.
+        const at = storeForSession(person, locationId) ?? person.locationId ?? null
         setSession({ token, personId: person.id, locationId: at ?? undefined })
         set({ token, personId: person.id, locationId: at, pending: null, status: 'ready' })
-        return { ok: true, person, needsStore: Boolean(person.storeChoices?.length) && !at }
+        return { ok: true, person, needsStore: picksStore(person) && !locationId }
       }
 
       return {
@@ -137,13 +139,22 @@ export const useCurrentUser = (): Person | null => {
   const found = users.find((u) => u.id === personId)
   // A login that has been disabled cannot hold a session open.
   if (!found || !found.active) return null
-  return found.storeChoices?.length && locationId ? { ...found, locationId } : found
+  if (found.role !== 'promoter') return found
+  // The outlet is the session's, not the login's.
+  const at = storeForSession(found, locationId)
+  return at ? { ...found, locationId: at } : found
 }
 
-/** True for a KL promoter who has not yet said which store they are at today. */
+/** True for a promoter who has not yet said which outlet they are at today. */
 export const useNeedsStore = (): boolean => {
   const user = useCurrentUser()
-  return Boolean(user?.storeChoices?.length) && !user?.locationId
+  return Boolean(user) && picksStore(user!) && !user!.locationId
+}
+
+/** The outlets the signed-in promoter may switch between. */
+export const useStoreChoices = (): string[] => {
+  const user = useCurrentUser()
+  return user ? storeChoicesFor(user) : []
 }
 
 /**

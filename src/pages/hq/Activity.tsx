@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Panel, PanelBody, PanelHeader, Rule } from '../../components/ui/Panel'
 import { Button } from '../../components/ui/Button'
 import { Badge } from '../../components/ui/Badge'
@@ -12,13 +13,15 @@ import { Modal } from '../../components/ui/Modal'
 import { Field } from '../../components/ui/Field'
 import { isShared } from '../../api'
 import {
+  actionLabel,
+  actionsOfKind,
   AUDIT_KIND_LABEL,
   AUDIT_KIND_TONE,
   type AuditEntry,
   type AuditKind,
 } from '../../lib/audit'
 import { ACCENT_GRADIENT, ROLE_LABEL, initialsOf, type Person } from '../../data/people'
-import { locationName } from '../../data/locations'
+import { locationName, tradingLocations } from '../../data/locations'
 import { addDays, formatDate, formatTimestamp } from '../../lib/dates'
 import { downloadCsv } from '../../lib/exportCsv'
 import { num } from '../../lib/format'
@@ -44,14 +47,17 @@ const KINDS: AuditKind[] = [
   'session',
 ]
 
-type RangeKey = '1' | '7' | '30' | 'all'
+type RangeKey = '1' | '7' | '30' | 'all' | 'custom'
 
 const RANGES: { value: RangeKey; label: string }[] = [
   { value: '1', label: 'Today' },
   { value: '7', label: '7 days' },
   { value: '30', label: '30 days' },
-  { value: 'all', label: 'Everything' },
+  { value: 'all', label: 'All' },
+  { value: 'custom', label: 'Dates' },
 ]
+
+type Order = 'newest' | 'oldest'
 
 const PAGE = 60
 
@@ -84,36 +90,74 @@ export function Activity() {
   const [wiping, setWiping] = useState(false)
 
   const [range, setRange] = useState<RangeKey>('7')
+  const [from, setFrom] = useState(addDays(data.today, -6))
+  const [to, setTo] = useState(data.today)
   const [kinds, setKinds] = useState<AuditKind[]>([])
+  const [action, setAction] = useState('')
   const [actorId, setActorId] = useState<string>('')
+  const [locationId, setLocationId] = useState('')
+  const [order, setOrder] = useState<Order>('newest')
   const [query, setQuery] = useState('')
   const [shown, setShown] = useState(PAGE)
+  const [open, setOpen] = useState<AuditEntry | null>(null)
 
-  const since = range === 'all' ? '' : addDays(data.today, -(Number(range) - 1))
+  // Any change to what is being looked for starts the list again from the top.
+  const reset = <T,>(set: (v: T) => void) => (v: T) => {
+    set(v)
+    setShown(PAGE)
+  }
+
+  const since = range === 'all' ? '' : range === 'custom' ? from : addDays(data.today, -(Number(range) - 1))
+  const until = range === 'custom' ? to : ''
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return audit.filter((e) => {
-      if (since && e.at.slice(0, 10) < since) return false
+    const rows = audit.filter((e) => {
+      const day = e.at.slice(0, 10)
+      if (since && day < since) return false
+      if (until && day > until) return false
       if (kinds.length && !kinds.includes(e.kind)) return false
+      if (action && e.action !== action) return false
       if (actorId && e.actorId !== actorId) return false
-      if (q && !`${e.summary} ${e.detail ?? ''} ${e.actorName}`.toLowerCase().includes(q)) {
+      if (locationId && e.locationId !== locationId) return false
+      if (
+        q &&
+        !`${e.summary} ${e.detail ?? ''} ${e.actorName} ${actionLabel(e.action)} ${e.entityId ?? ''}`
+          .toLowerCase()
+          .includes(q)
+      ) {
         return false
       }
       return true
     })
-  }, [audit, since, kinds, actorId, query])
+    // The store keeps the log newest first; reading a sequence forward wants
+    // the other way round.
+    return order === 'newest' ? rows : [...rows].reverse()
+  }, [audit, since, until, kinds, action, actorId, locationId, query, order])
 
   const toggleKind = (k: AuditKind) => {
     setShown(PAGE)
+    setAction('')
     setKinds((cur) => (cur.includes(k) ? cur.filter((x) => x !== k) : [...cur, k]))
   }
 
+  /** The actions worth offering: those in the chosen categories, or all. */
+  const actionChoices = useMemo(() => {
+    const kindsToUse = kinds.length ? kinds : KINDS
+    const known = new Set(kindsToUse.flatMap(actionsOfKind))
+    // Anything actually in the log that the label table does not know about.
+    for (const e of audit) if (!kinds.length || kinds.includes(e.kind)) known.add(e.action)
+    return [...known].sort((a, b) => actionLabel(a).localeCompare(actionLabel(b)))
+  }, [kinds, audit])
+
   const clear = () => {
     setKinds([])
+    setAction('')
     setActorId('')
+    setLocationId('')
     setQuery('')
     setRange('7')
+    setOrder('newest')
     setShown(PAGE)
   }
 
@@ -130,20 +174,30 @@ export function Activity() {
   const exportRows = () =>
     downloadCsv(
       'legendary-activity.csv',
-      ['When', 'Who', 'Their job', 'Category', 'Action', 'What happened', 'Detail', 'Where'],
+      ['When', 'Who', 'Their job', 'Category', 'Action', 'Action code', 'What happened', 'Detail', 'Where', 'Touched', 'Reference'],
       filtered.map((e) => [
         e.at,
         e.actorName,
         ROLE_LABEL[e.actorRole],
         AUDIT_KIND_LABEL[e.kind],
+        actionLabel(e.action),
         e.action,
         e.summary,
         e.detail ?? '',
         e.locationId ? locationName(e.locationId) : '',
+        e.entityId ?? '',
+        e.id,
       ]),
     )
 
-  const filtering = kinds.length > 0 || actorId !== '' || query !== '' || range !== '7'
+  const filtering =
+    kinds.length > 0 ||
+    action !== '' ||
+    actorId !== '' ||
+    locationId !== '' ||
+    query !== '' ||
+    range !== '7' ||
+    order !== 'newest'
 
   return (
     <div className="space-y-5">
@@ -202,42 +256,44 @@ export function Activity() {
             <div className="flex flex-wrap items-center gap-2">
               <TextInput
                 value={query}
-                onChange={(e) => {
-                  setQuery(e.target.value)
-                  setShown(PAGE)
-                }}
+                onChange={(e) => reset(setQuery)(e.target.value)}
                 placeholder="Search what happened"
                 className="h-8 w-[190px] text-[12.5px]"
               />
-              <Select
-                value={actorId}
-                onChange={(e) => {
-                  setActorId(e.target.value)
-                  setShown(PAGE)
-                }}
-                className="h-8 w-[170px] text-[12.5px]"
-              >
-                <option value="">Anyone</option>
-                {people.map(([id, name]) => (
-                  <option key={id} value={id}>
-                    {name}
-                  </option>
-                ))}
-              </Select>
               <SegmentedControl<RangeKey>
                 size="sm"
                 value={range}
-                onChange={(v) => {
-                  setRange(v)
-                  setShown(PAGE)
-                }}
+                onChange={reset(setRange)}
                 options={RANGES}
               />
             </div>
           }
         />
         <Rule />
-        <PanelBody>
+        <PanelBody className="space-y-3">
+          {range === 'custom' && (
+            <div className="flex flex-wrap items-end gap-2">
+              <Field label="From" className="w-[170px]">
+                <TextInput
+                  type="date"
+                  value={from}
+                  max={to}
+                  onChange={(e) => reset(setFrom)(e.target.value)}
+                  className="h-9 text-[12.5px]"
+                />
+              </Field>
+              <Field label="To" className="w-[170px]">
+                <TextInput
+                  type="date"
+                  value={to}
+                  min={from}
+                  onChange={(e) => reset(setTo)(e.target.value)}
+                  className="h-9 text-[12.5px]"
+                />
+              </Field>
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center gap-1.5">
             {KINDS.map((k) => (
               <ChipToggle
@@ -247,10 +303,69 @@ export function Activity() {
                 onClick={() => toggleKind(k)}
               />
             ))}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Each in its own box: the control is full-width by design, and
+                a width on the select itself loses to that. */}
+            <div className="w-full sm:w-[220px]">
+              <Select
+                value={action}
+                onChange={(e) => reset(setAction)(e.target.value)}
+                className="h-8 text-[12.5px]"
+                aria-label="Action"
+              >
+                <option value="">Any action</option>
+                {actionChoices.map((a) => (
+                  <option key={a} value={a}>
+                    {actionLabel(a)}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="w-full sm:w-[180px]">
+              <Select
+                value={actorId}
+                onChange={(e) => reset(setActorId)(e.target.value)}
+                className="h-8 text-[12.5px]"
+                aria-label="Who"
+              >
+                <option value="">Anyone</option>
+                {people.map(([id, name]) => (
+                  <option key={id} value={id}>
+                    {name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="w-full sm:w-[190px]">
+              <Select
+                value={locationId}
+                onChange={(e) => reset(setLocationId)(e.target.value)}
+                className="h-8 text-[12.5px]"
+                aria-label="Where"
+              >
+                <option value="">Anywhere</option>
+                {tradingLocations.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.shortName}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <SegmentedControl<Order>
+              size="sm"
+              value={order}
+              onChange={reset(setOrder)}
+              options={[
+                { value: 'newest', label: 'Newest first' },
+                { value: 'oldest', label: 'Oldest first' },
+              ]}
+            />
             {filtering && (
               <button
                 onClick={clear}
-                className="ml-1 text-[12px] text-ink-3 transition-colors hover:text-ink"
+                className="text-[12px] text-ink-3 transition-colors hover:text-ink"
               >
                 Clear
               </button>
@@ -309,6 +424,7 @@ export function Activity() {
                     person={userById(e.actorId)}
                     first={i === 0}
                     newDay={i === 0 || filtered[i - 1].at.slice(0, 10) !== e.at.slice(0, 10)}
+                    onOpen={() => setOpen(e)}
                   />
                 ))}
               </ol>
@@ -324,6 +440,70 @@ export function Activity() {
           )}
         </PanelBody>
       </Panel>
+      <Modal
+        open={open !== null}
+        onClose={() => setOpen(null)}
+        title={open ? actionLabel(open.action) : ''}
+        subtitle={open ? formatTimestamp(open.at) : undefined}
+        footer={
+          <Button variant="ghost" size="sm" onClick={() => setOpen(null)}>
+            Close
+          </Button>
+        }
+      >
+        {open && (
+          <div className="space-y-4">
+            <p className="text-[13.5px] leading-relaxed text-ink">{open.summary}</p>
+            {open.detail && (
+              <p className="rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-[12.5px] leading-relaxed text-ink-2">
+                {open.detail}
+              </p>
+            )}
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
+              {[
+                ['Who', `${open.actorName} · ${ROLE_LABEL[open.actorRole]}`],
+                ['When', formatTimestamp(open.at)],
+                ['Category', AUDIT_KIND_LABEL[open.kind]],
+                ['Action', open.action],
+                ['Where', open.locationId ? locationName(open.locationId) : '—'],
+                ['What it touched', open.entityId ?? '—'],
+                ['Reference', open.id],
+              ].map(([label, value]) => {
+                // Where the thing it touched is a screen, go there.
+                const to =
+                  label === 'What it touched' && open.entityId?.startsWith('PO-')
+                    ? `/orders/${open.entityId}`
+                    : label === 'Where' && open.locationId
+                      ? `/stores/${open.locationId}`
+                      : null
+                return (
+                  <div key={label} className={label === 'Reference' ? 'col-span-2' : ''}>
+                    <dt className="eyebrow">{label}</dt>
+                    <dd
+                      className={`readout mt-1 text-[12.5px] text-ink ${
+                        label === 'Reference' ? 'break-all' : 'break-words'
+                      }`}
+                    >
+                      {to ? (
+                        <Link to={to} className="text-primary hover:underline" onClick={() => setOpen(null)}>
+                          {value}
+                        </Link>
+                      ) : (
+                        value
+                      )}
+                    </dd>
+                  </div>
+                )
+              })}
+            </dl>
+            <p className="text-[11.5px] leading-relaxed text-ink-3">
+              The reference is unique to this line. Paste it into the search box to come straight
+              back to it, or quote it when asking somebody about this action.
+            </p>
+          </div>
+        )}
+      </Modal>
+
       <Modal
         open={startOver}
         onClose={() => setStartOver(false)}
@@ -365,17 +545,19 @@ export function Activity() {
   )
 }
 
-/** One line of the log. */
+/** One line of the log. Opens the full detail when tapped. */
 function Row({
   entry,
   person,
   first,
   newDay,
+  onOpen,
 }: {
   entry: AuditEntry
   person?: Person
   first: boolean
   newDay: boolean
+  onOpen: () => void
 }) {
   return (
     <li>
@@ -386,7 +568,10 @@ function Row({
           {formatDate(entry.at.slice(0, 10))}
         </p>
       )}
-      <div className="flex items-start gap-3 border-t border-line py-2.5">
+      <button
+        onClick={onOpen}
+        className="flex w-full items-start gap-3 border-t border-line py-2.5 text-left transition-colors hover:bg-sunken/60"
+      >
         <span
           className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[9.5px] font-semibold text-white ${
             person ? ACCENT_GRADIENT[person.accent] : 'bg-ink-3'
@@ -403,16 +588,17 @@ function Row({
             <span>· {ROLE_LABEL[entry.actorRole]}</span>
             {entry.locationId && <span>· {locationName(entry.locationId)}</span>}
             {entry.detail && <span>· {entry.detail}</span>}
+            <span className="sm:hidden">· {formatTimestamp(entry.at)}</span>
           </p>
         </div>
 
         <div className="flex shrink-0 items-center gap-2.5">
           <Badge tone={AUDIT_KIND_TONE[entry.kind]}>{AUDIT_KIND_LABEL[entry.kind]}</Badge>
-          <span className="readout w-[124px] text-right text-[11px] text-ink-3">
+          <span className="readout hidden w-[124px] text-right text-[11px] text-ink-3 sm:block">
             {formatTimestamp(entry.at)}
           </span>
         </div>
-      </div>
+      </button>
     </li>
   )
 }

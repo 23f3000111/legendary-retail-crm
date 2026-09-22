@@ -7,7 +7,7 @@ import { NAV } from './nav'
 import { useAuth, useCan, useCurrentUser } from '../../store/useAuth'
 import { useData } from '../../store/useData'
 import { locationById, tradingLocations } from '../../data/locations'
-import { ROLE_LABEL, ROLE_ACCESS, ACCENT_GRADIENT, canChangeOwnPassword } from '../../data/people'
+import { ROLE_LABEL, ROLE_ACCESS, ACCENT_GRADIENT, canChangeOwnPassword, picksStore } from '../../data/people'
 import { PasswordDialog } from '../PasswordDialog'
 import { isShared } from '../../api'
 import { addDays, formatDate, formatTimestamp, todayInMalaysia } from '../../lib/dates'
@@ -284,7 +284,7 @@ export function AppShell() {
                           Manage logins
                         </button>
                       )}
-                      {user.storeChoices && user.storeChoices.length > 0 && (
+                      {picksStore(user) && (
                         <button
                           onClick={() => {
                             setSwitcherOpen(false)
@@ -293,7 +293,7 @@ export function AppShell() {
                           className="flex w-full items-center gap-2 px-3 py-2.5 text-[12.5px] text-ink-2 transition-colors hover:bg-sunken hover:text-ink"
                         >
                           <Icon name="globe" className="h-3.5 w-3.5" />
-                          Switch store · {location?.shortName ?? 'none chosen'}
+                          Switch outlet · {location?.shortName ?? 'none chosen'}
                         </button>
                       )}
                     </div>

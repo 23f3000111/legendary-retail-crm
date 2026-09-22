@@ -3,7 +3,7 @@ import { useData } from './useData'
 import { useAuth } from './useAuth'
 import { settle, signInAs, signOutForTests, startFixture, written } from './testing'
 import type { LocalBackend } from '../api/local'
-import { can, startingPassword, type Person, type Role } from '../data/people'
+import { can, startingPassword, storeChoicesFor, type Person, type Role } from '../data/people'
 import type { PurchaseOrder } from '../data/types'
 
 /**
@@ -330,10 +330,11 @@ describe('sign-in in the log', () => {
     expect(actions()).not.toContain('session.code_sent')
   })
 
-  it('asks a KL promoter which store they are at', async () => {
+  it('asks a promoter which outlet, where their town has more than one', async () => {
     signOutForTests()
     const danzel = person('danzeltan')
-    expect(danzel.storeChoices).toContain('parkson-pavilion')
+    expect(danzel.city).toBe('Kuala Lumpur')
+    expect(storeChoicesFor(danzel)).toContain('parkson-pavilion')
     const result = await useAuth.getState().beginSignIn(danzel.username, startingPassword(danzel.username))
     expect(result.ok).toBe(true)
     expect(result.needsStore).toBe(true)
@@ -342,13 +343,52 @@ describe('sign-in in the log', () => {
     const chosen = await useAuth.getState().chooseStore('parkson-pavilion', 'Parkson Pavilion')
     expect(chosen.ok).toBe(true)
     expect(useAuth.getState().locationId).toBe('parkson-pavilion')
-    // The log names the store, not its id.
+    // The log names the outlet, not its id.
     signInAs(lb, 'kelly')
     expect(written()[0].summary).toMatch(/working at Parkson Pavilion today/)
     signInAs(lb, 'danzeltan', 'parkson-pavilion')
 
+    // An outlet in another town is refused, whatever the screen sent.
     const refused = await useAuth.getState().chooseStore('klia-t2')
     expect(refused.ok).toBe(false)
+    expect(refused.error).toMatch(/your town/i)
+  })
+
+  it('puts a promoter whose town has one outlet straight at it', async () => {
+    signOutForTests()
+    const melaka = person('khookwoktsu')
+    expect(melaka.city).toBe('Melaka')
+    expect(storeChoicesFor(melaka)).toEqual(['melaka'])
+
+    const result = await useAuth.getState().beginSignIn(melaka.username, startingPassword(melaka.username))
+    expect(result.ok).toBe(true)
+    // Nothing worth asking, so no picker.
+    expect(result.needsStore).toBe(false)
+    expect(useAuth.getState().locationId).toBe('melaka')
+  })
+
+  it('rotates a promoter between the outlets in their own town', async () => {
+    // The point of the whole thing: the same person, two counters, one day.
+    signInAs(lb, 'danzeltan', 'pavilion-5')
+    useData.getState().recordSale({
+      locationId: 'pavilion-5',
+      lines: [{ skuId: 'orchid-retail', qty: 1, priceTier: 'promotion', unitPriceMYR: 188 }],
+      countryCode: 'CN',
+    })
+    await settle()
+
+    signInAs(lb, 'danzeltan', 'klcc-isetan')
+    useData.getState().recordSale({
+      locationId: 'klcc-isetan',
+      lines: [{ skuId: 'mahsuri-retail', qty: 1, priceTier: 'promotion', unitPriceMYR: 188 }],
+      countryCode: 'CN',
+    })
+    await settle()
+
+    // Each sale stayed at the outlet it was rung up at.
+    signInAs(lb, 'kelly')
+    const sales = useData.getState().audit.filter((e) => e.action === 'sale.recorded')
+    expect(sales.map((e) => e.locationId).sort()).toEqual(['klcc-isetan', 'pavilion-5'])
   })
 
   it('signs Finance and the Warehouse straight in too', async () => {

@@ -27,9 +27,9 @@ import {
   ACCENT_GRADIENT,
   type Person,
   type Role,
-  KL_STORES,
+  storeChoicesFor,
 } from '../../data/people'
-import { locationById, locationsInChannel } from '../../data/locations'
+import { locationById, cities, storesInCity, type City } from '../../data/locations'
 import { downloadCsv } from '../../lib/exportCsv'
 import { num } from '../../lib/format'
 
@@ -37,14 +37,11 @@ const ROLES: Role[] = ['director', 'md', 'ops', 'pa', 'finance', 'warehouse', 'p
 const ACCENTS: Person['accent'][] = ['violet', 'blue', 'cyan', 'teal']
 
 /**
- * A new login starts as a promoter at the first store. The store must be a real
- * id from the outset: a select whose value is `undefined` still *renders* its
- * first option, so leaving it blank shows a store that was never chosen.
+ * A new login starts as a promoter in Kuala Lumpur. The town must be a real
+ * one from the outset: a select whose value is `undefined` still *renders* its
+ * first option, so leaving it blank shows a town that was never chosen.
  */
-/** The option in the store picker that means "one of the four KL stores". */
-const KL_CHOICE = '__kl__'
-
-const blank = (defaultLocationId: string): Person => ({
+const blank = (): Person => ({
   id: '',
   username: '',
   name: '',
@@ -55,7 +52,9 @@ const blank = (defaultLocationId: string): Person => ({
   initials: '',
   home: HOME_FOR_ROLE.promoter,
   accent: 'teal',
-  locationId: defaultLocationId,
+  city: 'Kuala Lumpur',
+  locationId: undefined,
+  storeChoices: storesInCity('Kuala Lumpur').map((l) => l.id),
   passwordSetAt: new Date().toISOString(),
   passwordSetBy: '',
   passwordChanges: 0,
@@ -108,7 +107,6 @@ export function Users() {
     setRevealed((r) => ({ ...r, [p.id]: result.password! }))
   }
 
-  const mainStores = locationsInChannel('main').filter((l) => l.status === 'open')
 
   // IT is hidden from every other person's list.
   const users = useMemo(
@@ -117,31 +115,29 @@ export function Users() {
   )
 
   const openNew = () => {
-    setEditing(blank(mainStores[0]?.id ?? ''))
+    setEditing(blank())
     setFirstPassword(suggestPassword())
     setIsNew(true)
     setError(null)
   }
 
   const openEdit = (p: Person) => {
-    setEditing({
-      ...p,
-      locationId:
-        p.role === 'promoter' && !p.storeChoices?.length
-          ? (p.locationId ?? mainStores[0]?.id)
-          : p.locationId,
-    })
+    setEditing({ ...p })
     setIsNew(false)
     setError(null)
   }
 
   const changeRole = (role: Role) => {
     if (!editing) return
+    const city = role === 'promoter' ? (editing.city ?? 'Kuala Lumpur') : undefined
     setEditing({
       ...editing,
       role,
       home: HOME_FOR_ROLE[role],
-      locationId: role === 'promoter' ? (editing.locationId ?? mainStores[0]?.id) : undefined,
+      city,
+      // A promoter belongs to a town and picks the outlet at sign-in.
+      locationId: undefined,
+      storeChoices: city ? storesInCity(city).map((l) => l.id) : undefined,
       title: editing.title || ROLE_LABEL[role],
     })
   }
@@ -158,8 +154,8 @@ export function Users() {
     if (allUsers.some((u) => u.username === username && u.id !== editing.id)) {
       return setError('Somebody already has that username.')
     }
-    if (editing.role === 'promoter' && !editing.locationId && !editing.storeChoices?.length) {
-      return setError('A store promoter has to belong to a store, or choose one of the KL stores.')
+    if (editing.role === 'promoter' && !editing.city) {
+      return setError('A store promoter has to belong to a town.')
     }
     if (isNew && firstPassword.trim().length < 10) {
       return setError('Set a starting password of at least 10 characters.')
@@ -223,7 +219,7 @@ export function Users() {
           </div>
           {!p.active && <Badge tone="neutral">Disabled</Badge>}
           {p.hidden && <Badge tone="active">Hidden</Badge>}
-          {p.storeChoices?.length ? <Badge tone="active">Chooses a KL store</Badge> : null}
+          {storeChoicesFor(p).length > 1 ? <Badge tone="active">Picks an outlet</Badge> : null}
         </div>
       ),
     },
@@ -234,11 +230,11 @@ export function Users() {
         <div>
           <p className="text-[12px] leading-snug text-ink-2">{ROLE_ACCESS[p.role]}</p>
           <p className="text-[11px] text-ink-3">
-            {p.storeChoices?.length
-              ? 'KL — chooses a store at sign-in'
-              : p.locationId
-                ? locationById(p.locationId)?.shortName
-                : 'Head Office'}
+            {p.role === 'promoter'
+              ? `${p.city ?? 'no town'} · ${storeChoicesFor(p).length} ${
+                  storeChoicesFor(p).length === 1 ? 'outlet' : 'outlets'
+                }`
+              : 'Head Office'}
           </p>
         </div>
       ),
@@ -314,11 +310,11 @@ export function Users() {
         p.email,
         ROLE_LABEL[p.role],
         ROLE_ACCESS[p.role],
-        p.storeChoices?.length
-          ? 'KL (chooses at sign-in)'
-          : p.locationId
-            ? (locationById(p.locationId)?.name ?? '')
-            : 'Head Office',
+        p.role === 'promoter'
+          ? `${p.city ?? ''} (${storeChoicesFor(p)
+              .map((id) => locationById(id)?.shortName ?? id)
+              .join(', ')})`
+          : 'Head Office',
         p.active ? 'Yes' : 'No',
         p.passwordSetAt.slice(0, 10),
         p.passwordSetBy,
@@ -464,26 +460,38 @@ export function Users() {
 
             {editing.role === 'promoter' && (
               <Field
-                label="Store"
-                hint="A promoter only ever sees their own store. The KL promoters pick one of the four KL stores each time they sign in."
+                label="Town"
+                hint="Staff are rotated between the outlets in their own town, so they pick which one they are at when they sign in."
               >
                 <Select
-                  value={editing.storeChoices?.length ? KL_CHOICE : (editing.locationId ?? '')}
-                  onChange={(e) =>
-                    setEditing(
-                      e.target.value === KL_CHOICE
-                        ? { ...editing, locationId: undefined, storeChoices: KL_STORES }
-                        : { ...editing, locationId: e.target.value, storeChoices: undefined },
-                    )
-                  }
+                  value={editing.city ?? ''}
+                  onChange={(e) => {
+                    const city = e.target.value as City
+                    setEditing({
+                      ...editing,
+                      city,
+                      locationId: undefined,
+                      storeChoices: storesInCity(city).map((l) => l.id),
+                    })
+                  }}
                 >
-                  <option value={KL_CHOICE}>Kuala Lumpur — chooses a store at sign-in</option>
-                  {mainStores.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.name}
+                  {cities.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
                     </option>
                   ))}
                 </Select>
+                <p className="mt-1.5 text-[11.5px] text-ink-3">
+                  {storesInCity(editing.city).length === 0
+                    ? 'No outlet is open in this town yet.'
+                    : `${storesInCity(editing.city)
+                        .map((l) => l.shortName)
+                        .join(', ')} — ${
+                        storesInCity(editing.city).length === 1
+                          ? 'the only one open, so no question is asked at sign-in'
+                          : 'they pick one at sign-in'
+                      }`}
+                </p>
               </Field>
             )}
 

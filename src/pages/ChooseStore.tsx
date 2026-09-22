@@ -3,16 +3,20 @@ import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Wordmark, Icon } from '../components/ui/icons'
 import { Button } from '../components/ui/Button'
-import { useAuth, useCurrentUser } from '../store/useAuth'
+import { useAuth, useCurrentUser, useStoreChoices } from '../store/useAuth'
 import { locationById } from '../data/locations'
 
 /**
- * Which store are you at today?
+ * Which outlet are you at today?
  *
- * The twelve KL promoters float between four stores, so they say which one
- * they are working at after signing in (client's third revision). The choice
- * lives on the session, on the server, and everything they record until they
- * sign out is filed against that store. They can change it from the menu.
+ * Staff are rotated between the counters in their own town, so a promoter
+ * belongs to a city rather than to one store and says where they are each
+ * time they sign in. The choice lives on the session, on the server, and
+ * everything they record until they sign out is filed against that outlet.
+ * They can change it from the menu part-way through a day.
+ *
+ * Where a town has one outlet open there is nothing to ask, and this screen
+ * is skipped — it appears by itself the day a second one opens.
  */
 export function ChooseStore() {
   const navigate = useNavigate()
@@ -22,8 +26,9 @@ export function ChooseStore() {
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  const choiceIds = useStoreChoices()
   if (!user) return null
-  const choices = (user.storeChoices ?? []).map((id) => locationById(id)).filter(Boolean)
+  const choices = choiceIds.map((id) => locationById(id)).filter(Boolean)
 
   const pick = async (id: string) => {
     if (busy) return
@@ -45,9 +50,12 @@ export function ChooseStore() {
       >
         <div className="mb-6 flex flex-col items-center text-center">
           <Wordmark className="h-12 w-12" />
-          <p className="mt-4 eyebrow">{user.name}</p>
+          <p className="mt-4 eyebrow">
+            {user.name}
+            {user.city ? ` · ${user.city}` : ''}
+          </p>
           <h1 className="mt-1 font-display text-[22px] font-bold leading-tight tracking-tight text-ink">
-            Which store are you at today?
+            Which outlet are you at today?
           </h1>
           <p className="mt-2 text-[12.5px] text-ink-2">
             Everything you record until you sign out goes against this store.

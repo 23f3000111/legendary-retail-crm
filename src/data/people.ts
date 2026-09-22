@@ -34,6 +34,8 @@
  * at a counter the code was more friction than it was worth.
  */
 
+import { storesInCity, type City } from './locations'
+
 export type Role =
   | 'director'
   | 'md'
@@ -175,12 +177,19 @@ export interface Person {
   role: Role
   title: string
   /**
-   * Promoters are tied to one store; everyone else is head office.
+   * Where a promoter works. Everyone else is head office and has neither.
    *
-   * The KL promoters are the exception: they float between the four KL
-   * stores and pick one when they sign in (client's third revision), so
-   * their `locationId` is empty and `storeChoices` lists what they may pick.
+   * Staff are rotated between the counters in their own town, so a promoter
+   * belongs to a **city**, not to one store, and says which outlet they are
+   * at when they sign in. `locationId` is left empty on the login itself and
+   * set on the session for the day.
+   *
+   * `storeChoices` is the list of outlets that city had when the login was
+   * written. The app works the list out from the city each time, so a new
+   * outlet appears the day it opens; this copy is what the server checks a
+   * choice against, and `refreshStoreChoices()` brings it up to date.
    */
+  city?: City
   locationId?: string
   storeChoices?: string[]
   blurb: string
@@ -297,6 +306,7 @@ interface Seed {
   name: string
   role: Role
   title?: string
+  city?: City
   locationId?: string
   storeChoices?: string[]
   blurb?: string
@@ -424,27 +434,28 @@ const DISPLAY_NAME: Record<string, string> = {
  * checked against how the person writes it.
  */
 /**
- * The four KL stores a "KL" promoter may work at. They choose one each time
- * they sign in (client's third revision), so none is fixed to a store.
+ * Which town each promoter works in, from the client's own list.
+ *
+ * They pick the outlet at sign-in, from whatever that town has open — so a
+ * promoter is never stuck at one counter, and a new outlet needs no change
+ * here.
  */
-export const KL_STORES = ['pavilion-5', 'klcc-isetan', 'parkson-pavilion', 'bsas']
-
-const promoterGroups: { locationId?: string; storeChoices?: string[]; usernames: string[] }[] = [
+const promoterGroups: { city: City; usernames: string[] }[] = [
   {
-    locationId: 'klia-t2',
+    city: 'KLIA',
     usernames: ['teokoknian', 'tanshimin', 'yongsetyee', 'sayzhengqiang', 'gohmeeling', 'chweehuining'],
   },
-  { locationId: 'langkawi', usernames: ['lookpohlei', 'tangwinnie', 'quahchuen'] },
-  { locationId: 'parkson-imago', usernames: ['engellahii'] },
-  { locationId: 'genting', usernames: ['siewziching', 'ngmengxiang'] },
+  { city: 'Langkawi', usernames: ['lookpohlei', 'tangwinnie', 'quahchuen'] },
+  { city: 'Kota Kinabalu', usernames: ['engellahii'] },
+  { city: 'Genting Highlands', usernames: ['siewziching', 'ngmengxiang'] },
   {
-    storeChoices: KL_STORES,
+    city: 'Kuala Lumpur',
     usernames: [
       'leekwansern', 'limzhixuan', 'tanjiwei', 'eddielee', 'limyongkent', 'shannesslow',
       'fonghaobin', 'yapboonming', 'desmondchang', 'gohzixuan', 'chanqijun', 'danzeltan',
     ],
   },
-  { locationId: 'melaka', usernames: ['khookwoktsu', 'chewyingtian', 'kokchewling'] },
+  { city: 'Melaka', usernames: ['khookwoktsu', 'chewyingtian', 'kokchewling'] },
 ]
 
 const promoters: Seed[] = promoterGroups.flatMap((g) =>
@@ -453,8 +464,7 @@ const promoters: Seed[] = promoterGroups.flatMap((g) =>
     username,
     name: DISPLAY_NAME[username] ?? username,
     role: 'promoter' as Role,
-    locationId: g.locationId,
-    storeChoices: g.storeChoices,
+    city: g.city,
     accent: 'teal' as const,
   })),
 )
@@ -477,8 +487,9 @@ const toPerson = (s: Seed): Person => ({
   email: emailFor(s.username),
   role: s.role,
   title: s.title ?? ROLE_LABEL[s.role],
+  ...(s.city ? { city: s.city } : {}),
   locationId: s.locationId,
-  ...(s.storeChoices ? { storeChoices: s.storeChoices } : {}),
+  ...(s.city ? { storeChoices: storesInCity(s.city).map((l) => l.id) } : {}),
   blurb: s.blurb ?? DEFAULT_BLURB[s.role],
   initials: initialsOf(s.name),
   home: HOME_FOR_ROLE[s.role],
@@ -491,6 +502,33 @@ const toPerson = (s: Seed): Person => ({
 })
 
 export const seedPeople: Person[] = [...headOffice, ...promoters].map(toPerson)
+
+/**
+ * The outlets this person may choose between today.
+ *
+ * Worked out from their city every time, so the day an outlet opens it is in
+ * the list without anybody editing a login.
+ */
+export const storeChoicesFor = (person: Person): string[] =>
+  person.role !== 'promoter' ? [] : storesInCity(person.city).map((l) => l.id)
+
+/**
+ * Whether this person is asked which outlet they are at.
+ *
+ * Only where there is a genuine choice: one outlet in the town means no
+ * question worth asking, and the picker appears by itself when a second one
+ * opens.
+ */
+export const picksStore = (person: Person): boolean => storeChoicesFor(person).length > 1
+
+/** Where a promoter is working, given the store they chose for this session. */
+export const storeForSession = (person: Person, chosen?: string | null): string | undefined => {
+  if (person.role !== 'promoter') return person.locationId
+  const choices = storeChoicesFor(person)
+  if (chosen && choices.includes(chosen)) return chosen
+  // One outlet in the town, so there was nothing to ask.
+  return choices.length === 1 ? choices[0] : undefined
+}
 
 /** Static lookup for the data generator, which runs before the store exists. */
 export const personById = (id: string) => seedPeople.find((p) => p.id === id)

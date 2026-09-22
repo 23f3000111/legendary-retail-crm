@@ -20,7 +20,7 @@ At [supabase.com](https://supabase.com) → **New project**. Name it
 password it asks you to set (you will not need it for the app, but keep it).
 Wait for the project to finish provisioning.
 
-### 2. Run the two SQL files
+### 2. Run the SQL files
 
 Either paste them into the SQL editor, or run both at once from a machine with
 the connection string:
@@ -30,8 +30,11 @@ npm install
 DATABASE_URL='postgresql://…' node scripts/migrate.mjs
 ```
 
-Both files are safe to run again — every statement is `create or replace` or
-`if not exists`, and the people seed leaves existing logins alone.
+Every file is safe to run again — each statement is `create or replace` or
+`if not exists`, the people seed leaves existing logins alone, and the outlet
+seed replaces the list wholesale. There are five: the server, the people, the
+outlets, the move of promoters onto towns, and mail (installed but off — see
+[`email-setup.md`](./email-setup.md)).
 
 By hand: in the project, **SQL Editor** → **New query**.
 
@@ -129,10 +132,8 @@ already holds documents, so it cannot disturb a trial in progress.
 
 ### What is not connected yet
 
-**Mail.** The six-digit code for leadership needs a sender (Resend, Brevo, or
-the company's own SMTP). The server side is written and switched off
-(`settings.two_step = false`). When a sender is chosen, the send goes in one
-place — marked `TODO` in `sign_in()` — and the setting is flipped to `true`.
+**Mail.** Installed and switched off. One Resend account and four statements
+turn it on: [`email-setup.md`](./email-setup.md).
 
 **Backups.** The free tier takes none. The nightly `pg_dump` described below
 is still the right answer and still to do before the system holds real sales.

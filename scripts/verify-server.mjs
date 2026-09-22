@@ -102,6 +102,28 @@ try {
   )
   check('the log names whoever is signed in', stamped?.n === 'Teo Kok Nian', `got ${stamped?.n}`)
 
+  // Where a promoter may be rostered.
+  check('the outlets are loaded', (await one("select count(*)::int n from locations")).n > 0)
+  const kl = await session('danzeltan')
+  const klPick = await one("select choose_store($1, 'klcc-isetan', 'KLCC Isetan') r", [kl])
+  check('a promoter can pick another outlet in their town', klPick.r.ok === true, klPick.r.error)
+  const klWrong = await one("select choose_store($1, 'klia-t2', 'KLIA T2') r", [kl])
+  check('but not one in another town', klWrong.r.ok === false, klWrong.r.error)
+  const klClosed = await one("select choose_store($1, 'trx', 'TRX') r", [kl])
+  check('nor one that has not opened', klClosed.r.ok === false, klClosed.r.error)
+  const klWrite = await put(kl, [
+    { kind: 'sale_line', id: 'sl-kl', location_id: 'klcc-isetan', doc: { skuId: 'x', qty: 1 } },
+  ])
+  check('and writes go to the outlet they picked', klWrite.r.ok === true, klWrite.r.error)
+
+  // A town with one outlet asks nothing, so the session must find it anyway —
+  // otherwise those promoters could write nothing at all.
+  const solo = await session('khookwoktsu')
+  const soloWrite = await put(solo, [
+    { kind: 'sale_line', id: 'sl-solo', location_id: 'melaka', doc: { skuId: 'x', qty: 1 } },
+  ])
+  check('a one-outlet town needs no choice before writing', soloWrite.r.ok === true, soloWrite.r.error)
+
   // Passwords.
   const weak = await one("select set_password($1, 'kim', 'legendary123') r", [imran])
   check('a weak password is refused', weak.r.ok === false, weak.r.error)

@@ -158,6 +158,7 @@ way. The walkthrough panel that used to show the code on screen exists only
 in the single-browser build a developer runs; the published site never
 renders it.
 
-To switch the code on: add the send at the `TODO` in `sign_in()`, confirm the
-e-mail addresses (every account is `‹username›@legendary.com.my` until the
-client says otherwise), and set `two_step` to `true`.
+To switch it on, follow [`email-setup.md`](./email-setup.md) — a mail
+account, a key, a test message, and one setting. Confirm the e-mail addresses
+first: every account is `‹username›@legendary.com.my` until the client says
+otherwise, and the code goes wherever the login says.

@@ -15,11 +15,13 @@ import {
   suggestPassword,
   suggestUsername,
   PASSWORD_MIN,
-  KL_STORES,
+  storeChoicesFor,
+  picksStore,
   startingPassword,
   type Person,
   type Role,
 } from './people'
+import { locationById } from './locations'
 
 const byId = (id: string): Person => {
   const p = seedPeople.find((u) => u.id === id)
@@ -67,9 +69,13 @@ describe('the company hierarchy', () => {
     expect(can('warehouse').stockOnly).toBe(true)
   })
 
-  it('confines a Store Promoter to their own store', () => {
+  it('confines a Store Promoter to the town they work in', () => {
     expect(can('promoter').viewAll).toBe(false)
-    expect(promoter.locationId).toBeTruthy()
+    // Not one store: staff rotate, so they belong to a town and say which
+    // outlet they are at when they sign in.
+    expect(promoter.city).toBeTruthy()
+    expect(promoter.locationId).toBeUndefined()
+    expect(storeChoicesFor(promoter).length).toBeGreaterThan(0)
   })
 
   it('lets only Davy, Kelly, Chloe and Imran create staff', () => {
@@ -119,23 +125,55 @@ describe('the revised staff list', () => {
     expect(personByUsername('nobody')).toBeUndefined()
   })
 
-  it('puts the promoters at the five stores the list names, and the KL twelve on a choice', () => {
+  it('puts the promoters in the towns the client’s list names', () => {
     const counts = new Map<string, number>()
-    for (const p of seedPeople.filter((x) => x.role === 'promoter' && x.locationId)) {
-      counts.set(p.locationId!, (counts.get(p.locationId!) ?? 0) + 1)
+    for (const p of seedPeople.filter((x) => x.role === 'promoter')) {
+      counts.set(p.city!, (counts.get(p.city!) ?? 0) + 1)
     }
-    expect(counts.get('klia-t2')).toBe(6)
-    expect(counts.get('langkawi')).toBe(3)
-    expect(counts.get('parkson-imago')).toBe(1)
-    expect(counts.get('genting')).toBe(2)
-    expect(counts.get('melaka')).toBe(3)
+    expect(counts.get('KLIA')).toBe(6)
+    expect(counts.get('Langkawi')).toBe(3)
+    expect(counts.get('Kota Kinabalu')).toBe(1)
+    expect(counts.get('Genting Highlands')).toBe(2)
+    expect(counts.get('Melaka')).toBe(3)
 
-    // The twelve listed under "KL" choose one of the four KL stores at sign-in.
-    const kl = seedPeople.filter((p) => p.storeChoices?.length)
+    // Every promoter belongs to a town and picks the outlet at sign-in.
+    const promoters = seedPeople.filter((p) => p.role === 'promoter')
+    expect(promoters).toHaveLength(27)
+    expect(promoters.every((p) => Boolean(p.city) && !p.locationId)).toBe(true)
+
+    // The twelve under "KL" get the four the client listed.
+    const kl = promoters.filter((p) => p.city === 'Kuala Lumpur')
     expect(kl).toHaveLength(12)
-    expect(kl.every((p) => p.role === 'promoter' && !p.locationId)).toBe(true)
-    expect(KL_STORES).toEqual(['pavilion-5', 'klcc-isetan', 'parkson-pavilion', 'bsas'])
-    expect(kl.every((p) => p.storeChoices === KL_STORES)).toBe(true)
+    expect(storeChoicesFor(kl[0]).sort()).toEqual(
+      ['bsas', 'klcc-isetan', 'parkson-pavilion', 'pavilion-5'].sort(),
+    )
+    expect(picksStore(kl[0])).toBe(true)
+  })
+
+  it('asks a promoter which outlet only where the town has more than one', () => {
+    const byCity = new Map<string, number>()
+    for (const p of seedPeople.filter((x) => x.role === 'promoter')) {
+      byCity.set(p.city!, storeChoicesFor(p).length)
+    }
+    // One open outlet each today, so nothing to ask.
+    for (const city of ['KLIA', 'Langkawi', 'Genting Highlands', 'Melaka', 'Kota Kinabalu']) {
+      expect(byCity.get(city), city).toBe(1)
+    }
+    expect(byCity.get('Kuala Lumpur')).toBe(4)
+
+    const solo = seedPeople.find((p) => p.city === 'Melaka')!
+    expect(picksStore(solo)).toBe(false)
+  })
+
+  it('never offers an outlet that has not opened', () => {
+    for (const p of seedPeople.filter((x) => x.role === 'promoter')) {
+      for (const id of storeChoicesFor(p)) {
+        const l = locationById(id)!
+        expect(l.status, l.name).toBe('open')
+        expect(l.channel, l.name).toBe('main')
+        expect(l.city, l.name).toBe(p.city)
+      }
+    }
   })
 
   it('never carries a password on a person', () => {

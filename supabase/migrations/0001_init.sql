@@ -90,6 +90,17 @@ create table if not exists docs (
 create index if not exists docs_updated on docs(updated_at);
 create index if not exists docs_kind_location on docs(kind, location_id);
 
+-- The outlets, so the server can check a promoter's choice against the town
+-- they work in rather than against a list frozen into their login. Seeded by
+-- 0003_locations.sql; one row changes when an outlet opens.
+create table if not exists locations (
+  id      text primary key,
+  name    text not null,
+  channel text not null,
+  city    text,
+  status  text not null default 'open'
+);
+
 create table if not exists settings (
   key    text primary key,
   value  jsonb not null
@@ -97,13 +108,14 @@ create table if not exists settings (
 insert into settings(key, value) values ('two_step', 'false'::jsonb) on conflict do nothing;
 
 -- Nothing for the anonymous key to touch directly.
+alter table locations       enable row level security;
 alter table people          enable row level security;
 alter table sessions        enable row level security;
 alter table login_attempts  enable row level security;
 alter table pending_codes   enable row level security;
 alter table docs            enable row level security;
 alter table settings        enable row level security;
-revoke all on people, sessions, login_attempts, pending_codes, docs, settings from anon, authenticated;
+revoke all on people, sessions, login_attempts, pending_codes, docs, settings, locations from anon, authenticated;
 
 -- The log cannot be rewritten, and there is no flag that turns this off.
 --
@@ -159,6 +171,14 @@ create or replace function _rand(n int) returns text
 language sql volatile as $$ select substr(encode(extensions.gen_random_bytes(n), 'hex'), 1, n) $$;
 
 -- Who is behind a token. Null if the session is gone or the login disabled.
+--
+-- The outlet is worked out the same way the app works it out:
+--
+--   1. the one they chose when they signed in, if they chose;
+--   2. the one on their login, for anybody not rotated between counters;
+--   3. for a promoter, the only open outlet in their town — where a town has
+--      one, there was no question to ask, and the session must still know
+--      where they are or they could write nothing at all.
 create or replace function _session(p_token text)
 returns table (person_id text, role text, location_id text, doc jsonb, name text)
 language plpgsql security definer set search_path = public as $$
@@ -168,7 +188,21 @@ begin
   delete from sessions where token = p_token and last_seen < now() - interval '30 days';
   update sessions set last_seen = now() where token = p_token;
   return query
-    select p.id, p.role, coalesce(s.location_id, p.doc->>'locationId'), p.doc, p.doc->>'name'
+    select p.id, p.role,
+      coalesce(
+        s.location_id,
+        p.doc->>'locationId',
+        case when p.role = 'promoter' then (
+          -- An aggregate with `having`, so this is the id only where the town
+          -- has exactly one open outlet; two or more and it is null, because
+          -- then they have to choose.
+          select max(l.id) from locations l
+          where l.channel = 'main' and l.status = 'open'
+            and l.city is not distinct from p.doc->>'city'
+          having count(*) = 1
+        ) end
+      ),
+      p.doc, p.doc->>'name'
     from sessions s join people p on p.id = s.person_id
     where s.token = p_token and p.active;
 end $$;
@@ -303,7 +337,8 @@ declare
   p people;
   recent_failures int;
   token text;
-  two_step boolean := coalesce((select value::text = 'true' from settings where key = 'two_step'), false);
+  two_step boolean := coalesce(
+    (select s.value::text = 'true' from settings s where s.key = 'two_step'), false);
   code text;
 begin
   select count(*) into recent_failures from login_attempts
@@ -380,13 +415,25 @@ create or replace function choose_store(p_token text, p_location_id text, p_loca
 language plpgsql security definer set search_path = public as $$
 declare
   s record;
-  choices jsonb;
+  allowed boolean;
 begin
   select * into s from _session(p_token);
   if s.person_id is null then return jsonb_build_object('ok', false, 'error', 'Sign in again.'); end if;
-  choices := s.doc->'storeChoices';
-  if choices is null or not (choices ? p_location_id) then
-    return jsonb_build_object('ok', false, 'error', 'That is not one of your stores.');
+
+  -- An open main store in the town this person works in. Checked against the
+  -- outlet list, so a store that opens tomorrow needs no change to any login;
+  -- the list frozen on the login is only a fallback where no outlet has been
+  -- loaded yet.
+  select exists (
+    select 1 from locations l
+    where l.id = p_location_id and l.status = 'open' and l.channel = 'main'
+      and l.city is not distinct from s.doc->>'city'
+  ) into allowed;
+  if not allowed and not exists (select 1 from locations) then
+    allowed := coalesce(s.doc->'storeChoices' ? p_location_id, false);
+  end if;
+  if not allowed then
+    return jsonb_build_object('ok', false, 'error', 'That is not one of the outlets in your town.');
   end if;
   update sessions set location_id = p_location_id where token = p_token;
   perform _audit(s.person_id, s.name, s.role, 'session', 'session.store_chosen',
@@ -705,6 +752,23 @@ begin
   return added;
 end $$;
 
+-- Called by 0003_locations.sql. Replaces the outlet list wholesale, so a
+-- store that opens, closes or moves town is one re-run away.
+create or replace function seed_locations(p_locations jsonb) returns int
+language plpgsql security definer set search_path = public as $$
+declare
+  l jsonb;
+  n int := 0;
+begin
+  delete from locations;
+  for l in select * from jsonb_array_elements(p_locations) loop
+    insert into locations(id, name, channel, city, status)
+      values (l->>'id', l->>'name', l->>'channel', l->>'city', coalesce(l->>'status', 'open'));
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+
 -- The one password you have to know to begin: Imran's. Run this once with a
 -- real password, then sign in as `imran` and read everyone else's off the
 -- Logins screen. Refuses the placeholder so it can never be left in place.
@@ -726,6 +790,7 @@ begin
 end $$;
 revoke all on function set_bootstrap_password(text, text) from public, anon, authenticated;
 revoke all on function seed_people(jsonb) from public, anon, authenticated;
+revoke all on function seed_locations(jsonb) from public, anon, authenticated;
 
 -- ── What the app may call ───────────────────────────────────────────────────
 
