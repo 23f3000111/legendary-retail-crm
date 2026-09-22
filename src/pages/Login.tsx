@@ -77,6 +77,8 @@ export function Login() {
   const [code, setCode] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  /** State does not update between two event handlers in the same click. */
+  const working = useRef(false)
   const [showHelp, setShowHelp] = useState(false)
   const [greeting, setGreeting] = useState<string | null>(null)
 
@@ -99,10 +101,12 @@ export function Login() {
 
   const submitCredentials = async (e?: React.FormEvent) => {
     e?.preventDefault()
-    if (busy) return
+    if (working.current) return
+    working.current = true
     setError(null)
     setBusy(true)
     const result = await beginSignIn(username, password)
+    working.current = false
     setBusy(false)
     if (!result.ok) return setError(result.error ?? 'That did not work.')
     // Most people are in straight away; only leadership may get the code step.
@@ -116,10 +120,12 @@ export function Login() {
 
   const submitTheCode = async (e?: React.FormEvent) => {
     e?.preventDefault()
-    if (busy) return
+    if (working.current) return
+    working.current = true
     setError(null)
     setBusy(true)
     const result = await submitCode(code)
+    working.current = false
     setBusy(false)
     if (!result.ok) {
       setCode('')
@@ -239,12 +245,12 @@ export function Login() {
                 )}
 
                 <Button
+                  type="submit"
                   variant="primary"
                   className="w-full justify-center"
-                  onClick={() => submitCredentials()}
                   disabled={busy || !username.trim() || !password}
                 >
-                  Continue
+                  {busy ? 'Signing in…' : 'Continue'}
                 </Button>
               </motion.form>
             ) : (
@@ -294,12 +300,12 @@ export function Login() {
                 )}
 
                 <Button
+                  type="submit"
                   variant="primary"
                   className="w-full justify-center"
-                  onClick={() => submitTheCode()}
                   disabled={busy || code.length < CODE_LENGTH}
                 >
-                  Sign in
+                  {busy ? 'Signing in…' : 'Sign in'}
                 </Button>
 
                 <div className="flex items-center justify-between text-[12px]">

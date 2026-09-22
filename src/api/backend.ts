@@ -85,7 +85,8 @@ export interface Backend {
 
   signIn(username: string, password: string): Promise<SignInResult>
   submitCode(token: string, code: string): Promise<SignInResult>
-  chooseStore(token: string, locationId: string): Promise<Result>
+  /** `locationName` is only for the log line; the id is what is checked. */
+  chooseStore(token: string, locationId: string, locationName?: string): Promise<Result>
   signOut(token: string): Promise<void>
   /** The session behind a saved token, or null if it has ended. */
   whoami(token: string): Promise<Session | null>

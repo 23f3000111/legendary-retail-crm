@@ -339,7 +339,7 @@ export class LocalBackend implements Backend {
     return this.open(person)
   }
 
-  async chooseStore(token: string, locationId: string): Promise<Result> {
+  async chooseStore(token: string, locationId: string, locationName?: string): Promise<Result> {
     const s = this.session(token)
     if (!s) return { ok: false, error: 'Sign in again.' }
     if (!s.person.storeChoices?.includes(locationId)) {
@@ -352,7 +352,7 @@ export class LocalBackend implements Backend {
       actorRole: s.person.role,
       kind: 'session',
       action: 'session.store_chosen',
-      summary: `${s.person.name} is working at ${locationId} today`,
+      summary: `${s.person.name} is working at ${locationName ?? locationId} today`,
       entityId: s.person.id,
       locationId,
     })

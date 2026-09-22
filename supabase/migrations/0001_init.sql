@@ -361,7 +361,11 @@ begin
   return _open_session(p);
 end $$;
 
-create or replace function choose_store(p_token text, p_location_id text) returns jsonb
+-- `p_location_name` is only for the log line; the id is what is checked.
+-- An earlier version took two arguments; adding one makes a second function
+-- rather than replacing it, so the old one goes first.
+drop function if exists choose_store(text, text);
+create or replace function choose_store(p_token text, p_location_id text, p_location_name text default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
   s record;
@@ -375,7 +379,8 @@ begin
   end if;
   update sessions set location_id = p_location_id where token = p_token;
   perform _audit(s.person_id, s.name, s.role, 'session', 'session.store_chosen',
-                 s.name || ' is working at ' || p_location_id || ' today', s.person_id, p_location_id);
+                 s.name || ' is working at ' || coalesce(p_location_name, p_location_id) || ' today',
+                 s.person_id, p_location_id);
   return jsonb_build_object('ok', true);
 end $$;
 
@@ -709,7 +714,7 @@ revoke all on function seed_people(jsonb) from public, anon, authenticated;
 revoke execute on all functions in schema public from public, anon, authenticated;
 grant execute on function sign_in(text, text) to anon;
 grant execute on function submit_code(text, text) to anon;
-grant execute on function choose_store(text, text) to anon;
+grant execute on function choose_store(text, text, text) to anon;
 grant execute on function sign_out(text) to anon;
 grant execute on function whoami(text) to anon;
 grant execute on function load_state(text, text) to anon;

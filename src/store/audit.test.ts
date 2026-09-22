@@ -339,9 +339,13 @@ describe('sign-in in the log', () => {
     expect(result.needsStore).toBe(true)
     expect(useAuth.getState().locationId).toBeNull()
 
-    const chosen = await useAuth.getState().chooseStore('parkson-pavilion')
+    const chosen = await useAuth.getState().chooseStore('parkson-pavilion', 'Parkson Pavilion')
     expect(chosen.ok).toBe(true)
     expect(useAuth.getState().locationId).toBe('parkson-pavilion')
+    // The log names the store, not its id.
+    signInAs(lb, 'kelly')
+    expect(written()[0].summary).toMatch(/working at Parkson Pavilion today/)
+    signInAs(lb, 'danzeltan', 'parkson-pavilion')
 
     const refused = await useAuth.getState().chooseStore('klia-t2')
     expect(refused.ok).toBe(false)

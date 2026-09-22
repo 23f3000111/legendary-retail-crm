@@ -26,9 +26,10 @@ export function ChooseStore() {
   const choices = (user.storeChoices ?? []).map((id) => locationById(id)).filter(Boolean)
 
   const pick = async (id: string) => {
+    if (busy) return
     setBusy(id)
     setError(null)
-    const r = await chooseStore(id)
+    const r = await chooseStore(id, locationById(id)?.name)
     setBusy(null)
     if (!r.ok) return setError(r.error ?? 'That did not work.')
     navigate(user.home, { replace: true })

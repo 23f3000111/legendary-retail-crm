@@ -37,7 +37,7 @@ interface AuthState {
     password: string,
   ) => Promise<{ ok: boolean; person?: Person; needsStore?: boolean; needsCode?: boolean; sentTo?: string; error?: string }>
   submitCode: (code: string) => Promise<{ ok: boolean; person?: Person; needsStore?: boolean; error?: string }>
-  chooseStore: (locationId: string) => Promise<Result>
+  chooseStore: (locationId: string, locationName?: string) => Promise<Result>
   cancelSignIn: () => void
   signOut: () => Promise<void>
   /** Checks the saved token with the server. Called once, on load. */
@@ -80,10 +80,10 @@ export const useAuth = create<AuthState>()(
           return open(r.token, r.person, r.locationId)
         },
 
-        chooseStore: async (locationId) => {
+        chooseStore: async (locationId, locationName) => {
           const { token, personId } = get()
           if (!token || !personId) return { ok: false, error: 'Sign in again.' }
-          const r = await backend().chooseStore(token, locationId)
+          const r = await backend().chooseStore(token, locationId, locationName)
           if (!r.ok) return r
           setSession({ token, personId, locationId })
           set({ locationId })

@@ -93,9 +93,13 @@ export class SupabaseBackend implements Backend {
     return this.guarded(() => this.rpc<SignInResult>('submit_code', { p_token: token, p_code: code }))
   }
 
-  chooseStore(token: string, locationId: string): Promise<Result> {
+  chooseStore(token: string, locationId: string, locationName?: string): Promise<Result> {
     return this.guarded(() =>
-      this.rpc<Result>('choose_store', { p_token: token, p_location_id: locationId }),
+      this.rpc<Result>('choose_store', {
+        p_token: token,
+        p_location_id: locationId,
+        p_location_name: locationName ?? null,
+      }),
     )
   }
 
