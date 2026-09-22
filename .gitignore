@@ -16,3 +16,4 @@ docs/client-input/
 .env.*
 docs/.env
 !.env.example
+passwords*.txt

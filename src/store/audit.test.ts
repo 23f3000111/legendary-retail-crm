@@ -441,6 +441,34 @@ describe('the log itself', () => {
     expect(written()[0].actorId).toBe('unknown')
   })
 
+  it('files a line against whoever is signed in, whatever the browser claims', async () => {
+    // A screen could compose a line naming somebody else. The server does not
+    // take its word for it — the log is evidence, and evidence that can be
+    // written in another person's name is worthless.
+    signInAs(lb, 'teokoknian')
+    const token = lb.openSessionForTests('teokoknian', 'klia-t2')
+    const forged = {
+      id: 'au-forged-1',
+      at: new Date().toISOString(),
+      actorId: 'davy',
+      actorName: 'Lim Davy',
+      actorRole: 'md' as const,
+      kind: 'order' as const,
+      action: 'order.approved',
+      summary: 'Approved PO-9999',
+    }
+    const r = await lb.put(token, [{ kind: 'audit', id: forged.id, doc: forged }])
+    expect(r.ok).toBe(true)
+
+    signInAs(lb, 'davy')
+    const stored = useData.getState().audit.find((e) => e.id === 'au-forged-1')!
+    expect(stored.actorId).toBe('teokoknian')
+    expect(stored.actorName).toBe('Teo Kok Nian')
+    expect(stored.actorRole).toBe('promoter')
+    // What happened is still the app's to say; who did it is not.
+    expect(stored.summary).toBe('Approved PO-9999')
+  })
+
   it('never lets a line be edited or removed', async () => {
     useData.getState().setTarget('genting', '2026-08', 90_000)
     await settle()

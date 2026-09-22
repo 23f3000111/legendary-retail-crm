@@ -412,8 +412,26 @@ export class LocalBackend implements Backend {
     for (const d of docs) {
       const refused = this.refuse(s, d.kind, d.locationId ?? undefined)
       if (refused) return { ok: false, error: refused }
-      // The log is append-only: a line that exists is never rewritten.
-      if (d.kind === 'audit' && this.docs.has(docKey(d.kind, d.id))) continue
+      if (d.kind === 'audit') {
+        // Append-only: a line that exists is never rewritten. And the actor is
+        // not the browser's to claim — whoever holds the session is stamped
+        // over whatever was sent, so a line can never be filed against
+        // somebody else.
+        if (this.docs.has(docKey(d.kind, d.id))) continue
+        this.write(
+          {
+            ...d,
+            doc: {
+              ...(d.doc as object),
+              actorId: s.person.id,
+              actorName: s.person.name,
+              actorRole: s.person.role,
+            },
+          },
+          s.person.id,
+        )
+        continue
+      }
       this.write(d, s.person.id)
     }
     this.save()

@@ -22,7 +22,18 @@ Wait for the project to finish provisioning.
 
 ### 2. Run the two SQL files
 
-In the project: **SQL Editor** → **New query**.
+Either paste them into the SQL editor, or run both at once from a machine with
+the connection string:
+
+```bash
+npm install
+DATABASE_URL='postgresql://…' node scripts/migrate.mjs
+```
+
+Both files are safe to run again — every statement is `create or replace` or
+`if not exists`, and the people seed leaves existing logins alone.
+
+By hand: in the project, **SQL Editor** → **New query**.
 
 1. Paste the whole of
    [`supabase/migrations/0001_init.sql`](../../supabase/migrations/0001_init.sql)
@@ -34,22 +45,37 @@ In the project: **SQL Editor** → **New query**.
    random password. The result is the number added (39 the first time, 0 if
    run again).
 
-### 3. Set Imran's password
+### 3. Issue the passwords
 
-One password has to be known to begin. New query:
+Everyone was created with a random password. There are two ways to get them
+out:
+
+**Either** hand Imran his and let him read the rest off the screen. New query:
 
 ```sql
 select set_bootstrap_password('imran', 'a-real-password-here-2026');
 ```
 
 It has to pass the same rules as any other — at least ten characters, letters
-and a number, nothing obvious. Give it to Imran in person. He signs in, opens
-**Logins**, and reads everyone else's password off the screen to hand out
-(each look-up is written to the Activity screen). He should change his own
-from the account menu on first use.
+and a number, nothing obvious. He signs in, opens **Logins**, and reveals each
+password as he hands it over (every look-up is written to the Activity
+screen).
 
-Davy can be given his the same way if Imran is not available:
-`select set_bootstrap_password('limdavy28', '…');`.
+**Or** print the whole list at once, from a machine with the connection
+string (Supabase → Settings → Database → Connection string, session pooler):
+
+```bash
+DATABASE_URL='postgresql://…' node scripts/issue-passwords.mjs > passwords.txt
+```
+
+That gives everyone a fresh password and writes name, username, job and
+password as a table. The old password joins the history so it can never come
+back. **The file is a list of live credentials** — hand it over, then delete
+it. `passwords*.txt` is in `.gitignore` so it cannot be committed by accident.
+
+Either way, tell people to change their own from the account menu; promoters
+cannot, by the client's own rule, so theirs stay as issued until a senior
+changes them.
 
 ### 4. Tell the app where the server is
 

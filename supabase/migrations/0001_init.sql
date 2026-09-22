@@ -105,11 +105,14 @@ alter table docs            enable row level security;
 alter table settings        enable row level security;
 revoke all on people, sessions, login_attempts, pending_codes, docs, settings from anon, authenticated;
 
--- The log cannot be rewritten.
+-- The log cannot be rewritten. `clear_all_data()` sets the flag below for its
+-- own transaction only — a session-local setting rather than disabling the
+-- trigger, which would be table-wide DDL and would leave every other session
+-- writing unprotected for as long as the delete took.
 create or replace function audit_is_append_only() returns trigger
 language plpgsql as $$
 begin
-  if old.kind = 'audit' then
+  if old.kind = 'audit' and coalesce(current_setting('crm.wiping', true), '') <> 'on' then
     raise exception 'The activity log cannot be edited.';
   end if;
   return new;
@@ -474,9 +477,15 @@ begin
       return jsonb_build_object('ok', false, 'error', refused);
     end if;
     if d->>'kind' = 'audit' then
-      -- Append-only: a line that exists is never rewritten.
+      -- Append-only, and the actor is not the browser's to claim: whoever
+      -- holds the session is stamped over whatever was sent, so a line can
+      -- never be filed against somebody else. Everything else in the line —
+      -- what happened, in words — is the app's to write.
       insert into docs(kind, id, location_id, day, doc, updated_by)
-        values ('audit', d->>'id', d->>'location_id', d->>'day', d->'doc', s.person_id)
+        values ('audit', d->>'id', d->>'location_id', d->>'day',
+                (d->'doc') || jsonb_build_object(
+                  'actorId', s.person_id, 'actorName', s.name, 'actorRole', s.role),
+                s.person_id)
         on conflict do nothing;
     else
       insert into docs(kind, id, location_id, day, doc, updated_by, updated_at, deleted)
@@ -653,11 +662,12 @@ begin
   select * into s from _session(p_token);
   if s.person_id is null then return jsonb_build_object('ok', false, 'error', 'Sign in again.'); end if;
   if s.role not in ('md','it') then return jsonb_build_object('ok', false, 'error', 'Only Davy or Imran can start over.'); end if;
-  -- The append-only trigger is for edits through the app; starting over is
-  -- the one deliberate wipe, so it is lifted for this statement.
-  alter table docs disable trigger docs_audit_append_only;
+  -- The append-only rule is for edits through the app; starting over is the
+  -- one deliberate wipe. The flag is local to this transaction, so no other
+  -- session loses the protection while the delete runs.
+  perform set_config('crm.wiping', 'on', true);
   delete from docs;
-  alter table docs enable trigger docs_audit_append_only;
+  perform set_config('crm.wiping', 'off', true);
   perform _audit(s.person_id, s.name, s.role, 'session', 'data.cleared',
                  s.name || ' cleared every sale, closing and order to start over');
   return jsonb_build_object('ok', true);
