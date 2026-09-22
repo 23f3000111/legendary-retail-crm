@@ -4,6 +4,8 @@ import { basisOf, locationsInChannel, tradingLocations } from '../data/locations
 import { priceOfId, skuById, skus } from '../data/products'
 import { addDays, dateRange } from '../lib/dates'
 import {
+  deriveAlerts,
+  selectNotFiled,
   countryCoverage,
   emptyFilter,
   metricValue,
@@ -281,5 +283,59 @@ describe('location rows', () => {
     const rows = selectLocationRows(data, { ...last30(), channels: ['consignment'] })
     expect(rows.every((r) => r.channel === 'consignment')).toBe(true)
     expect(rows.length).toBe(locationsInChannel('consignment').length)
+  })
+})
+
+// ── A store that has not started ────────────────────────────────────────────
+
+describe('before a store has ever filed', () => {
+  /** The system on day one: the people exist, nothing else does. */
+  const empty = {
+    ...data,
+    closings: [],
+    purchaseOrders: [],
+    liveLines: {},
+    today: DEMO_TODAY,
+  }
+
+  it('says the shelf is unknown rather than empty', () => {
+    const rows = selectStock(empty, 'pavilion-5')
+    expect(rows.length).toBeGreaterThan(0)
+    for (const r of rows) {
+      expect(r.counted, r.label).toBe(false)
+      // Not "out of stock" — nobody has looked yet.
+      expect(r.status, r.label).toBe('ok')
+      expect(r.suggested, r.label).toBe(0)
+    }
+  })
+
+  it('raises no alert about stock nobody has counted', () => {
+    const alerts = deriveAlerts(empty, new Set())
+    expect(alerts.filter((a) => a.type === 'low_stock')).toHaveLength(0)
+  })
+
+  it('does not call a store late before it has filed anything', () => {
+    // A store with no history has not "missed" yesterday; it has not started.
+    expect(selectNotFiled(empty, addDays(DEMO_TODAY, -1))).toEqual([])
+    expect(deriveAlerts(empty, new Set()).filter((a) => a.type === 'missed_closing')).toHaveLength(0)
+  })
+
+  it('starts counting missed days only after the first closing', () => {
+    const started = {
+      ...empty,
+      closings: data.closings.filter(
+        (c) => c.locationId === 'pavilion-5' && c.period === addDays(DEMO_TODAY, -3),
+      ),
+    }
+    expect(selectNotFiled(started, addDays(DEMO_TODAY, -1))).toEqual(['pavilion-5'])
+  })
+
+  it('shows nothing and breaks nothing across the figures', () => {
+    const t = totalsFor(empty, last30())
+    expect(t).toMatchObject({ revenue: 0, units: 0, attributedUnits: 0 })
+    expect(selectKpis(empty, last30()).current.revenue).toBe(0)
+    expect(selectTimeSeries(empty, last30(), 'revenue').every((p) => p.value === 0)).toBe(true)
+    expect(selectOriginMix(empty, last30())).toEqual([])
+    expect(selectLocationRows(empty, last30()).length).toBeGreaterThan(0)
   })
 })

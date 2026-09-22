@@ -89,10 +89,23 @@ export function CloseDay() {
   const expectedOf = (skuId: string, onHand: number) =>
     Math.max(0, onHand - (soldToday.get(skuId) ?? 0))
 
-  // Every box starts at what the shelf should hold. The promoter changes only
-  // the ones that are actually different.
+  /**
+   * The store's very first closing, where nothing is known about the shelf.
+   *
+   * It matters because the whole page is built on "we know what should be
+   * there, change only what is different" — and on the first night that is
+   * not true. Prefilling zero and saying "all as expected" would invite a
+   * promoter to file a count of nothing for every product. So on the first
+   * night the boxes start empty and every one has to be typed.
+   */
+  const firstCount = stock.length > 0 && !stock[0].counted
+
+  // Every box starts at what the shelf should hold, so the promoter changes
+  // only the ones that are actually different — except on the first night.
   const [counted, setCounted] = useState<Record<string, string>>(() =>
-    Object.fromEntries(stock.map((s) => [s.skuId, String(expectedOf(s.skuId, s.onHand))])),
+    Object.fromEntries(
+      stock.map((s) => [s.skuId, firstCount ? '' : String(expectedOf(s.skuId, s.onHand))]),
+    ),
   )
 
   // Type one of the two and the other fills in, so they always add up.
@@ -135,7 +148,12 @@ export function CloseDay() {
   for (const s of stock) {
     const value = counted[s.skuId]
     if (value === undefined || value === '') {
-      problems.push(`${s.label} has no count.`)
+      const blanks = stock.filter((x) => !counted[x.skuId]).length
+      problems.push(
+        firstCount
+          ? `${blanks} ${blanks === 1 ? 'product has' : 'products have'} not been counted yet — start with ${s.label}.`
+          : `${s.label} has no count.`,
+      )
       break
     }
     if (Number(value) < 0) {
@@ -279,10 +297,11 @@ export function CloseDay() {
       sold: soldToday.get(s.skuId) ?? 0,
       expected,
       value,
-      changed: value !== '' && Number(value) !== expected,
+      changed: !firstCount && value !== '' && Number(value) !== expected,
     }
   })
   const changedCounts = shelf.filter((s) => s.changed).length
+  const stillToCount = shelf.filter((s) => s.value === '').length
   const setCount = (skuId: string, value: string) =>
     setCounted((v) => ({ ...v, [skuId]: value }))
 
@@ -399,10 +418,18 @@ export function CloseDay() {
       <Panel>
         <PanelHeader
           eyebrow="On the shelf"
-          title="Change only what is different"
-          meta="Each box already holds what the shelf should have after today's sales. If what you count matches, leave it."
+          title={firstCount ? 'Count everything, this first time' : 'Change only what is different'}
+          meta={
+            firstCount
+              ? 'Nothing has been counted at this store yet, so tonight every product is counted from scratch. From tomorrow the boxes fill themselves in and you only change what is different.'
+              : "Each box already holds what the shelf should have after today's sales. If what you count matches, leave it."
+          }
           action={
-            changedCounts > 0 ? (
+            firstCount ? (
+              <Badge tone={stillToCount > 0 ? 'warn' : 'good'} icon={stillToCount > 0 ? 'alert' : 'check'}>
+                {stillToCount > 0 ? `${stillToCount} still to count` : 'All counted'}
+              </Badge>
+            ) : changedCounts > 0 ? (
               <Badge tone="warn">{changedCounts} changed</Badge>
             ) : (
               <Badge tone="good" icon="check">
@@ -425,8 +452,15 @@ export function CloseDay() {
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13px] leading-tight text-ink">{s.label}</p>
                   <p className="mt-1 text-[11.5px] text-ink-3">
-                    {s.sold > 0 ? `Sold ${num(s.sold)} today · ` : ''}
-                    should be <span className="readout font-medium text-ink-2">{num(s.expected)}</span>
+                    {s.sold > 0 ? `Sold ${num(s.sold)} today${firstCount ? '' : ' · '}` : ''}
+                    {firstCount ? (
+                      s.sold > 0 ? '' : 'Type what is on the shelf'
+                    ) : (
+                      <>
+                        should be{' '}
+                        <span className="readout font-medium text-ink-2">{num(s.expected)}</span>
+                      </>
+                    )}
                   </p>
                 </div>
                 <div className="w-[84px] shrink-0">
@@ -447,9 +481,9 @@ export function CloseDay() {
             <table className="w-full border-collapse">
               <thead>
                 <tr className="border-b border-line">
-                  {['Product', 'Sold today', 'Should be', 'On the shelf'].map((h, i) => (
+                  {['Product', 'Sold today', firstCount ? '' : 'Should be', 'On the shelf'].map((h, i) => (
                     <th
-                      key={h}
+                      key={h || 'blank'}
                       className={`pb-2 text-[10px] font-semibold uppercase tracking-wide2 text-ink-3 ${i === 0 ? 'text-left' : 'text-right'}`}
                     >
                       {h}
@@ -470,7 +504,7 @@ export function CloseDay() {
                       {s.sold > 0 ? num(s.sold) : '—'}
                     </td>
                     <td className="readout py-2 pr-3 text-right text-[13px] text-ink-2">
-                      {num(s.expected)}
+                      {firstCount ? '' : num(s.expected)}
                     </td>
                     <td className="py-2">
                       <div className="ml-auto w-[88px]">
