@@ -41,16 +41,38 @@ export function Closings() {
   const filed = (locationId: string, period: string) =>
     data.closings.find((c) => c.locationId === locationId && c.period === period)
 
+  /**
+   * The first day this store ever filed, or undefined if it never has.
+   *
+   * A store that has not started has not *missed* anything, and counting the
+   * days before it opened as gaps to chase would bury the days that really
+   * were missed. The same rule is in `selectNotFiled`, which drives the alerts.
+   */
+  const startedOn = (locationId: string) =>
+    data.closings
+      .filter((c) => c.locationId === locationId)
+      .reduce<string | undefined>((first, c) => (!first || c.period < first ? c.period : first), undefined)
+
+  const expected = (locationId: string, period: string) => {
+    const start = startedOn(locationId)
+    return start !== undefined && period >= start
+  }
+
   const yesterday = addDays(data.today, -1)
   const notFiled = selectNotFiled(data, yesterday)
   const pending = data.closings.filter((c) => c.correction?.status === 'pending')
 
+  const trading = stores.filter((s) => startedOn(s.id) !== undefined)
   const filedYesterday = stores.filter((s) => filed(s.id, yesterday)).length
+  const expectedYesterday = stores.filter((s) => expected(s.id, yesterday)).length
   const revenueYesterday = stores.reduce(
     (a, s) => a + (filed(s.id, yesterday)?.revenueMYR ?? 0),
     0,
   )
-  const gaps = stores.reduce((a, s) => a + days.filter((d) => !filed(s.id, d)).length, 0)
+  const gaps = stores.reduce(
+    (a, s) => a + days.filter((d) => expected(s.id, d) && !filed(s.id, d)).length,
+    0,
+  )
 
   const decide = (closingId: string, approve: boolean) => {
     if (!user) return
@@ -76,7 +98,16 @@ export function Closings() {
             Closings
           </h1>
           <p className="mt-1 text-[13px] text-ink-2">
-            Last {TRAIL} days to {formatDate(data.today)}. A gap means nothing was filed.
+            Last {TRAIL} days to {formatDate(data.today)}. A gap means nothing was filed on a day
+            the store was expected to.
+            {trading.length < stores.length && (
+              <>
+                {' '}
+                <span className="text-ink-3">
+                  {stores.length - trading.length} of {stores.length} have not filed anything yet.
+                </span>
+              </>
+            )}
           </p>
         </div>
         <SegmentedControl<Channel>
@@ -95,9 +126,13 @@ export function Closings() {
         <StatTile
           label="Filed yesterday"
           value={filedYesterday}
-          format={(n) => `${Math.round(n)} of ${stores.length}`}
+          format={(n) => `${Math.round(n)} of ${expectedYesterday}`}
           footnote={
-            filedYesterday === stores.length ? 'all in' : `${stores.length - filedYesterday} missing`
+            expectedYesterday === 0
+              ? 'no store has started yet'
+              : filedYesterday === expectedYesterday
+                ? 'all in'
+                : `${expectedYesterday - filedYesterday} missing`
           }
           tone="violet"
           icon="clipboard"
@@ -113,7 +148,9 @@ export function Closings() {
           label={`Gaps in ${TRAIL} days`}
           value={gaps}
           format={(n) => String(Math.round(n))}
-          footnote={gaps ? 'chase these stores' : 'no gaps'}
+          footnote={
+            gaps ? 'chase these stores' : trading.length === 0 ? 'nothing filed yet' : 'no gaps'
+          }
           tone="cyan"
           icon="alert"
         />
@@ -213,25 +250,34 @@ export function Closings() {
                         </td>
                         {days.map((d) => {
                           const c = filed(s.id, d)
+                          // Before a store's first closing there is nothing to
+                          // chase: it had not started.
+                          const due = expected(s.id, d)
                           return (
                             <td key={d} className="py-2 text-center">
                               <span
                                 title={
                                   c
                                     ? `${formatDateShort(d)} · ${rm(c.revenueMYR)} · filed by ${c.submittedBy} at ${formatTimestamp(c.submittedAt)}`
-                                    : `${formatDateShort(d)} · nothing filed`
+                                    : due
+                                      ? `${formatDateShort(d)} · nothing filed`
+                                      : `${formatDateShort(d)} · before this store started`
                                 }
                                 className={`mx-auto flex h-[18px] w-[18px] items-center justify-center rounded-[5px] ${
                                   c
                                     ? 'bg-primary/18 text-primary'
-                                    : 'border border-critical/40 bg-critical/10 text-critical'
+                                    : due
+                                      ? 'border border-critical/40 bg-critical/10 text-critical'
+                                      : 'border border-line bg-sunken text-ink-3'
                                 }`}
                               >
-                                <Icon
-                                  name={c ? 'check' : 'x'}
-                                  className="h-2.5 w-2.5"
-                                  strokeWidth={2.6}
-                                />
+                                {c ? (
+                                  <Icon name="check" className="h-2.5 w-2.5" strokeWidth={2.6} />
+                                ) : due ? (
+                                  <Icon name="x" className="h-2.5 w-2.5" strokeWidth={2.6} />
+                                ) : (
+                                  <span className="h-1 w-1 rounded-full bg-current" />
+                                )}
                               </span>
                             </td>
                           )
@@ -245,10 +291,12 @@ export function Closings() {
                               <span className="readout block text-[12.5px] text-ink">{rm(y.revenueMYR)}</span>
                               <span className="block truncate text-[10.5px] text-ink-3">{y.submittedBy}</span>
                             </>
-                          ) : (
+                          ) : expected(s.id, yesterday) ? (
                             <Badge tone="warn" icon="clock">
                               Missing
                             </Badge>
+                          ) : (
+                            <span className="text-[11.5px] text-ink-3">Not started</span>
                           )}
                         </td>
                       </tr>
