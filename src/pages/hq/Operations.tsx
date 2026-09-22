@@ -138,6 +138,7 @@ export function Operations() {
                   <span className="readout text-[12.5px] font-medium text-ink">{po.id}</span>
                   <span className="text-[11.5px] text-ink-2">
                     {locationById(po.locationId)?.shortName}
+                    <span className="text-ink-3"> · by {po.createdBy}</span>
                   </span>
                   {po.priority === 'urgent' && <Badge tone="critical">Urgent</Badge>}
                   <span className="readout ml-auto text-[12px] text-ink">{rm(poValue(po))}</span>

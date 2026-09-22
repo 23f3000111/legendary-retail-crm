@@ -47,7 +47,7 @@ export function StockItemDetail({
         </div>
         <div className="rounded-xl border border-line bg-surface-2 px-3 py-2.5">
           <p className="eyebrow mb-1">On hand</p>
-          <p className="readout text-[17px] font-semibold text-ink">{num(row.onHand)}</p>
+          <p className="readout text-[17px] font-semibold text-ink">{row.counted ? num(row.onHand) : '—'}</p>
         </div>
       </div>
 

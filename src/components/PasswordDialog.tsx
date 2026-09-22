@@ -66,10 +66,14 @@ export function PasswordDialog({
     }
   }, [open, target?.id])
 
-  const save = () => {
-    if (!target || !me) return
+  const [busy, setBusy] = useState(false)
+
+  const save = async () => {
+    if (!target || !me || busy) return
     if (value !== confirm) return setError('The two do not match.')
-    const result = setPassword({ actor: me, targetId: target.id, password: value })
+    setBusy(true)
+    const result = await setPassword({ actor: me, targetId: target.id, password: value })
+    setBusy(false)
     if (!result.ok) return setError(result.error ?? 'That password could not be set.')
     push(
       isSelf ? 'Your password has been changed' : `${target.name} can sign in with the new password`,
@@ -95,7 +99,7 @@ export function PasswordDialog({
           <Button variant="ghost" size="sm" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" size="sm" onClick={save}>
+          <Button variant="primary" size="sm" onClick={save} disabled={busy}>
             {isSelf ? 'Change it' : 'Set it'}
           </Button>
         </>
@@ -110,8 +114,8 @@ export function PasswordDialog({
                 <p className="readout break-all text-[16px] font-semibold text-ink">{current}</p>
               ) : (
                 <button
-                  onClick={() => {
-                    const result = revealPassword({ actor: me, targetId: target.id })
+                  onClick={async () => {
+                    const result = await revealPassword({ actor: me, targetId: target.id })
                     if (result.ok && result.password) setCurrent(result.password)
                     else push(result.error ?? 'That password cannot be shown.', 'critical')
                   }}
@@ -200,11 +204,11 @@ export function PasswordDialog({
             />
           </Field>
 
-          {target.passwordHistory.length > 0 && (
+          {target.passwordChanges > 0 && (
             <p className="text-[11.5px] text-ink-3">
-              {target.passwordHistory.length} previous{' '}
-              {target.passwordHistory.length === 1 ? 'password' : 'passwords'} on record and
-              blocked from reuse.
+              {target.passwordChanges} previous{' '}
+              {target.passwordChanges === 1 ? 'password' : 'passwords'} on record and blocked
+              from reuse.
             </p>
           )}
         </div>

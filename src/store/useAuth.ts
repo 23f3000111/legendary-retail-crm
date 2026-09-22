@@ -1,270 +1,149 @@
 /**
  * Signing in.
  *
- * A username and a password. For the people at the top of the chart — the four
- * who can read everybody else's password, and the Director — a six-digit code
- * to their work e-mail as well. For everyone else, the password is enough.
+ * A username and a password, checked by the server. The server hands back a
+ * session token, which this device keeps and sends with every call; the
+ * password itself is never stored anywhere on the device.
  *
- * The split follows the risk. A promoter's account opens one store's sales; a
- * leadership account opens every password in the company. The code is worth
- * its friction on the second kind and was not on the first.
+ * Leadership and IT can additionally be asked for a six-digit code by e-mail.
+ * Whether they are is the server's decision (`needsCode` in the reply) — it
+ * stays off until a mail sender is connected, and this module already handles
+ * the step for when it is switched on.
  *
- * **In this wireframe there is no server**, so no mail is actually sent — the
- * code is generated here and shown on screen behind a clearly marked panel. In
- * production `beginSignIn` becomes one request that returns nothing but "we
- * sent it", and the code never reaches the browser at all. That is the whole
- * difference, and it is contained in this module.
+ * A KL promoter floats between four stores and picks one after signing in
+ * (client's third revision); the choice is kept on the session, on the server,
+ * so everything they record that day is filed against the right store.
  */
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import {
-  can,
-  maskEmail,
-  needsTwoStep,
-  newSignInCode,
-  personByUsername,
-  CODE_TTL_MINUTES,
-  type Capability,
-  type Person,
-} from '../data/people'
-import { setAuditActor } from '../lib/audit'
+import { backend } from '../api'
+import type { Result } from '../api/backend'
+import { can, type Capability, type Person } from '../data/people'
+import { setSession } from '../lib/session'
 import { useData } from './useData'
 
-/** Wrong passwords before the account is held for a minute. */
-const MAX_PASSWORD_TRIES = 5
-/** Wrong codes before the whole attempt is thrown away. */
-const MAX_CODE_TRIES = 5
-const LOCKOUT_MS = 60_000
-
-/** A sign-in half-finished: password accepted, code not yet entered. */
-interface Pending {
-  personId: string
-  code: string
-  /** Epoch ms. */
-  expiresAt: number
-  sentTo: string
-  tries: number
-}
-
 interface AuthState {
+  token: string | null
   personId: string | null
-  pending: Pending | null
-  /** Epoch ms until which sign-in is refused after too many wrong passwords. */
-  lockedUntil: number | null
+  /** The store this session is working at, where the person chose one. */
+  locationId: string | null
+  /** A sign-in half-finished: password accepted, code not yet entered. */
+  pending: { token: string; sentTo: string } | null
+  /** 'restoring' while a saved token is being checked with the server on load. */
+  status: 'restoring' | 'ready'
 
-  /**
-   * Step one. Either signs the person straight in (`person` is set), or — for
-   * the roles that need a second step — sends a code and says where it went.
-   */
   beginSignIn: (
     username: string,
     password: string,
-  ) => { ok: boolean; person?: Person; sentTo?: string; error?: string }
-  /** Step two. */
-  submitCode: (code: string) => { ok: boolean; person?: Person; error?: string }
-  /** Sends a fresh code for the attempt in progress. */
-  resendCode: () => { ok: boolean; error?: string }
+  ) => Promise<{ ok: boolean; person?: Person; needsStore?: boolean; needsCode?: boolean; sentTo?: string; error?: string }>
+  submitCode: (code: string) => Promise<{ ok: boolean; person?: Person; needsStore?: boolean; error?: string }>
+  chooseStore: (locationId: string) => Promise<Result>
   cancelSignIn: () => void
-  signOut: () => void
+  signOut: () => Promise<void>
+  /** Checks the saved token with the server. Called once, on load. */
+  restore: () => Promise<void>
 }
-
-/** Nobody is signed in yet, so a failed attempt is filed against this. */
-const NOBODY = { id: 'unknown', name: 'Someone signing in', role: 'promoter' } as const
-
-/**
- * Wrong-password count, held outside the store so it is never written to
- * storage and cannot be cleared by hand from the browser. In production this
- * lives in the database against the account, not against the device.
- */
-let failedTries = 0
 
 export const useAuth = create<AuthState>()(
   persist(
-    (set, get) => ({
-      personId: null,
-      pending: null,
-      lockedUntil: null,
+    (set, get) => {
+      const open = (token: string, person: Person, locationId?: string) => {
+        const at = locationId ?? person.locationId ?? null
+        setSession({ token, personId: person.id, locationId: at ?? undefined })
+        set({ token, personId: person.id, locationId: at, pending: null, status: 'ready' })
+        return { ok: true, person, needsStore: Boolean(person.storeChoices?.length) && !at }
+      }
 
-      beginSignIn: (username, password) => {
-        const data = useData.getState()
-        const locked = get().lockedUntil
-        if (locked && locked > Date.now()) {
-          const seconds = Math.ceil((locked - Date.now()) / 1000)
-          return { ok: false, error: `Too many attempts. Try again in ${seconds} seconds.` }
-        }
+      return {
+        token: null,
+        personId: null,
+        locationId: null,
+        pending: null,
+        status: 'restoring',
 
-        const person = personByUsername(username, data.users)
-        const matches = Boolean(person) && person!.password === password && person!.active
-
-        if (!matches) {
-          // The message never says which half was wrong. Telling somebody the
-          // username exists is telling them half the answer.
-          data.record({
-            kind: 'session',
-            action: 'session.sign_in_failed',
-            summary: 'A sign-in was refused — wrong username or password',
-            actor: { ...NOBODY },
-          })
-
-          const tries = failedTries + 1
-          failedTries = tries
-          if (tries >= MAX_PASSWORD_TRIES) {
-            failedTries = 0
-            set({ lockedUntil: Date.now() + LOCKOUT_MS })
-            return { ok: false, error: 'Too many attempts. Try again in a minute.' }
+        beginSignIn: async (username, password) => {
+          const r = await backend().signIn(username.trim(), password)
+          if (!r.ok || !r.token) return { ok: false, error: r.error ?? 'That username and password do not match.' }
+          if (r.needsCode) {
+            set({ pending: { token: r.token, sentTo: r.sentTo ?? '' } })
+            return { ok: true, needsCode: true, sentTo: r.sentTo }
           }
-          return { ok: false, error: 'That username and password do not match.' }
-        }
+          if (!r.person) return { ok: false, error: 'Something went wrong. Try again.' }
+          return open(r.token, r.person, r.locationId)
+        },
 
-        failedTries = 0
+        submitCode: async (code) => {
+          const pending = get().pending
+          if (!pending) return { ok: false, error: 'Start again — that sign-in has expired.' }
+          const r = await backend().submitCode(pending.token, code.trim())
+          if (!r.ok || !r.token || !r.person) return { ok: false, error: r.error ?? 'That code is not right.' }
+          return open(r.token, r.person, r.locationId)
+        },
 
-        // Most people are in with the password alone.
-        if (!needsTwoStep(person!)) {
-          set({ personId: person!.id, pending: null, lockedUntil: null })
-          setAuditActor(person!.id)
-          data.record({
-            kind: 'session',
-            action: 'session.signed_in',
-            summary: `${person!.name} signed in`,
-            entityId: person!.id,
-            locationId: person!.locationId,
-            actor: { id: person!.id, name: person!.name, role: person!.role },
-          })
-          return { ok: true, person: person! }
-        }
+        chooseStore: async (locationId) => {
+          const { token, personId } = get()
+          if (!token || !personId) return { ok: false, error: 'Sign in again.' }
+          const r = await backend().chooseStore(token, locationId)
+          if (!r.ok) return r
+          setSession({ token, personId, locationId })
+          set({ locationId })
+          // The store's data is scoped to the store: fetch it afresh.
+          await useData.getState().sync(true)
+          return r
+        },
 
-        const code = newSignInCode()
-        set({
-          pending: {
-            personId: person!.id,
-            code,
-            expiresAt: Date.now() + CODE_TTL_MINUTES * 60_000,
-            sentTo: maskEmail(person!.email),
-            tries: 0,
-          },
-        })
-        data.record({
-          kind: 'session',
-          action: 'session.code_sent',
-          summary: `A sign-in code was sent to ${maskEmail(person!.email)}`,
-          entityId: person!.id,
-          actor: { id: person!.id, name: person!.name, role: person!.role },
-        })
-        return { ok: true, sentTo: maskEmail(person!.email) }
-      },
+        cancelSignIn: () => set({ pending: null }),
 
-      submitCode: (code) => {
-        const pending = get().pending
-        const data = useData.getState()
-        if (!pending) return { ok: false, error: 'Start again — that sign-in has expired.' }
+        signOut: async () => {
+          const token = get().token
+          setSession(null)
+          set({ token: null, personId: null, locationId: null, pending: null })
+          useData.getState().clearSession()
+          if (token) await backend().signOut(token)
+        },
 
-        if (Date.now() > pending.expiresAt) {
-          set({ pending: null })
-          return { ok: false, error: 'That code has expired. Sign in again for a new one.' }
-        }
-
-        if (code.trim() !== pending.code) {
-          const tries = pending.tries + 1
-          if (tries >= MAX_CODE_TRIES) {
-            set({ pending: null })
-            data.record({
-              kind: 'session',
-              action: 'session.code_failed',
-              summary: 'A sign-in was abandoned after five wrong codes',
-              actor: { ...NOBODY },
-            })
-            return { ok: false, error: 'Too many wrong codes. Start again.' }
+        restore: async () => {
+          const token = get().token
+          if (!token) {
+            set({ status: 'ready' })
+            return
           }
-          set({ pending: { ...pending, tries } })
-          return {
-            ok: false,
-            error: `That code is not right. ${MAX_CODE_TRIES - tries} tries left.`,
+          const session = await backend().whoami(token)
+          if (!session) {
+            setSession(null)
+            set({ token: null, personId: null, locationId: null, status: 'ready' })
+            return
           }
-        }
-
-        const person = data.users.find((u) => u.id === pending.personId)
-        if (!person || !person.active) {
-          set({ pending: null })
-          return { ok: false, error: 'That login is no longer active.' }
-        }
-
-        set({ personId: person.id, pending: null, lockedUntil: null })
-        setAuditActor(person.id)
-        data.record({
-          kind: 'session',
-          action: 'session.signed_in',
-          summary: `${person.name} signed in`,
-          entityId: person.id,
-          locationId: person.locationId,
-          actor: { id: person.id, name: person.name, role: person.role },
-        })
-        return { ok: true, person }
-      },
-
-      resendCode: () => {
-        const pending = get().pending
-        if (!pending) return { ok: false, error: 'Start again — that sign-in has expired.' }
-        const code = newSignInCode()
-        set({
-          pending: {
-            ...pending,
-            code,
-            tries: 0,
-            expiresAt: Date.now() + CODE_TTL_MINUTES * 60_000,
-          },
-        })
-        return { ok: true }
-      },
-
-      cancelSignIn: () => set({ pending: null }),
-
-      signOut: () => {
-        const id = get().personId
-        const person = id ? useData.getState().users.find((u) => u.id === id) : undefined
-        if (person) {
-          useData.getState().record({
-            kind: 'session',
-            action: 'session.signed_out',
-            summary: `${person.name} signed out`,
-            entityId: person.id,
-            actor: { id: person.id, name: person.name, role: person.role },
-          })
-        }
-        setAuditActor(null)
-        set({ personId: null, pending: null })
-      },
-    }),
+          open(token, session.person, session.locationId)
+        },
+      }
+    },
     {
-      name: 'legendary-crm-session-v4',
-      version: 3,
+      name: 'legendary-crm-session-v5',
+      version: 5,
       storage: createJSONStorage(() => localStorage),
-      // A half-finished sign-in is never written to storage: the code would be
-      // sitting in the browser for anyone to read. Only the finished session is.
-      partialize: (s) => ({ personId: s.personId }) as unknown as AuthState,
-      // After a refresh the session comes back before anything is clicked, so
-      // the activity log has to be told who is here — otherwise the first
-      // action of the day would be filed against nobody.
-      onRehydrateStorage: () => (state) => setAuditActor(state?.personId ?? null),
+      // Only the token. A half-finished sign-in is never written to storage.
+      partialize: (s) => ({ token: s.token }) as unknown as AuthState,
     },
   ),
 )
 
-/**
- * The code that was just "sent", for the walkthrough panel only.
- *
- * Set `SHOW_DEMO_CODE` to false in `pages/Login.tsx` and this is never read.
- * In production the code exists only in the mail and in the database.
- */
-export const peekSignInCode = (): string | null => useAuth.getState().pending?.code ?? null
-
-/** The signed-in person, or null. Read from the live list, not the seed. */
+/** The signed-in person, or null — with the store they chose, where they chose one. */
 export const useCurrentUser = (): Person | null => {
-  const id = useAuth((s) => s.personId)
+  const personId = useAuth((s) => s.personId)
+  const locationId = useAuth((s) => s.locationId)
   const users = useData((s) => s.users)
-  if (!id) return null
-  const found = users.find((u) => u.id === id)
+  if (!personId) return null
+  const found = users.find((u) => u.id === personId)
   // A login that has been disabled cannot hold a session open.
-  return found && found.active ? found : null
+  if (!found || !found.active) return null
+  return found.storeChoices?.length && locationId ? { ...found, locationId } : found
+}
+
+/** True for a KL promoter who has not yet said which store they are at today. */
+export const useNeedsStore = (): boolean => {
+  const user = useCurrentUser()
+  return Boolean(user?.storeChoices?.length) && !user?.locationId
 }
 
 /**

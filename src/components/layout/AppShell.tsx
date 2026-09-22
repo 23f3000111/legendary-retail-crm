@@ -9,7 +9,8 @@ import { useData } from '../../store/useData'
 import { locationById, tradingLocations } from '../../data/locations'
 import { ROLE_LABEL, ROLE_ACCESS, ACCENT_GRADIENT, canChangeOwnPassword } from '../../data/people'
 import { PasswordDialog } from '../PasswordDialog'
-import { addDays, formatDate } from '../../lib/dates'
+import { isShared } from '../../api'
+import { addDays, formatDate, formatTimestamp, todayInMalaysia } from '../../lib/dates'
 import { rm } from '../../lib/format'
 import { emptyFilter, selectKpis, selectNotFiled } from '../../store/selectors'
 import { useToasts } from '../ui/Toast'
@@ -34,6 +35,8 @@ export function AppShell() {
   const { pathname } = useLocation()
   const signOut = useAuth((s) => s.signOut)
   const data = useData()
+  const syncStatus = useData((s) => s.syncStatus)
+  const lastSyncAt = useData((s) => s.lastSyncAt)
   const resetDemo = useData((s) => s.resetDemo)
   const push = useToasts((s) => s.push)
   const [switcherOpen, setSwitcherOpen] = useState(false)
@@ -281,12 +284,24 @@ export function AppShell() {
                           Manage logins
                         </button>
                       )}
+                      {user.storeChoices && user.storeChoices.length > 0 && (
+                        <button
+                          onClick={() => {
+                            setSwitcherOpen(false)
+                            navigate('/choose-store')
+                          }}
+                          className="flex w-full items-center gap-2 px-3 py-2.5 text-[12.5px] text-ink-2 transition-colors hover:bg-sunken hover:text-ink"
+                        >
+                          <Icon name="globe" className="h-3.5 w-3.5" />
+                          Switch store · {location?.shortName ?? 'none chosen'}
+                        </button>
+                      )}
                     </div>
 
                     <div className="border-t border-line">
                       <button
                         onClick={() => {
-                          signOut()
+                          void signOut()
                           navigate('/')
                         }}
                         className="flex w-full items-center gap-2 px-3 py-2.5 text-[12.5px] text-ink-2 transition-colors hover:bg-sunken hover:text-ink"
@@ -347,20 +362,35 @@ export function AppShell() {
           whatever you are reading, so there it simply ends the page. */}
       <footer className="no-print z-30 flex flex-wrap items-center gap-x-4 gap-y-1 bg-grad-command px-4 py-2 text-[11px] text-white/80 sm:sticky sm:bottom-0 sm:px-6">
         <span className="font-medium text-white">Legendary Retail CRM</span>
-        <span className="hidden sm:inline">
-          Wireframe build · seeded data, stored in this browser
-        </span>
-        <button
-          onClick={() => {
-            resetDemo()
-            push('Demo data reset', 'info')
-            navigate(user.home)
-          }}
-          className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-white/25 px-2.5 py-0.5 transition-colors hover:bg-white/15 hover:text-white"
-        >
-          <Icon name="refresh" className="h-3 w-3" />
-          Reset data
-        </button>
+        {isShared() ? (
+          <span className="inline-flex items-center gap-1.5">
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                syncStatus === 'offline' ? 'bg-critical' : syncStatus === 'ready' ? 'bg-good' : 'bg-white/50'
+              }`}
+            />
+            {syncStatus === 'offline'
+              ? 'No connection — showing what was last received'
+              : syncStatus === 'ready'
+                ? `Shared with every device · updated ${lastSyncAt ? formatTimestamp(lastSyncAt).split(' · ').pop() : ''}`
+                : 'Connecting…'}
+          </span>
+        ) : (
+          <>
+            <span className="hidden sm:inline">Local build · this browser only</span>
+            <button
+              onClick={() => {
+                resetDemo(todayInMalaysia())
+                push('Sample history loaded', 'info')
+                navigate(user.home)
+              }}
+              className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-white/25 px-2.5 py-0.5 transition-colors hover:bg-white/15 hover:text-white"
+            >
+              <Icon name="refresh" className="h-3 w-3" />
+              Load sample history
+            </button>
+          </>
+        )}
       </footer>
     </div>
   )

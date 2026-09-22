@@ -1,17 +1,17 @@
 /**
  * The purchase-order lifecycle, in one place.
  *
- * The client confirmed the chain as demonstrated (Q45): the shop asks, head
- * office approves, accounts checks, the warehouse sends, the shop confirms
+ * The shop asks, head office approves, the warehouse sends, the shop confirms
  * arrival. Kelly approves every order (Q46); when she is away Davy carries the
  * same authority.
  *
- * Note on Q48: the discovery form said Finance shares the authorisation. The
- * hierarchy chart does not — it gives "approves changes and PO" to the
- * Managing Director and the Operational Manager only. The chart wins, and
- * Finance instead *clears* an approved order for picking, which is a step in
- * the chain rather than an approval. This is flagged in
- * `docs/spec/2026-08-21-answers-to-decisions.md` for the client to confirm.
+ * Finance is **beside** the chain, not a link in it. The client's third
+ * revision: "after approved by Kelly, let Finance and Warehouse receive the PO
+ * at the same time — don't wait for Finance to clear before passing it down
+ * to Warehouse." So an approved order goes straight to the warehouse queue,
+ * and Finance records its clearance on the same order whenever it gets to it
+ * (`clearAccounts`), before or after packing. `accounts_cleared` survives as a
+ * status value only so older events still read; nothing moves into it now.
  *
  * Screens never assign `status` directly — they ask for a transition and this
  * module decides whether it is legal and who may make it.
@@ -35,7 +35,8 @@ export const TRANSITIONS: Record<PoStatus, Transition[]> = {
     { to: 'approved', by: ['ops', 'md'], label: 'Approve order' },
     { to: 'rejected', by: ['ops', 'md'], label: 'Reject', requiresNote: true },
   ],
-  approved: [{ to: 'accounts_cleared', by: ['finance'], label: 'Clear for picking' }],
+  approved: [{ to: 'packed', by: ['warehouse'], label: 'Mark packed' }],
+  // Legacy only — see the note above.
   accounts_cleared: [{ to: 'packed', by: ['warehouse'], label: 'Mark packed' }],
   packed: [{ to: 'in_transit', by: ['warehouse'], label: 'Dispatch' }],
   in_transit: [{ to: 'received', by: ['promoter', 'ops'], label: 'Confirm received' }],
@@ -43,16 +44,26 @@ export const TRANSITIONS: Record<PoStatus, Transition[]> = {
   rejected: [],
 }
 
-/** Display order for the timeline. `rejected` sits outside the chain. */
+/** Display order for the timeline. `rejected` sits outside the chain, and so does Finance. */
 export const STATUS_CHAIN: PoStatus[] = [
   'draft',
   'submitted',
   'approved',
-  'accounts_cleared',
   'packed',
   'in_transit',
   'received',
 ]
+
+/** Once Kelly has approved, Finance may record its clearance at any point. */
+export const canClearAccounts = (po: PurchaseOrder, role: Role): boolean =>
+  role === 'finance' &&
+  !po.financeClearedAt &&
+  ['approved', 'accounts_cleared', 'packed', 'in_transit', 'received'].includes(po.status)
+
+/** Approved and not yet cleared — Finance's queue. */
+export const awaitingFinance = (po: PurchaseOrder): boolean =>
+  !po.financeClearedAt &&
+  ['approved', 'accounts_cleared', 'packed', 'in_transit', 'received'].includes(po.status)
 
 export const STATUS_LABEL: Record<PoStatus, string> = {
   draft: 'Draft',
@@ -69,7 +80,7 @@ export const STATUS_LABEL: Record<PoStatus, string> = {
 export const STATUS_OWNER: Record<PoStatus, string> = {
   draft: 'Store',
   submitted: 'Kelly Tew',
-  approved: 'Finance',
+  approved: 'Warehouse',
   rejected: '—',
   accounts_cleared: 'Warehouse',
   packed: 'Warehouse',

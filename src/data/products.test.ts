@@ -21,8 +21,8 @@ import { basisOf, locationById } from './locations'
  */
 
 describe('the price list', () => {
-  it('carries the sixteen sellable lines the client priced', () => {
-    expect(sellableSkus).toHaveLength(16)
+  it('carries the sixteen priced lines plus the two travel kits', () => {
+    expect(sellableSkus).toHaveLength(18)
   })
 
   it('prices the thirteen main lines at 238 retail and 188 promotion', () => {
@@ -95,16 +95,26 @@ describe('the price the counter chooses', () => {
   const orchid = skuById('orchid-retail')
   const wish = skuById('wish-1-set')
 
-  it('offers every item at promotion and retail, the store’s own price first', () => {
-    expect(tiersFor(orchid, 'promotion')).toEqual(['promotion', 'retail'])
-    expect(tiersFor(orchid, 'retail')).toEqual(['retail', 'promotion'])
+  it('offers every item at promotion and retail, the store’s own price first, then other', () => {
+    expect(tiersFor(orchid, 'promotion')).toEqual(['promotion', 'retail', 'other'])
+    expect(tiersFor(orchid, 'retail')).toEqual(['retail', 'promotion', 'other'])
     expect(tiersFor(undefined)).toEqual([])
   })
 
   it('offers the Wishes at the offer price as well, and nothing else', () => {
-    expect(tiersFor(wish, 'promotion')).toEqual(['promotion', 'retail', 'offer'])
+    expect(tiersFor(wish, 'promotion')).toEqual(['promotion', 'retail', 'offer', 'other'])
     for (const s of sellableSkus.filter((k) => !k.productId.startsWith('wish-'))) {
       expect(tiersFor(s), s.label).not.toContain('offer')
+    }
+  })
+
+  it('has the two travel kits from the third revision at RM 68', () => {
+    for (const id of ['three-wishes-travel', 'spirit-2-travel']) {
+      const kit = skuById(id)
+      expect(kit, id).toBeDefined()
+      expect(kit!.promotionPriceMYR).toBe(68)
+      expect(kit!.sellable).toBe(true)
+      expect(kit!.counted).toBe(true)
     }
   })
 
@@ -121,13 +131,21 @@ describe('the price the counter chooses', () => {
   })
 
   it('counts a line at the price the counter chose, whatever the store is on', () => {
-    expect(lineUnitPrice('orchid-retail', 'retail', 'promotion')).toBe(238)
-    expect(lineUnitPrice('orchid-retail', 'promotion', 'retail')).toBe(188)
+    expect(lineUnitPrice({ skuId: 'orchid-retail', priceTier: 'retail' }, 'promotion')).toBe(238)
+    expect(lineUnitPrice({ skuId: 'orchid-retail', priceTier: 'promotion' }, 'retail')).toBe(188)
   })
 
-  it('falls back to the store’s basis where nobody chose — the whole seeded history', () => {
-    expect(lineUnitPrice('orchid-retail', undefined, 'retail')).toBe(238)
-    expect(lineUnitPrice('orchid-retail', undefined, 'promotion')).toBe(188)
+  it('counts an "other" line at the figure the counter typed, and never at nothing', () => {
+    expect(lineUnitPrice({ skuId: 'orchid-retail', priceTier: 'other', unitPriceMYR: 150 }, 'promotion')).toBe(150)
+    // A line that carries its own price is counted at it, whatever the tier says.
+    expect(lineUnitPrice({ skuId: 'orchid-retail', priceTier: 'retail', unitPriceMYR: 200 }, 'promotion')).toBe(200)
+    // An "other" line that somehow lost its figure falls back to the store's price.
+    expect(lineUnitPrice({ skuId: 'orchid-retail', priceTier: 'other' }, 'promotion')).toBe(188)
+  })
+
+  it('falls back to the store’s basis where nobody chose — dealers and consignment', () => {
+    expect(lineUnitPrice({ skuId: 'orchid-retail' }, 'retail')).toBe(238)
+    expect(lineUnitPrice({ skuId: 'orchid-retail' }, 'promotion')).toBe(188)
   })
 })
 
@@ -146,8 +164,8 @@ describe('what is counted, and what is only ordered', () => {
     expect(skus.some((s) => /Vial/.test(s.label))).toBe(false)
   })
 
-  it('counts exactly the sixteen sellable lines on the shelf', () => {
-    expect(countedSkus).toHaveLength(16)
+  it('counts every sellable line on the shelf, travel kits included', () => {
+    expect(countedSkus).toHaveLength(18)
     expect(countedSkus.every((s) => s.sellable)).toBe(true)
   })
 

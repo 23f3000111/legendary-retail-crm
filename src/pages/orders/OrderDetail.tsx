@@ -13,7 +13,7 @@ import { useData } from '../../store/useData'
 import { useCan, useCurrentUser } from '../../store/useAuth'
 import { useToasts } from '../../components/ui/Toast'
 import { poUnits, poValue } from '../../store/selectors'
-import { availableTransitions, STATUS_LABEL, STATUS_OWNER } from '../../lib/po-machine'
+import { availableTransitions, canClearAccounts, STATUS_LABEL, STATUS_OWNER } from '../../lib/po-machine'
 import { locationById, CHANNEL_LABEL } from '../../data/locations'
 import { skuById } from '../../data/products'
 import { formatTimestamp } from '../../lib/dates'
@@ -34,6 +34,7 @@ export function OrderDetail() {
   const capability = useCan()
   const po = useData((s) => s.purchaseOrders.find((p) => p.id === id))
   const transitionPo = useData((s) => s.transitionPo)
+  const clearAccounts = useData((s) => s.clearAccounts)
   const push = useToasts((s) => s.push)
 
   const [pending, setPending] = useState<{ to: PoStatus; label: string } | null>(null)
@@ -47,7 +48,7 @@ export function OrderDetail() {
         <EmptyState
           icon="doc"
           title="That order is not here"
-          body="It may have been reset with the demo data. Head back to the list to pick another."
+          body="It may have been cleared, or the link is out of date. Head back to the list to pick another."
           action={<Button onClick={() => navigate(-1)}>Go back</Button>}
         />
       </Panel>
@@ -56,6 +57,9 @@ export function OrderDetail() {
 
   const location = locationById(po.locationId)
   const moves = capability.canEdit ? availableTransitions(po, user.role) : []
+  // Finance's move sits beside the chain: it is offered whenever the order has
+  // been approved and not yet cleared, whatever the warehouse has done since.
+  const canClear = capability.canEdit && canClearAccounts(po, user.role)
 
   const openMove = (to: PoStatus, label: string) => {
     setPending({ to, label })
@@ -66,6 +70,13 @@ export function OrderDetail() {
 
   const confirm = () => {
     if (!pending) return
+    if (pending.to === 'accounts_cleared') {
+      const result = clearAccounts({ poId: po.id, actor: user.name, role: user.role, note: note.trim() || undefined })
+      if (!result.ok) return setError(result.error ?? 'That move is not allowed.')
+      push(`${po.id} cleared`, 'good')
+      setPending(null)
+      return
+    }
     const result = transitionPo({
       poId: po.id,
       to: pending.to,
@@ -120,6 +131,16 @@ export function OrderDetail() {
               {m.label}
             </Button>
           ))}
+          {canClear && (
+            <Button size="sm" variant="primary" icon="wallet" onClick={() => openMove('accounts_cleared', 'Clear for accounts')}>
+              Clear for accounts
+            </Button>
+          )}
+          {po.financeClearedAt && (
+            <Badge tone="good" icon="check">
+              Cleared by Finance
+            </Badge>
+          )}
           {!capability.canEdit && (
             <Badge tone="neutral" icon="alert">
               View only
@@ -186,7 +207,9 @@ export function OrderDetail() {
         title={pending?.label ?? ''}
         subtitle={
           pending
-            ? `${po.id} · ${location?.shortName ?? po.locationId} · moves to ${STATUS_LABEL[pending.to]}`
+            ? pending.to === 'accounts_cleared'
+              ? `${po.id} · ${location?.shortName ?? po.locationId} · recorded as cleared by Finance`
+              : `${po.id} · ${location?.shortName ?? po.locationId} · moves to ${STATUS_LABEL[pending.to]}`
             : undefined
         }
         footer={
@@ -252,8 +275,8 @@ export function OrderDetail() {
         {pending?.to === 'accounts_cleared' && (
           <p className="mt-3 flex items-start gap-2 rounded-xl border border-line bg-surface-2 px-3 py-2.5 text-[12px] text-ink-2">
             <Icon name="wallet" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
-            The printed order form comes out of SQL Accounting. Clearing here releases the order to
-            the warehouse for picking.
+            The printed order form comes out of SQL Accounting. The warehouse already has this
+            order; clearing here records that accounts has it too.
           </p>
         )}
       </Modal>

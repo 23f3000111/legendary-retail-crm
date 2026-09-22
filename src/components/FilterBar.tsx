@@ -32,7 +32,7 @@ const RANGES: { value: RangeKey; label: string }[] = [
   { value: 'mtd', label: 'This month' },
 ]
 
-const VARIANTS: Variant[] = ['retail', 'set', 'tester']
+const VARIANTS: Variant[] = ['retail', 'set', 'travel', 'tester']
 
 /**
  * One control surface for the whole page. Every panel below reads the same

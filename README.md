@@ -13,7 +13,7 @@ say what is built and what is still missing.
 ```bash
 npm install
 npm run dev      # http://localhost:5180
-npm test         # 190 tests
+npm test         # 209 tests
 npm run build    # typecheck + production bundle into dist/
 ```
 
@@ -44,8 +44,12 @@ promoters keep the one they are given, and Davy, Imran, Kelly and Chloe can look
 within their reach — every look-up recorded on the Activity screen. The rules, and what they cost,
 are in [`docs/spec/auth.md`](docs/spec/auth.md).
 
-The sign-in screen carries a demo panel listing the logins. **It is one flag in the code and must
-be turned off before real staff use the system.**
+**Every device shares one server.** Sales, closings, orders and the activity log live in a
+Supabase project; each phone and laptop keeps a copy of what it may see and is told when
+another device writes. Switching the server on is two SQL files and two repository secrets —
+[the steps](docs/spec/deployment-and-backend.md#switching-the-shared-server-on). Without
+them the app runs on one browser with sample data, which is what the tests and local
+development use.
 
 ---
 
@@ -169,21 +173,25 @@ src/
 └─ pages/       signin · hq/ · store/ · orders/
 ```
 
-### What gets saved in the browser
+### Where the data lives
 
-The 90 days of seeded history are far too large for browser storage — an early version blew the
-quota the moment anyone recorded a sale. Instead the browser keeps a **small overlay of what this
-person changed** (a few hundred bytes), replayed over a freshly generated seed on load. It keeps a
-walkthrough's changes across a refresh, and it mirrors how the real system will work: the server
-holds the history, the device holds only what is in front of you.
+`src/api/` is the one door to the server. Everything that changes — a sale line, a closing, an
+order, a target, a line in the activity log — is a document with a kind and an id, written whole,
+so two promoters at one counter never overwrite each other. The store (`src/store/useData.ts`)
+keeps a copy of the documents this person may see, rebuilds every screen's figures from them, and
+changes the copy at once when an action is taken — the same document then goes to the server, and
+if the server refuses it the copy is reloaded. Other devices are told over a Realtime channel and
+ask for what changed; a timer and the tab coming to the front do the same.
 
-### Demo data
+Two backends sit behind that door: `supabase.ts` for the shared server, and `local.ts` for one
+browser — the tests run against the latter, and it keeps the same rules the SQL keeps.
+
+### Sample data
 
 `src/data/seed.ts` generates 90 days for the daily channels and three closed months for
-consignment, from a fixed seed, so every run is byte-identical. It carries stock forward day by
-day — sales draw it down, a top-up is raised when something crosses its reorder level, and the
-delivery lands a few days later — which is why the stock screen reconciles with the sales behind
-it.
+consignment, from a fixed seed, so every run is byte-identical. It is used by the tests and by
+the single-browser build ("Load the sample history" on the sign-in screen). The shared server
+starts empty — the client asked for the trial to begin with nothing on record.
 
 ---
 

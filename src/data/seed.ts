@@ -159,8 +159,13 @@ const STAGE_OF: Record<Exclude<PoStatus, 'rejected'>, number> = {
   received: 7,
 }
 
-export function buildSeed(seed: number = SEED_VALUE): CrmData {
-  return build(rng(seed))
+/**
+ * Sample data for tests and for a single-browser walkthrough. Ninety days of
+ * history ending on `today` — the fixed demo day by default, so the tests can
+ * name dates, or the real one for a walkthrough.
+ */
+export function buildSeed(seed: number = SEED_VALUE, today: DateStr = DEMO_TODAY): CrmData {
+  return build(rng(seed), today)
 }
 
 /**
@@ -278,8 +283,7 @@ const WRITE_OFF_WORD: Record<WriteOff['reason'], string> = {
   sample: 'Free sample',
 }
 
-function build(r: () => number): CrmData {
-  const today = DEMO_TODAY
+function build(r: () => number, today: DateStr): CrmData {
   const start = addDays(today, -(HISTORY_DAYS - 1))
   const days = dateRange(start, today)
 

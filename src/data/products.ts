@@ -28,11 +28,12 @@
 
 export type CollectionId = 'signature' | 'nyonya' | 'three-wishes' | 'spirit'
 
-export type Variant = 'retail' | 'set' | 'tester'
+export type Variant = 'retail' | 'set' | 'travel' | 'tester'
 
 export const VARIANT_LABEL: Record<Variant, string> = {
   retail: 'Bottle',
   set: 'Set',
+  travel: 'Travel kit',
   tester: 'Tester',
 }
 
@@ -48,12 +49,15 @@ export type PriceBasis = 'retail' | 'promotion'
  * one was charged is the only way the revenue can be right, and it is also the
  * only way to answer "how much did we sell at full price?"
  */
-export type PriceTier = 'retail' | 'promotion' | 'offer'
+export type PriceTier = 'retail' | 'promotion' | 'offer' | 'other'
 
 export const TIER_LABEL: Record<PriceTier, string> = {
   retail: 'Retail',
   promotion: 'Promotion',
   offer: 'Offer',
+  // "All items add an 'others' section for them to fill up other amount" —
+  // the counter types what was actually charged.
+  other: 'Other',
 }
 
 export interface Product {
@@ -125,7 +129,7 @@ export const products: Product[] = [
 interface SellableSeed {
   productId: string
   size: string
-  variant: 'retail' | 'set'
+  variant: 'retail' | 'set' | 'travel'
   retail: number
   promotion: number
   offer?: number
@@ -147,6 +151,10 @@ const sellableSeeds: SellableSeed[] = [
   { productId: 'ondeh-delights', size: '30ml', variant: 'retail', retail: 238, promotion: 188, popularity: 8 },
   { productId: 'man', size: '50ml', variant: 'retail', retail: 238, promotion: 188, popularity: 12, bestseller: true },
   { productId: 'three-wishes', size: 'Set', variant: 'set', retail: 238, promotion: 188, popularity: 9, bestseller: true },
+  // Added in the client's third revision, with a promotional price only. The
+  // retail price is set to the same figure until the client gives one.
+  { productId: 'three-wishes', size: 'Travel Kit', variant: 'travel', retail: 68, promotion: 68, popularity: 4 },
+  { productId: 'spirit-2', size: 'Travel Kit', variant: 'travel', retail: 68, promotion: 68, popularity: 3 },
   { productId: 'wish-1', size: 'Set', variant: 'set', retail: 128, promotion: 88, offer: 10, popularity: 6 },
   { productId: 'wish-2', size: 'Set', variant: 'set', retail: 128, promotion: 88, offer: 10, popularity: 5 },
   { productId: 'wish-3', size: 'Set', variant: 'set', retail: 128, promotion: 88, offer: 10, popularity: 5 },
@@ -193,6 +201,7 @@ const productName = (id: string) => products.find((p) => p.id === id)?.name ?? i
 const VARIANT_CODE: Record<Variant, string> = {
   retail: 'R',
   set: 'S',
+  travel: 'T',
   tester: 'X',
 }
 
@@ -215,7 +224,12 @@ const sellable: Sku[] = sellableSeeds.map((s) => ({
   id: `${s.productId}-${s.variant}`,
   code: codeFor(s.productId, s.variant, s.size),
   productId: s.productId,
-  label: s.variant === 'set' ? `${productName(s.productId)} · Set` : `${productName(s.productId)} · ${s.size}`,
+  label:
+    s.variant === 'set'
+      ? `${productName(s.productId)} · Set`
+      : s.variant === 'travel'
+        ? `${productName(s.productId)} · Travel Kit`
+        : `${productName(s.productId)} · ${s.size}`,
   variant: s.variant,
   size: s.size,
   retailPriceMYR: s.retail,
@@ -289,11 +303,15 @@ export const priceOf = (sku: Sku | undefined, basis: PriceBasis): number =>
 export const priceOfId = (skuId: string, basis: PriceBasis): number =>
   priceOf(skuById(skuId), basis)
 
-/** What one unit costs at a named tier. */
+/**
+ * What one unit costs at a named tier. "Other" has no list price — the counter
+ * types it — so it comes back as 0 here and the line carries its own figure.
+ */
 export const priceAtTier = (sku: Sku | undefined, tier: PriceTier): number => {
   if (!sku) return 0
   if (tier === 'retail') return sku.retailPriceMYR
   if (tier === 'offer') return sku.offerMYR ?? sku.promotionPriceMYR
+  if (tier === 'other') return 0
   return sku.promotionPriceMYR
 }
 
@@ -307,18 +325,22 @@ export const priceAtTier = (sku: Sku | undefined, tier: PriceTier): number => {
 export const tiersFor = (sku: Sku | undefined, basis: PriceBasis = 'promotion'): PriceTier[] => {
   if (!sku) return []
   const usual: PriceTier[] = basis === 'retail' ? ['retail', 'promotion'] : ['promotion', 'retail']
-  return sku.offerMYR ? [...usual, 'offer'] : usual
+  return [...(sku.offerMYR ? [...usual, 'offer' as const] : usual), 'other']
 }
 
 /**
- * What one line of a sale is worth.
+ * What one unit of a sale line is worth.
  *
- * The line's own tier where the counter chose one, and the store's basis where
- * it did not — which is every line of the seeded history and every dealer and
- * consignment line, since those report a figure rather than ringing up a sale.
+ * In order: the price the counter actually charged, where the line carries
+ * one; the line's tier, where a tier was chosen; and the store's own basis
+ * where neither was — which is every dealer and consignment line, since those
+ * report a figure rather than ringing up a sale.
  */
 export const lineUnitPrice = (
-  skuId: string,
-  tier: PriceTier | undefined,
+  line: { skuId: string; priceTier?: PriceTier; unitPriceMYR?: number },
   basis: PriceBasis,
-): number => (tier ? priceAtTier(skuById(skuId), tier) : priceOfId(skuId, basis))
+): number => {
+  if (typeof line.unitPriceMYR === 'number') return line.unitPriceMYR
+  if (line.priceTier && line.priceTier !== 'other') return priceAtTier(skuById(line.skuId), line.priceTier)
+  return priceOfId(line.skuId, basis)
+}

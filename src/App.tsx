@@ -7,10 +7,11 @@ import { Button } from './components/ui/Button'
 import { EmptyState } from './components/ui/DataTable'
 import { Panel } from './components/ui/Panel'
 import { canOpen, NAV } from './components/layout/nav'
-import { useCurrentUser } from './store/useAuth'
+import { useAuth, useCurrentUser, useNeedsStore } from './store/useAuth'
 import { useData } from './store/useData'
 
 import { Login } from './pages/Login'
+import { ChooseStore } from './pages/ChooseStore'
 import { Overview } from './pages/hq/Overview'
 import { Operations } from './pages/hq/Operations'
 import { Analytics } from './pages/hq/Analytics'
@@ -40,9 +41,12 @@ import { History } from './pages/store/History'
  */
 function RequireAccess({ children }: { children: ReactNode }) {
   const user = useCurrentUser()
+  const needsStore = useNeedsStore()
   const { pathname } = useLocation()
 
   if (!user) return <Navigate to="/" replace />
+  // A KL promoter says which store they are at before anything else.
+  if (needsStore) return <Navigate to="/choose-store" replace />
   if (canOpen(user.role, pathname)) return <>{children}</>
 
   // Redirect somewhere the role can actually open. Sending them to a `home`
@@ -72,19 +76,53 @@ function NotFound() {
   )
 }
 
-/** Tells the user, once, when saved state could not be read. */
-function RecoveryNotice() {
-  const recovered = useData((s) => s.recoveredFromError)
-  const dismiss = useData((s) => s.dismissRecovery)
+/** Keeps the store in step with the server for as long as somebody is signed in. */
+function Sync() {
+  const token = useAuth((s) => s.token)
+  const status = useAuth((s) => s.status)
+  const startSync = useData((s) => s.startSync)
+  const errorSeq = useData((s) => s.errorSeq)
+  const lastError = useData((s) => s.lastError)
   const push = useToasts((s) => s.push)
 
   useEffect(() => {
-    if (!recovered) return
-    push('Saved data could not be read, so it was reset to the seeded history.', 'critical')
-    dismiss()
-  }, [recovered, push, dismiss])
+    if (status !== 'ready' || !token) return
+    return startSync()
+  }, [status, token, startSync])
+
+  // Every refusal from the server, and every lost connection, is said once.
+  useEffect(() => {
+    if (errorSeq > 0 && lastError) push(lastError, 'critical')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [errorSeq])
 
   return null
+}
+
+/** Checks the saved session with the server before anything is drawn. */
+function Restore({ children }: { children: ReactNode }) {
+  const status = useAuth((s) => s.status)
+  const restore = useAuth((s) => s.restore)
+
+  useEffect(() => {
+    void restore()
+  }, [restore])
+
+  if (status === 'restoring') {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <p className="readout text-[12px] text-ink-3">Opening…</p>
+      </div>
+    )
+  }
+  return <>{children}</>
+}
+
+/** The store picker for a KL promoter, outside the shell. */
+function RequireSignIn({ children }: { children: ReactNode }) {
+  const user = useCurrentUser()
+  if (!user) return <Navigate to="/" replace />
+  return <>{children}</>
 }
 
 export default function App() {
@@ -92,12 +130,21 @@ export default function App() {
     // Hash routing so the build opens straight from a file, with no server
     // rewrite rules to configure before a walkthrough.
     <HashRouter>
-      <RecoveryNotice />
       <ToastHost />
+      <Sync />
+      <Restore>
       <Routes>
-        {/* The landing page is the PIN keypad. */}
+        {/* The landing page is the sign-in. */}
         <Route path="/" element={<Login />} />
         <Route path="/login" element={<Navigate to="/" replace />} />
+        <Route
+          path="/choose-store"
+          element={
+            <RequireSignIn>
+              <ChooseStore />
+            </RequireSignIn>
+          }
+        />
 
         <Route
           element={
@@ -138,6 +185,7 @@ export default function App() {
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </Restore>
     </HashRouter>
   )
 }

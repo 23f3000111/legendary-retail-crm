@@ -1,7 +1,97 @@
 # Where to host it, and what to build it on
 
-**Date:** 2026-08-23
-**Status:** Recommendation. Two decisions still open, both flagged below.
+**Date:** 2026-08-23, setup steps added 2026-09-22
+**Status:** The shared server is built (`supabase/migrations/`). The steps to
+switch it on are first; the reasoning behind the choices follows and is
+unchanged, except that sign-in is now username and password rather than a
+PIN, and the app is published from GitHub Pages rather than Cloudflare.
+
+---
+
+## Switching the shared server on
+
+Everything the app needs on the server is two SQL files. Nothing has to be
+configured in Supabase beyond creating the project. About fifteen minutes.
+
+### 1. Create the project
+
+At [supabase.com](https://supabase.com) → **New project**. Name it
+`legendary-crm`, region **Singapore (ap-southeast-1)**, and note the database
+password it asks you to set (you will not need it for the app, but keep it).
+Wait for the project to finish provisioning.
+
+### 2. Run the two SQL files
+
+In the project: **SQL Editor** → **New query**.
+
+1. Paste the whole of
+   [`supabase/migrations/0001_init.sql`](../../supabase/migrations/0001_init.sql)
+   and run it. It creates the tables, the functions the app calls, and the
+   key that encrypts the readable copy of each password.
+2. New query; paste the whole of
+   [`supabase/migrations/0002_people.sql`](../../supabase/migrations/0002_people.sql)
+   and run it. It creates the 39 logins from the client's list, each with a
+   random password. The result is the number added (39 the first time, 0 if
+   run again).
+
+### 3. Set Imran's password
+
+One password has to be known to begin. New query:
+
+```sql
+select set_bootstrap_password('imran', 'a-real-password-here-2026');
+```
+
+It has to pass the same rules as any other — at least ten characters, letters
+and a number, nothing obvious. Give it to Imran in person. He signs in, opens
+**Logins**, and reads everyone else's password off the screen to hand out
+(each look-up is written to the Activity screen). He should change his own
+from the account menu on first use.
+
+Davy can be given his the same way if Imran is not available:
+`select set_bootstrap_password('limdavy28', '…');`.
+
+### 4. Tell the app where the server is
+
+In the Supabase project: **Settings → API**. Copy the **Project URL** and the
+**anon public** key.
+
+In the GitHub repository: **Settings → Secrets and variables → Actions →
+New repository secret**, twice:
+
+| Name | Value |
+|---|---|
+| `VITE_SUPABASE_URL` | the Project URL, e.g. `https://abcdefghijkl.supabase.co` |
+| `VITE_SUPABASE_ANON_KEY` | the anon public key (starts `eyJ…`) |
+
+The anon key is designed to be public. Every table is closed to it, and every
+function the app calls checks for a valid session first — see the top of
+`0001_init.sql`.
+
+### 5. Publish
+
+**Actions → Build and deploy → Run workflow** (or push any commit). When the
+run is green the site at the usual address is talking to the server. The
+footer of every screen says so — "Shared with every device" with a green dot —
+and the sign-in screen no longer shows the sample logins.
+
+### 6. Before the promoters start
+
+- Sign in as Imran and check the Logins screen lists everyone.
+- Sign in as one promoter on a phone and one on a laptop; ring up a sale on
+  the phone and watch it appear on the laptop.
+- If anything from a dry run should be wiped, Davy or Imran: **Activity →
+  Start over**.
+
+### What is not connected yet
+
+**Mail.** The six-digit code for leadership needs a sender (Resend, Brevo, or
+the company's own SMTP). The server side is written and switched off
+(`settings.two_step = false`). When a sender is chosen, the send goes in one
+place — marked `TODO` in `sign_in()` — and the setting is flipped to `true`.
+
+**Backups.** The free tier takes none. The nightly `pg_dump` described below
+is still the right answer and still to do before the system holds real sales.
 
 ---
 
@@ -12,11 +102,13 @@
 | **Database & backend** | **Supabase** (managed Postgres) |
 | **Where** | Singapore `ap-southeast-1` — *unless* data must physically sit in Malaysia |
 | **Front end** | **Cloudflare Pages** — static, free, no asterisk |
-| **Sign-in** | Six-digit PIN for everyone. No Google, no passwords. |
+| **Sign-in** | Username and password; an e-mailed code for leadership once mail is connected. |
 | **Cost** | **Free to start.** Domain only, about RM 60 a year. |
 
-The schema is written and ready to run:
-[`supabase/migrations/0001_schema.sql`](../../supabase/migrations/0001_schema.sql).
+The server that is actually running is the document store in
+[`supabase/migrations/0001_init.sql`](../../supabase/migrations/0001_init.sql).
+The fuller relational schema drafted earlier is kept for reference in
+[`supabase/design/full-schema.sql`](../../supabase/design/full-schema.sql).
 
 ---
 

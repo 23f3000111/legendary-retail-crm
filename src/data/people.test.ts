@@ -15,6 +15,8 @@ import {
   suggestPassword,
   suggestUsername,
   PASSWORD_MIN,
+  KL_STORES,
+  startingPassword,
   type Person,
   type Role,
 } from './people'
@@ -117,9 +119,9 @@ describe('the revised staff list', () => {
     expect(personByUsername('nobody')).toBeUndefined()
   })
 
-  it('puts the promoters at the six stores the list names', () => {
+  it('puts the promoters at the five stores the list names, and the KL twelve on a choice', () => {
     const counts = new Map<string, number>()
-    for (const p of seedPeople.filter((x) => x.role === 'promoter')) {
+    for (const p of seedPeople.filter((x) => x.role === 'promoter' && x.locationId)) {
       counts.set(p.locationId!, (counts.get(p.locationId!) ?? 0) + 1)
     }
     expect(counts.get('klia-t2')).toBe(6)
@@ -127,14 +129,20 @@ describe('the revised staff list', () => {
     expect(counts.get('parkson-imago')).toBe(1)
     expect(counts.get('genting')).toBe(2)
     expect(counts.get('melaka')).toBe(3)
-    // The twelve listed under "KL" — which KL store is still to be confirmed.
-    expect(counts.get('pavilion-5')).toBe(12)
+
+    // The twelve listed under "KL" choose one of the four KL stores at sign-in.
+    const kl = seedPeople.filter((p) => p.storeChoices?.length)
+    expect(kl).toHaveLength(12)
+    expect(kl.every((p) => p.role === 'promoter' && !p.locationId)).toBe(true)
+    expect(KL_STORES).toEqual(['pavilion-5', 'klcc-isetan', 'parkson-pavilion', 'bsas'])
+    expect(kl.every((p) => p.storeChoices === KL_STORES)).toBe(true)
   })
 
-  it('flags the twelve whose store is a placeholder, and nobody else', () => {
-    const flagged = seedPeople.filter((p) => p.placeholder)
-    expect(flagged).toHaveLength(12)
-    expect(flagged.every((p) => p.locationId === 'pavilion-5')).toBe(true)
+  it('never carries a password on a person', () => {
+    for (const p of seedPeople) {
+      expect('password' in p, p.username).toBe(false)
+      expect('passwordHistory' in p, p.username).toBe(false)
+    }
   })
 })
 
@@ -280,41 +288,30 @@ describe('who can be seen', () => {
 
 describe('password rules', () => {
   it('refuses anything too short', () => {
-    expect(checkPassword('a1b2c3', siewFang).ok).toBe(false)
+    expect(checkPassword('a1b2c3').ok).toBe(false)
     // One short of the minimum, so it is refused; exactly the minimum is not.
-    expect(checkPassword('x'.repeat(PASSWORD_MIN - 2) + '1', siewFang).ok).toBe(false)
-    expect(checkPassword('kebaya' + '1'.repeat(PASSWORD_MIN - 6), siewFang).ok).toBe(true)
+    expect(checkPassword('x'.repeat(PASSWORD_MIN - 2) + '1').ok).toBe(false)
+    expect(checkPassword('kebaya' + '1'.repeat(PASSWORD_MIN - 6)).ok).toBe(true)
   })
 
   it('wants letters and a number', () => {
-    expect(checkPassword('abcdefghijk', siewFang).ok).toBe(false)
-    expect(checkPassword('1234567890123', siewFang).ok).toBe(false)
+    expect(checkPassword('abcdefghijk').ok).toBe(false)
+    expect(checkPassword('1234567890123').ok).toBe(false)
   })
 
   it('refuses the obvious ones, however they are dressed up', () => {
     for (const weak of ['mypassword1', 'legendary123', 'qwerty12345', 'perfume2026']) {
-      expect(checkPassword(weak, siewFang).ok, weak).toBe(false)
+      expect(checkPassword(weak).ok, weak).toBe(false)
     }
   })
 
-  it('refuses the one already in use', () => {
-    expect(checkPassword(siewFang.password, siewFang).ok).toBe(false)
-  })
-
-  it('refuses one this person has had before', () => {
-    const withHistory: Person = { ...siewFang, passwordHistory: ['orchid-violet-482'] }
-    const result = checkPassword('orchid-violet-482', withHistory)
-    expect(result.ok).toBe(false)
-    expect(result.error).toMatch(/used before/i)
-  })
-
   it('accepts a good one', () => {
-    expect(checkPassword('kebaya-tanjung-417', siewFang).ok).toBe(true)
+    expect(checkPassword('kebaya-tanjung-417').ok).toBe(true)
   })
 
   it('only ever suggests one that passes its own rules', () => {
     for (let i = 0; i < 200; i++) {
-      expect(checkPassword(suggestPassword(), siewFang).ok).toBe(true)
+      expect(checkPassword(suggestPassword()).ok).toBe(true)
     }
   })
 
@@ -324,9 +321,9 @@ describe('password rules', () => {
     expect(passwordStrength('kebaya-tanjung-417!')).toBe(3)
   })
 
-  it('seeds a starting password nobody could guess from the name alone', () => {
+  it('gives the local build a starting password that passes its own rules', () => {
     for (const p of seedPeople) {
-      expect(p.password.length, p.username).toBeGreaterThanOrEqual(PASSWORD_MIN)
+      expect(checkPassword(startingPassword(p.username)).ok, p.username).toBe(true)
     }
   })
 })

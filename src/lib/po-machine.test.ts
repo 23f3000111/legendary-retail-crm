@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   availableTransitions,
+  awaitingFinance,
+  canClearAccounts,
   canTransition,
   chainProgress,
   effectiveQty,
@@ -26,12 +28,11 @@ const order = (overrides: Partial<PurchaseOrder> = {}): PurchaseOrder => ({
 })
 
 describe('the chain the client confirmed', () => {
-  it('walks store → Kelly → Finance → warehouse → store', () => {
+  it('walks store → Kelly → warehouse → store, with no wait on Finance', () => {
     const path: [string, string, Role][] = [
       ['draft', 'submitted', 'promoter'],
       ['submitted', 'approved', 'ops'],
-      ['approved', 'accounts_cleared', 'finance'],
-      ['accounts_cleared', 'packed', 'warehouse'],
+      ['approved', 'packed', 'warehouse'],
       ['packed', 'in_transit', 'warehouse'],
       ['in_transit', 'received', 'promoter'],
     ]
@@ -42,6 +43,32 @@ describe('the chain the client confirmed', () => {
 
   it('lets Davy approve when Kelly is away', () => {
     expect(canTransition('submitted', 'approved', 'md')).toBe(true)
+  })
+
+  // Third revision: Finance and the warehouse receive an approved order at
+  // the same time. Finance's clearance is recorded beside the chain.
+  it('lets Finance clear an approved order whether or not it has been packed', () => {
+    expect(canClearAccounts(order({ status: 'approved' }), 'finance')).toBe(true)
+    expect(canClearAccounts(order({ status: 'packed' }), 'finance')).toBe(true)
+    expect(canClearAccounts(order({ status: 'received' }), 'finance')).toBe(true)
+    expect(canClearAccounts(order({ status: 'submitted' }), 'finance')).toBe(false)
+    expect(canClearAccounts(order({ status: 'rejected' }), 'finance')).toBe(false)
+    expect(
+      canClearAccounts(order({ status: 'approved', financeClearedAt: '2026-09-22T10:00:00+08:00' }), 'finance'),
+    ).toBe(false)
+  })
+
+  it('keeps clearance to Finance', () => {
+    for (const role of ['ops', 'md', 'warehouse', 'pa', 'director', 'promoter', 'it'] as Role[]) {
+      expect(canClearAccounts(order({ status: 'approved' }), role), role).toBe(false)
+    }
+  })
+
+  it('queues an approved order for Finance until it is cleared', () => {
+    expect(awaitingFinance(order({ status: 'approved' }))).toBe(true)
+    expect(awaitingFinance(order({ status: 'in_transit' }))).toBe(true)
+    expect(awaitingFinance(order({ status: 'submitted' }))).toBe(false)
+    expect(awaitingFinance(order({ status: 'packed', financeClearedAt: '2026-09-22T10:00:00+08:00' }))).toBe(false)
   })
 
   // The hierarchy chart gives "approves changes and PO" to the Managing
@@ -77,8 +104,8 @@ describe('illegal moves', () => {
 describe('who may do what', () => {
   it('stops a role making another role’s move', () => {
     expect(canTransition('submitted', 'approved', 'promoter')).toBe(false)
-    expect(canTransition('approved', 'accounts_cleared', 'warehouse')).toBe(false)
-    expect(canTransition('accounts_cleared', 'packed', 'finance')).toBe(false)
+    expect(canTransition('approved', 'packed', 'finance')).toBe(false)
+    expect(canTransition('approved', 'packed', 'ops')).toBe(false)
   })
 
   it('gives the founder no move anywhere — he observes only', () => {

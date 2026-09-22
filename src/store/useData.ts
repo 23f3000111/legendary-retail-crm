@@ -3,65 +3,52 @@
  * figure on screen is derived from it by a pure selector — so two screens can
  * never disagree about a number.
  *
- * **What gets saved.** The 90 days of seeded history are far too large for
- * browser storage, so they are never written there. Instead the browser keeps a
- * small overlay of what *this person changed* — the sales they logged, the days
- * they filed, the orders they raised or moved — and that overlay is replayed
- * over a freshly generated seed on load. It keeps a walkthrough's changes across
- * a refresh, and it mirrors how the real system will work: the server holds the
- * history, the device holds only what is in front of you.
+ * **Where it comes from.** The server (`api/`) holds everything as documents —
+ * sale lines, closings, orders, targets, promotions, lines of the activity
+ * log. This store keeps a copy of the ones this person may see and rebuilds
+ * the working set from them. Every action changes the copy at once, so the
+ * screen never waits, and sends the same document to the server; if the
+ * server refuses, the copy is reloaded so nothing false is left on screen.
+ *
+ * **How it stays current.** Another device's write arrives as a signal; this
+ * store then asks for everything since it last looked. It also asks on a timer
+ * and whenever the tab comes back to the front, so a promoter's RM 188 shows
+ * on her colleague's phone within seconds either way.
  */
 import { create } from 'zustand'
-import { persist, createJSONStorage } from 'zustand/middleware'
-import { buildSeed } from '../data/seed'
-import { canTransition } from '../lib/po-machine'
-import {
-  can,
-  canResetPasswordOf,
-  canSeePasswordOf,
-  checkPassword,
-  seedPeople,
-  ROLE_LABEL,
-  type Person,
-  type Role,
-} from '../data/people'
-import { daysBetween, formatDate } from '../lib/dates'
+import { backend, localBackend } from '../api'
+import { docKey, type Doc, type DocKind, type PutDoc, type Result, type Snapshot } from '../api/backend'
+import { canClearAccounts, canTransition } from '../lib/po-machine'
+import { can, seedPeople, ROLE_LABEL, type Person, type Role } from '../data/people'
+import { daysBetween, formatDate, todayInMalaysia } from '../lib/dates'
 import { skuLabel, TIER_LABEL } from '../data/products'
 import { countryName, MALAYSIA_SEGMENT_LABEL, type MalaysiaSegment } from '../data/countries'
 import { locationName } from '../data/locations'
 import { rm } from '../lib/format'
-import {
-  auditId,
-  getAuditActor,
-  newestFirst,
-  type AuditEntry,
-  type AuditKind,
-} from '../lib/audit'
+import { getSession, getSessionToken } from '../lib/session'
+import { auditId, getAuditActor, newestFirst, type AuditEntry, type AuditKind } from '../lib/audit'
+import { newId } from '../lib/ids'
+import { deriveAlerts } from './selectors'
 import type {
   Alert,
   Closing,
   CrmData,
+  DateStr,
   PoStatus,
   PurchaseOrder,
   SaleLine,
   Target,
 } from '../data/types'
 import type { Promotion } from '../data/promotions'
-
-const STORAGE_KEY = 'legendary-crm-v3'
+import { DEMO_TODAY } from '../data/seed'
 
 /** Corrections are allowed for three days after the period (Q19). */
 export const CORRECTION_WINDOW_DAYS = 3
 
-/**
- * How much of the activity log the browser keeps.
- *
- * This is a limit of the wireframe, not of the design: browser storage is a
- * few megabytes and the seeded history alone would fill it. The real system
- * writes every row to Postgres and keeps them for ten years (Q88). The cap is
- * on what is *replayed after a refresh*, never on what is recorded.
- */
-export const AUDIT_OVERLAY_LIMIT = 400
+/** How often to ask the server for changes, on top of the change signal. */
+const POLL_MS = 20_000
+/** How far back an incremental load overlaps, so a write in flight is never missed. */
+const OVERLAP_MS = 3_000
 
 /** The verb for each move, so the log reads as a sentence. */
 const PO_ACTION_WORD: Record<PoStatus, string> = {
@@ -81,6 +68,7 @@ const FIELD_LABEL: Record<string, string> = {
   role: 'Job',
   title: 'Title',
   locationId: 'Store',
+  storeChoices: 'Stores',
   initials: 'Initials',
   accent: 'Colour',
   home: 'Home screen',
@@ -88,119 +76,28 @@ const FIELD_LABEL: Record<string, string> = {
   active: 'Can sign in',
 }
 
-/** The small slice of state that is actually written to the browser. */
-interface Overlay {
-  liveLines: Record<string, SaleLine[]>
-  /** Logins added since the seed. */
-  newUsers: Person[]
-  /** Edits to seeded logins, by id. */
-  userPatches: Record<string, Partial<Person>>
-  /** Closings this person filed or corrected. */
-  filedClosings: Closing[]
-  /** Orders this person raised. */
-  newOrders: PurchaseOrder[]
-  /** Moves made on seeded orders, by order id. */
-  orderPatches: Record<string, Pick<PurchaseOrder, 'status' | 'lines' | 'events'>>
-  readAlertIds: string[]
-  removedAlertIds: string[]
-  /** Actions taken in this browser, newest first. Capped — see the note above. */
-  auditEntries: AuditEntry[]
-  changedTargets: Target[]
-  /** Promotions recorded since the seed. */
-  newPromotions: Promotion[]
-  /** Edits to seeded promotions, by id. */
-  promotionPatches: Record<string, Partial<Promotion>>
-}
-
-const emptyOverlay = (): Overlay => ({
-  liveLines: {},
-  newUsers: [],
-  userPatches: {},
-  filedClosings: [],
-  newOrders: [],
-  orderPatches: {},
-  readAlertIds: [],
-  removedAlertIds: [],
-  auditEntries: [],
-  changedTargets: [],
-  newPromotions: [],
-  promotionPatches: {},
-})
-
-/** Replays an overlay over a fresh seed to rebuild the full working set. */
-function applyOverlay(seed: CrmData, overlay: Overlay): CrmData {
-  const filedIds = new Set(overlay.filedClosings.map((c) => `${c.locationId}::${c.period}`))
-  const closings = [
-    ...seed.closings.filter((c) => !filedIds.has(`${c.locationId}::${c.period}`)),
-    ...overlay.filedClosings,
-  ].sort((a, b) => (a.period < b.period ? -1 : 1))
-
-  const purchaseOrders = [
-    ...overlay.newOrders,
-    ...seed.purchaseOrders.map((p) =>
-      overlay.orderPatches[p.id] ? { ...p, ...overlay.orderPatches[p.id] } : p,
-    ),
-  ]
-
-  const removed = new Set(overlay.removedAlertIds)
-  const read = new Set(overlay.readAlertIds)
-  const alerts = seed.alerts
-    .filter((a) => !removed.has(a.id))
-    .map((a) => (read.has(a.id) ? { ...a, read: true } : a))
-
-  // A target may be *changed* or *set for the first time*, so the overlay both
-  // overrides seeded rows and contributes rows the seed never had.
-  const changed = new Map(overlay.changedTargets.map((t) => [`${t.locationId}::${t.month}`, t]))
-  const seededKeys = new Set(seed.targets.map((t) => `${t.locationId}::${t.month}`))
-  const targets = [
-    ...seed.targets.map((t) => changed.get(`${t.locationId}::${t.month}`) ?? t),
-    ...overlay.changedTargets.filter((t) => !seededKeys.has(`${t.locationId}::${t.month}`)),
-  ]
-
-  const promotions = [
-    ...seed.promotions.map((p) =>
-      overlay.promotionPatches[p.id] ? { ...p, ...overlay.promotionPatches[p.id] } : p,
-    ),
-    ...overlay.newPromotions,
-  ]
-
-  const users = [
-    ...seedPeople.map((u) =>
-      overlay.userPatches[u.id] ? { ...u, ...overlay.userPatches[u.id] } : u,
-    ),
-    ...overlay.newUsers,
-  ]
-
-  const audit = [...overlay.auditEntries, ...seed.audit].sort(newestFirst)
-
-  return {
-    today: seed.today,
-    closings,
-    purchaseOrders,
-    alerts,
-    targets,
-    promotions,
-    audit,
-    liveLines: { ...seed.liveLines, ...overlay.liveLines },
-    users,
-  }
-}
+export type SyncStatus = 'idle' | 'loading' | 'ready' | 'offline'
 
 export interface DataState extends CrmData {
   /** Everyone who can sign in. Editable at runtime by the MD, Kelly, Chloe or IT. */
   users: Person[]
-  /** Persisted slice — never read directly by screens. */
-  overlay: Overlay
-  /** Set when saved state could not be read and a fresh seed was substituted. */
-  recoveredFromError: boolean
+  /**
+   * Sales from earlier days that were never closed, by store and day. The
+   * promoter is shown these so a missed night can still be filed.
+   */
+  unfiledLines: Record<string, Record<DateStr, SaleLine[]>>
+  syncStatus: SyncStatus
+  lastSyncAt: string | null
+  /** The last thing the server refused or the last time it could not be reached. */
+  lastError: string | null
+  errorSeq: number
 
-  addSaleLine: (locationId: string, line: SaleLine) => void
   /**
    * One customer, everything they bought.
    *
    * A person who buys three bottles is one sale, not three — so the counter
    * builds the basket first and answers "where are they from?" once. Every line
-   * carries the same country, and the log gets one entry rather than three.
+   * carries the same country and sale id, and the log gets one entry.
    */
   recordSale: (args: {
     locationId: string
@@ -208,7 +105,9 @@ export interface DataState extends CrmData {
     countryCode?: string
     segment?: MalaysiaSegment
   }) => void
-  removeSaleLine: (locationId: string, index: number) => void
+  removeSaleLine: (lineId: string) => void
+  /** Takes back a whole basket — the client's "delete sales option". */
+  removeSale: (saleId: string) => void
 
   submitClosing: (closing: Closing) => void
   requestCorrection: (args: {
@@ -216,13 +115,13 @@ export interface DataState extends CrmData {
     requestedBy: string
     reason: string
     revenueMYR: number
-  }) => { ok: boolean; error?: string }
+  }) => Result
   resolveCorrection: (args: {
     closingId: string
     approvedBy: string
     role: Role
     approve: boolean
-  }) => { ok: boolean; error?: string }
+  }) => Result
 
   createPurchaseOrder: (po: PurchaseOrder) => void
   transitionPo: (args: {
@@ -232,41 +131,27 @@ export interface DataState extends CrmData {
     role: Role
     note?: string
     approvedQty?: Record<string, number>
-  }) => { ok: boolean; error?: string }
+  }) => Result
+  /** Finance's acknowledgement, beside the chain. */
+  clearAccounts: (args: { poId: string; actor: string; role: Role; note?: string }) => Result
 
-  addUser: (person: Person) => void
+  addUser: (person: Person, password: string) => Promise<Result>
   /**
-   * `silent` is for the two callers that write their own, better, log entry —
-   * changing a PIN and enabling or disabling a login. Everything else logs
-   * itself here so no edit can slip through unrecorded.
+   * `silent` is for the callers that write their own, better, log entry.
+   * Everything else logs itself here so no edit can slip through unrecorded.
    */
   updateUser: (id: string, changes: Partial<Person>, opts?: { silent?: boolean }) => void
   setUserActive: (id: string, active: boolean) => void
   /**
-   * Changes someone's PIN. Authority and PIN rules are checked here, not only
-   * in the form — a screen can be wrong, the store is the last line.
+   * Sets somebody's password. The server checks authority and the rules; the
+   * result is whatever it said.
    */
+  setPassword: (args: { actor: Person; targetId: string; password: string }) => Promise<Result>
   /**
-   * Sets somebody's password. Authority and rules are checked here, not only
-   * in the form — a screen can be wrong, the store is the last line.
+   * Reads somebody's password back, and the server writes down that it
+   * happened. Screens never hold a password otherwise.
    */
-  setPassword: (args: {
-    actor: Person
-    targetId: string
-    password: string
-  }) => { ok: boolean; error?: string }
-  /**
-   * Reads somebody's password back, and writes down that it happened.
-   *
-   * The client requires senior staff to be able to look one up, as they could
-   * the PIN. Screens never read `person.password` directly; going through here
-   * is what makes "who looked at whose password" answerable.
-   */
-  revealPassword: (args: { actor: Person; targetId: string }) => {
-    ok: boolean
-    password?: string
-    error?: string
-  }
+  revealPassword: (args: { actor: Person; targetId: string }) => Promise<Result & { password?: string }>
 
   addPromotion: (promotion: Promotion) => void
   updatePromotion: (id: string, changes: Partial<Promotion>) => void
@@ -286,617 +171,641 @@ export interface DataState extends CrmData {
   markAlertRead: (id: string) => void
   markAllAlertsRead: () => void
   setTarget: (locationId: string, month: string, amountMYR: number) => void
-  dismissRecovery: () => void
-  resetDemo: () => void
+
+  /** Wipes every sale, closing and order on the server. Davy and Imran only. */
+  clearAllData: () => Promise<Result>
+
+  /** Pulls what changed since the last look, or everything. */
+  sync: (full?: boolean) => Promise<void>
+  /** Starts the change signal, the timer and the focus check. Returns the stop. */
+  startSync: () => () => void
+  /** Forgets everything on sign-out. */
+  clearSession: () => void
+  /** Loads the sample history into the local backend. Local builds only. */
+  resetDemo: (today?: DateStr) => void
+  /** Replaces the working set from a snapshot. Used by the sync and by the tests. */
+  applySnapshot: (snapshot: Snapshot, full: boolean) => void
 }
 
-const seeded = (): CrmData => buildSeed()
+// ── The documents ──────────────────────────────────────────────────────────
+
+const docs = new Map<string, Doc>()
+let people: Person[] = seedPeople
+let since: string | undefined
+let inflight: Promise<void> | null = null
+
+const live = <T>(kind: DocKind): T[] => {
+  const out: T[] = []
+  for (const d of docs.values()) if (d.kind === kind && !d.deleted) out.push(d.doc as T)
+  return out
+}
+
+/** The working set, from the documents. */
+function rebuild(today: DateStr): CrmData & { users: Person[]; unfiledLines: DataState['unfiledLines'] } {
+  const closings = live<Closing>('closing').sort((a, b) => (a.period < b.period ? -1 : 1))
+  const purchaseOrders = live<PurchaseOrder>('po').sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+  const targets = live<Target>('target')
+  const promotions = live<Promotion>('promotion')
+  const audit = live<AuditEntry>('audit').sort(newestFirst)
+  const readIds = new Set(live<{ id: string }>('alert_read').map((r) => r.id))
+
+  const liveLines: Record<string, SaleLine[]> = {}
+  const unfiledLines: DataState['unfiledLines'] = {}
+  const filed = new Set(closings.map((c) => `${c.locationId}::${c.period}`))
+  const lines = live<SaleLine>('sale_line').sort((a, b) => ((a.at ?? a.id ?? '') < (b.at ?? b.id ?? '') ? -1 : 1))
+  for (const l of lines) {
+    if (!l.locationId || !l.day) continue
+    if (l.day === today) {
+      ;(liveLines[l.locationId] ??= []).push(l)
+    } else if (l.day < today && !filed.has(`${l.locationId}::${l.day}`)) {
+      ;((unfiledLines[l.locationId] ??= {})[l.day] ??= []).push(l)
+    }
+  }
+
+  const base: CrmData = {
+    today,
+    closings,
+    purchaseOrders,
+    alerts: [],
+    targets,
+    promotions,
+    audit,
+    liveLines,
+    users: people,
+  }
+  const alerts: Alert[] = deriveAlerts(base, readIds)
+  return { ...base, alerts, users: people, unfiledLines }
+}
 
 /**
  * Who is acting.
  *
- * Normally the signed-in person, read from the plain module in `lib/audit` so
- * neither store has to import the other. An explicit actor wins — a purchase
- * order carries the name of whoever moved it — and if there is genuinely
- * nobody, the row says so rather than guessing.
+ * Normally the signed-in person. An explicit actor wins — a purchase order
+ * carries the name of whoever moved it — and if there is genuinely nobody,
+ * the row says so rather than guessing.
  */
 const resolveActor = (
-  s: DataState,
+  users: Person[],
   explicit?: { id: string; name: string; role: Role },
 ): { id: string; name: string; role: Role } => {
   if (explicit) return explicit
   const id = getAuditActor()
-  const user = id ? s.users.find((u) => u.id === id) : undefined
+  const user = id ? users.find((u) => u.id === id) : undefined
   if (user) return { id: user.id, name: user.name, role: user.role }
   return { id: 'unknown', name: 'Someone not signed in', role: 'promoter' }
 }
 
-/** Records a closing in both the working set and the overlay. */
-const withClosing = (state: DataState, closing: Closing) => {
-  const rest = state.closings.filter(
-    (c) => !(c.locationId === closing.locationId && c.period === closing.period),
-  )
-  const overlayRest = state.overlay.filedClosings.filter(
-    (c) => !(c.locationId === closing.locationId && c.period === closing.period),
-  )
-  return {
-    closings: [...rest, closing].sort((a, b) => (a.period < b.period ? -1 : 1)),
-    filedClosings: [...overlayRest, closing],
+const empty = (): CrmData => ({
+  today: todayInMalaysia(),
+  closings: [],
+  purchaseOrders: [],
+  alerts: [],
+  targets: [],
+  promotions: [],
+  audit: [],
+  liveLines: {},
+  users: seedPeople,
+})
+
+export const useData = create<DataState>()((set, get) => {
+  /** Changes the copy at once and sends the documents on. */
+  const write = (put: PutDoc[]) => {
+    const now = new Date().toISOString()
+    for (const d of put) {
+      docs.set(docKey(d.kind, d.id), { ...d, updatedAt: now, updatedBy: getSession()?.personId, deleted: false })
+    }
+    set(rebuild(get().today))
+    void backend()
+      .put(getSessionToken(), put)
+      .then((r) => {
+        if (!r.ok) {
+          fail(r.error ?? 'The server refused that change.')
+          void get().sync(true)
+        } else {
+          backend().notify()
+        }
+      })
   }
-}
 
-export const useData = create<DataState>()(
-  persist(
-    (set, get) => ({
-      ...seeded(),
-      users: seedPeople,
-      overlay: emptyOverlay(),
-      recoveredFromError: false,
-
-      // ── The activity log ─────────────────────────────────────────────
-      record: ({ actor, ...rest }) =>
-        set((s) => {
-          const who = resolveActor(s, actor)
-          const at = new Date().toISOString()
-          const entry: AuditEntry = {
-            id: auditId(at),
-            at,
-            actorId: who.id,
-            actorName: who.name,
-            actorRole: who.role,
-            ...rest,
-          }
-          return {
-            audit: [entry, ...s.audit],
-            overlay: {
-              ...s.overlay,
-              auditEntries: [entry, ...s.overlay.auditEntries].slice(0, AUDIT_OVERLAY_LIMIT),
-            },
-          }
-        }),
-
-      // ── Counter ──────────────────────────────────────────────────────
-      addSaleLine: (locationId, line) => {
-        set((s) => {
-          const next = [...(s.liveLines[locationId] ?? []), line]
-          return {
-            liveLines: { ...s.liveLines, [locationId]: next },
-            overlay: { ...s.overlay, liveLines: { ...s.overlay.liveLines, [locationId]: next } },
-          }
-        })
-        get().record({
-          kind: 'sale',
-          action: 'sale.recorded',
-          summary: `Recorded ${line.qty} × ${skuLabel(line.skuId)} at ${locationName(locationId)}`,
-          entityId: line.skuId,
-          locationId,
-          detail: line.countryCode ? `Customer from ${countryName(line.countryCode)}` : undefined,
-        })
-      },
-
-      recordSale: ({ locationId, lines, countryCode, segment }) => {
-        if (lines.length === 0) return
-        const stamped = lines.map((l) => ({
-          ...l,
-          ...(countryCode ? { countryCode } : {}),
-          ...(segment ? { segment } : {}),
-        }))
-        set((s) => {
-          const next = [...(s.liveLines[locationId] ?? []), ...stamped]
-          return {
-            liveLines: { ...s.liveLines, [locationId]: next },
-            overlay: { ...s.overlay, liveLines: { ...s.overlay.liveLines, [locationId]: next } },
-          }
-        })
-        const units = stamped.reduce((a, l) => a + l.qty, 0)
-        // The same bottle at two prices is two lines but one product.
-        const distinct = new Set(stamped.map((l) => l.skuId)).size
-        const what =
-          stamped.length === 1
-            ? `${stamped[0].qty} × ${skuLabel(stamped[0].skuId)}${
-                stamped[0].priceTier ? ` at the ${TIER_LABEL[stamped[0].priceTier].toLowerCase()} price` : ''
-              }`
-            : `${units} units across ${distinct} ${distinct === 1 ? 'product' : 'products'}`
-        get().record({
-          kind: 'sale',
-          action: 'sale.recorded',
-          summary: `Recorded a sale — ${what} at ${locationName(locationId)}`,
-          locationId,
-          detail: countryCode
-            ? `Customer from ${countryName(countryCode)}${segment ? ` · ${MALAYSIA_SEGMENT_LABEL[segment]}` : ''}`
-            : undefined,
-        })
-      },
-
-      removeSaleLine: (locationId, index) => {
-        const removed = get().liveLines[locationId]?.[index]
-        set((s) => {
-          const next = (s.liveLines[locationId] ?? []).filter((_, i) => i !== index)
-          return {
-            liveLines: { ...s.liveLines, [locationId]: next },
-            overlay: { ...s.overlay, liveLines: { ...s.overlay.liveLines, [locationId]: next } },
-          }
-        })
-        if (removed) {
-          get().record({
-            kind: 'sale',
-            action: 'sale.removed',
-            summary: `Took back ${removed.qty} × ${skuLabel(removed.skuId)} at ${locationName(locationId)}`,
-            entityId: removed.skuId,
-            locationId,
-          })
+  const remove = (kind: DocKind, ids: string[]) => {
+    const now = new Date().toISOString()
+    for (const id of ids) {
+      const existing = docs.get(docKey(kind, id))
+      if (existing) docs.set(docKey(kind, id), { ...existing, deleted: true, updatedAt: now })
+    }
+    set(rebuild(get().today))
+    void backend()
+      .remove(getSessionToken(), kind, ids)
+      .then((r) => {
+        if (!r.ok) {
+          fail(r.error ?? 'The server refused that change.')
+          void get().sync(true)
+        } else {
+          backend().notify()
         }
-      },
+      })
+  }
 
-      // ── Closing ──────────────────────────────────────────────────────
-      submitClosing: (closing) => {
-        set((s) => {
-          const { closings, filedClosings } = withClosing(s, closing)
-          const liveLines = { ...s.liveLines }
-          delete liveLines[closing.locationId]
-          const overlayLive = { ...s.overlay.liveLines }
-          delete overlayLive[closing.locationId]
-          const alertId = `missed-${closing.locationId}-${closing.period}`
+  const fail = (message: string) =>
+    set((s) => ({ lastError: message, errorSeq: s.errorSeq + 1 }))
 
-          return {
-            closings,
-            liveLines,
-            alerts: s.alerts.filter((a) => a.id !== alertId),
-            overlay: {
-              ...s.overlay,
-              filedClosings,
-              liveLines: overlayLive,
-              removedAlertIds: [...s.overlay.removedAlertIds, alertId],
-            },
-          }
-        })
-        const units = closing.lines.reduce((a, l) => a + l.qty, 0)
-        get().record({
-          kind: 'closing',
-          action: 'closing.filed',
-          summary: `Filed the ${formatDate(closing.period)} closing for ${locationName(closing.locationId)} — ${rm(closing.revenueMYR)}`,
-          entityId: closing.id,
-          locationId: closing.locationId,
-          detail: `${units} units${closing.writeOffs.length ? `, ${closing.writeOffs.length} written off` : ''}`,
-        })
-      },
+  const patchDoc = <T>(kind: DocKind, id: string, next: T, extra: Partial<PutDoc> = {}) =>
+    write([{ kind, id, doc: next, ...extra }])
 
-      requestCorrection: ({ closingId, requestedBy, reason, revenueMYR }) => {
-        const state = get()
-        const closing = state.closings.find((c) => c.id === closingId)
-        if (!closing) return { ok: false, error: 'That closing no longer exists.' }
-        if (!reason.trim()) return { ok: false, error: 'Say what needs correcting.' }
+  return {
+    ...empty(),
+    unfiledLines: {},
+    syncStatus: 'idle',
+    lastSyncAt: null,
+    lastError: null,
+    errorSeq: 0,
 
-        const age = daysBetween(closing.period, state.today)
-        if (age > CORRECTION_WINDOW_DAYS) {
-          return {
-            ok: false,
-            error: `Corrections are only allowed for ${CORRECTION_WINDOW_DAYS} days. This one is ${age} days old — ask Kelly to reopen it.`,
-          }
-        }
-
-        const corrected: Closing = {
-          ...closing,
-          revenueMYR,
-          correction: {
-            requestedBy,
-            requestedAt: new Date().toISOString(),
-            reason: reason.trim(),
-            previousRevenueMYR: closing.revenueMYR,
-            status: 'pending',
-          },
-        }
-
-        set((s) => {
-          const { closings, filedClosings } = withClosing(s, corrected)
-          const alert: Alert = {
-            id: `correction-${closingId}`,
-            type: 'correction_pending',
-            severity: 'warn',
-            locationId: closing.locationId,
-            message: `${requestedBy} asked to correct the ${closing.period} closing`,
-            at: new Date().toISOString(),
-            read: false,
-          }
-          return {
-            closings,
-            alerts: [alert, ...s.alerts],
-            overlay: { ...s.overlay, filedClosings },
-          }
-        })
-        get().record({
-          kind: 'correction',
-          action: 'correction.requested',
-          summary: `Asked to correct the ${formatDate(closing.period)} closing for ${locationName(closing.locationId)}`,
-          entityId: closingId,
-          locationId: closing.locationId,
-          detail: `${rm(closing.revenueMYR)} → ${rm(revenueMYR)} · ${reason.trim()}`,
-        })
-        return { ok: true }
-      },
-
-      resolveCorrection: ({ closingId, approvedBy, role, approve }) => {
-        if (!can(role).approveCorrections) {
-          return { ok: false, error: 'Only Kelly or Davy can approve a correction.' }
-        }
-        const closing = get().closings.find((c) => c.id === closingId)
-        if (!closing?.correction) return { ok: false, error: 'There is nothing to decide.' }
-
-        const resolved: Closing = {
-          ...closing,
-          // A rejected correction puts the original figure back.
-          revenueMYR: approve ? closing.revenueMYR : closing.correction.previousRevenueMYR,
-          correction: {
-            ...closing.correction,
-            approvedBy,
-            approvedAt: new Date().toISOString(),
-            status: approve ? 'approved' : 'rejected',
-          },
-        }
-
-        set((s) => {
-          const { closings, filedClosings } = withClosing(s, resolved)
-          return {
-            closings,
-            alerts: s.alerts.filter((a) => a.id !== `correction-${closingId}`),
-            overlay: {
-              ...s.overlay,
-              filedClosings,
-              removedAlertIds: [...s.overlay.removedAlertIds, `correction-${closingId}`],
-            },
-          }
-        })
-        get().record({
-          kind: 'correction',
-          action: approve ? 'correction.approved' : 'correction.rejected',
-          summary: `${approve ? 'Approved' : 'Rejected'} the correction to the ${formatDate(closing.period)} closing for ${locationName(closing.locationId)}`,
-          entityId: closingId,
-          locationId: closing.locationId,
-          detail: approve
-            ? `${rm(closing.correction.previousRevenueMYR)} → ${rm(closing.revenueMYR)}`
-            : `Left at ${rm(closing.correction.previousRevenueMYR)}`,
-          actor: { id: getAuditActor() ?? 'unknown', name: approvedBy, role },
-        })
-        return { ok: true }
-      },
-
-      // ── Orders ───────────────────────────────────────────────────────
-      createPurchaseOrder: (po) => {
-        set((s) => ({
-          purchaseOrders: [po, ...s.purchaseOrders],
-          overlay: { ...s.overlay, newOrders: [po, ...s.overlay.newOrders] },
-        }))
-        const units = po.lines.reduce((a, l) => a + l.qtyRequested, 0)
-        get().record({
-          kind: 'order',
-          action: 'order.raised',
-          summary: `Raised ${po.id} for ${locationName(po.locationId)} — ${po.lines.length} items, ${units} units`,
-          entityId: po.id,
-          locationId: po.locationId,
-          detail: po.priority === 'urgent' ? 'Marked urgent' : undefined,
-        })
-      },
-
-      transitionPo: ({ poId, to, actor, role, note, approvedQty }) => {
-        const po = get().purchaseOrders.find((p) => p.id === poId)
-        if (!po) return { ok: false, error: 'That order no longer exists.' }
-        if (!can(role).canEdit) return { ok: false, error: 'Your sign-in is read-only.' }
-        if (!canTransition(po.status, to, role)) {
-          return { ok: false, error: `A ${role} cannot move an order from ${po.status} to ${to}.` }
-        }
-        if (to === 'rejected' && !note?.trim()) {
-          return { ok: false, error: 'Rejecting an order needs a reason.' }
-        }
-
-        const lines = po.lines.map((l) => {
-          if (to === 'approved') return { ...l, qtyApproved: approvedQty?.[l.skuId] ?? l.qtyRequested }
-          if (to === 'packed') return { ...l, qtyShipped: l.qtyApproved ?? l.qtyRequested }
-          return l
-        })
-        const events = [
-          ...po.events,
-          { status: to, actor, role, at: new Date().toISOString(), note },
-        ]
-        const patch = { status: to, lines, events }
-
-        set((s) => {
-          const isNew = s.overlay.newOrders.some((p) => p.id === poId)
-          return {
-            purchaseOrders: s.purchaseOrders.map((p) => (p.id === poId ? { ...p, ...patch } : p)),
-            alerts: s.alerts.filter((a) => a.id !== `po-${poId}`),
-            overlay: {
-              ...s.overlay,
-              // A brand-new order is stored whole; a seeded one only as a patch.
-              newOrders: isNew
-                ? s.overlay.newOrders.map((p) => (p.id === poId ? { ...p, ...patch } : p))
-                : s.overlay.newOrders,
-              orderPatches: isNew
-                ? s.overlay.orderPatches
-                : { ...s.overlay.orderPatches, [poId]: patch },
-              removedAlertIds: [...s.overlay.removedAlertIds, `po-${poId}`],
-            },
-          }
-        })
-        const trimmed =
-          to === 'approved'
-            ? lines.filter((l, i) => l.qtyApproved !== po.lines[i].qtyRequested).length
-            : 0
-        get().record({
-          kind: 'order',
-          action: `order.${to}`,
-          summary: `${PO_ACTION_WORD[to]} ${poId} for ${locationName(po.locationId)}`,
-          entityId: poId,
-          locationId: po.locationId,
-          detail:
-            note?.trim() ||
-            (trimmed > 0 ? `${trimmed} ${trimmed === 1 ? 'line' : 'lines'} trimmed` : undefined),
-          actor: { id: getAuditActor() ?? 'unknown', name: actor, role },
-        })
-        return { ok: true }
-      },
-
-      // ── Logins ───────────────────────────────────────────────────────
-      addUser: (person) => {
-        set((s) => ({
-          users: [...s.users, person],
-          overlay: { ...s.overlay, newUsers: [...s.overlay.newUsers, person] },
-        }))
-        get().record({
-          kind: 'login',
-          action: 'login.created',
-          summary: `Created a login for ${person.name}, ${ROLE_LABEL[person.role]}`,
-          entityId: person.id,
-          locationId: person.locationId,
-          // The password is never written to the log, here or anywhere else.
-          detail: 'Issued them a starting password',
-        })
-      },
-
-      updateUser: (id, changes, opts) => {
-        const before = get().users.find((u) => u.id === id)
-        set((s) => {
-          const isNew = s.overlay.newUsers.some((u) => u.id === id)
-          return {
-            users: s.users.map((u) => (u.id === id ? { ...u, ...changes } : u)),
-            overlay: {
-              ...s.overlay,
-              // A login added here is stored whole; a seeded one only as a patch.
-              newUsers: isNew
-                ? s.overlay.newUsers.map((u) => (u.id === id ? { ...u, ...changes } : u))
-                : s.overlay.newUsers,
-              userPatches: isNew
-                ? s.overlay.userPatches
-                : { ...s.overlay.userPatches, [id]: { ...s.overlay.userPatches[id], ...changes } },
-            },
-          }
-        })
-        if (opts?.silent || !before) return
-        const fields = Object.keys(changes).filter(
-          (k) => before[k as keyof Person] !== changes[k as keyof Person],
-        )
-        if (fields.length === 0) return
-        get().record({
-          kind: 'login',
-          action: 'login.updated',
-          summary: `Edited the login for ${before.name}`,
-          entityId: id,
-          detail: fields.map((f) => FIELD_LABEL[f] ?? f).join(', ') + ' changed',
-        })
-      },
-
-      setUserActive: (id, active) => {
-        const target = get().users.find((u) => u.id === id)
-        get().updateUser(id, { active }, { silent: true })
-        if (!target) return
-        get().record({
-          kind: 'login',
-          action: active ? 'login.enabled' : 'login.disabled',
-          summary: `${active ? 'Let' : 'Stopped'} ${target.name} ${active ? 'sign in again' : 'signing in'}`,
-          entityId: id,
-        })
-      },
-
-      setPassword: ({ actor, targetId, password }) => {
-        const state = get()
-        const target = state.users.find((u) => u.id === targetId)
-        if (!target) return { ok: false, error: 'That login no longer exists.' }
-        if (!canResetPasswordOf(actor, target)) {
-          return {
-            ok: false,
-            error:
-              actor.id === target.id
-                ? 'Your role cannot change its own password. Ask a senior for a new one.'
-                : `You cannot set the password for ${target.name}.`,
-          }
-        }
-        const check = checkPassword(password, target)
-        if (!check.ok) return { ok: false, error: check.error }
-
-        get().updateUser(
-          targetId,
-          {
-            password,
-            // The old one joins the history so it can never be reused.
-            passwordHistory: [...target.passwordHistory, target.password],
-            passwordSetAt: new Date().toISOString(),
-            passwordSetBy: actor.name,
-          },
-          { silent: true },
-        )
-        get().record({
-          kind: 'password',
-          action: actor.id === targetId ? 'password.changed' : 'password.reset',
-          summary:
-            actor.id === targetId
-              ? 'Changed their own password'
-              : `Reset the password for ${target.name}, ${ROLE_LABEL[target.role]}`,
-          entityId: targetId,
-          // Never the password itself. A log of passwords would be worse than
-          // no log at all.
-          actor: { id: actor.id, name: actor.name, role: actor.role },
-        })
-        return { ok: true }
-      },
-
-      revealPassword: ({ actor, targetId }) => {
-        const target = get().users.find((u) => u.id === targetId)
-        if (!target) return { ok: false, error: 'That login no longer exists.' }
-        if (!canSeePasswordOf(actor, target)) {
-          return { ok: false, error: `You cannot see the password for ${target.name}.` }
-        }
-        get().record({
-          kind: 'password',
-          action: 'password.revealed',
-          summary:
-            actor.id === targetId
-              ? 'Looked at their own password'
-              : `Looked at the password for ${target.name}, ${ROLE_LABEL[target.role]}`,
-          entityId: targetId,
-          actor: { id: actor.id, name: actor.name, role: actor.role },
-        })
-        return { ok: true, password: target.password }
-      },
-
-      // ── Promotions ───────────────────────────────────────────────────
-      addPromotion: (promotion) => {
-        set((s) => ({
-          promotions: [promotion, ...s.promotions],
-          overlay: { ...s.overlay, newPromotions: [promotion, ...s.overlay.newPromotions] },
-        }))
-        get().record({
-          kind: 'promotion',
-          action: 'promotion.recorded',
-          summary: `Recorded the promotion “${promotion.name}” — ${promotion.detail}`,
-          entityId: promotion.id,
-          detail: `${formatDate(promotion.from)} to ${formatDate(promotion.to)}, planned by ${promotion.plannedBy}`,
-        })
-      },
-
-      updatePromotion: (id, changes) => {
-        const before = get().promotions.find((p) => p.id === id)
-        set((s) => {
-          const isNew = s.overlay.newPromotions.some((p) => p.id === id)
-          return {
-            promotions: s.promotions.map((p) => (p.id === id ? { ...p, ...changes } : p)),
-            overlay: isNew
-              ? {
-                  ...s.overlay,
-                  newPromotions: s.overlay.newPromotions.map((p) =>
-                    p.id === id ? { ...p, ...changes } : p,
-                  ),
-                }
-              : {
-                  ...s.overlay,
-                  promotionPatches: {
-                    ...s.overlay.promotionPatches,
-                    [id]: { ...s.overlay.promotionPatches[id], ...changes },
-                  },
-                },
-          }
-        })
-        if (!before) return
-        const toldIt = changes.informedIt === true && !before.informedIt
-        get().record({
-          kind: 'promotion',
-          action: toldIt ? 'promotion.it_informed' : 'promotion.updated',
-          summary: toldIt
-            ? `Marked Imran as told about “${before.name}”`
-            : `Edited the promotion “${before.name}”`,
-          entityId: id,
-        })
-      },
-
-      // ── Alerts & housekeeping ────────────────────────────────────────
-      markAlertRead: (id) => {
-        const alert = get().alerts.find((a) => a.id === id)
-        if (!alert || alert.read) return
-        set((s) => ({
-          alerts: s.alerts.map((a) => (a.id === id ? { ...a, read: true } : a)),
-          overlay: { ...s.overlay, readAlertIds: [...s.overlay.readAlertIds, id] },
-        }))
-        get().record({
-          kind: 'alert',
-          action: 'alert.read',
-          summary: `Read the alert: ${alert.message}`,
-          entityId: id,
-          locationId: alert.locationId,
-        })
-      },
-
-      markAllAlertsRead: () => {
-        const unread = get().alerts.filter((a) => !a.read).length
-        set((s) => ({
-          alerts: s.alerts.map((a) => ({ ...a, read: true })),
-          overlay: { ...s.overlay, readAlertIds: s.alerts.map((a) => a.id) },
-        }))
-        if (unread === 0) return
-        get().record({
-          kind: 'alert',
-          action: 'alert.read_all',
-          summary: `Cleared ${unread} ${unread === 1 ? 'alert' : 'alerts'}`,
-        })
-      },
-
-      setTarget: (locationId, month, amountMYR) => {
-        const before = get().targets.find(
-          (t) => t.locationId === locationId && t.month === month,
-        )
-        set((s) => {
-          const target: Target = { locationId, month, amountMYR }
-          return {
-            targets: [
-              ...s.targets.filter((t) => !(t.locationId === locationId && t.month === month)),
-              target,
-            ],
-            overlay: {
-              ...s.overlay,
-              changedTargets: [
-                ...s.overlay.changedTargets.filter(
-                  (t) => !(t.locationId === locationId && t.month === month),
-                ),
-                target,
-              ],
-            },
-          }
-        })
-        get().record({
-          kind: 'target',
-          action: before ? 'target.changed' : 'target.set',
-          summary: `Set the ${month} target for ${locationName(locationId)} to ${rm(amountMYR)}`,
-          entityId: `${locationId}::${month}`,
-          locationId,
-          detail: before ? `Was ${rm(before.amountMYR)}` : undefined,
-        })
-      },
-
-      dismissRecovery: () => set({ recoveredFromError: false }),
-
-      resetDemo: () =>
-        set({ ...seeded(), users: seedPeople, overlay: emptyOverlay(), recoveredFromError: false }),
-    }),
-    {
-      name: STORAGE_KEY,
-      version: 1,
-      storage: createJSONStorage(() => localStorage),
-      // Only the overlay is written. The history is rebuilt from the seed.
-      partialize: (s) => ({ overlay: s.overlay }) as unknown as DataState,
-      merge: (persisted, current) => {
-        const overlay = (persisted as { overlay?: Overlay } | undefined)?.overlay
-        if (!overlay) return current
-        try {
-          return {
-            ...current,
-            ...applyOverlay(current, { ...emptyOverlay(), ...overlay }),
-            overlay: { ...emptyOverlay(), ...overlay },
-          }
-        } catch {
-          // A malformed overlay is discarded rather than breaking the session.
-          return { ...current, recoveredFromError: true }
-        }
-      },
+    // ── The activity log ─────────────────────────────────────────────
+    record: ({ actor, ...rest }) => {
+      const who = resolveActor(get().users, actor)
+      const at = new Date().toISOString()
+      const entry: AuditEntry = {
+        id: auditId(at),
+        at,
+        actorId: who.id,
+        actorName: who.name,
+        actorRole: who.role,
+        ...rest,
+      }
+      write([{ kind: 'audit', id: entry.id, locationId: entry.locationId, doc: entry }])
     },
-  ),
-)
+
+    // ── Counter ──────────────────────────────────────────────────────
+    recordSale: ({ locationId, lines, countryCode, segment }) => {
+      if (lines.length === 0) return
+      const session = getSession()
+      const me = get().users.find((u) => u.id === session?.personId)
+      const saleId = newId()
+      const at = new Date().toISOString()
+      const day = get().today
+      const stamped: SaleLine[] = lines.map((l) => ({
+        ...l,
+        id: newId(),
+        saleId,
+        day,
+        locationId,
+        at,
+        by: me?.id,
+        byName: me?.name,
+        ...(countryCode ? { countryCode } : {}),
+        ...(segment ? { segment } : {}),
+      }))
+      write(
+        stamped.map((l) => ({ kind: 'sale_line' as const, id: l.id!, locationId, day, doc: l })),
+      )
+      const units = stamped.reduce((a, l) => a + l.qty, 0)
+      // The same bottle at two prices is two lines but one product.
+      const distinct = new Set(stamped.map((l) => l.skuId)).size
+      const what =
+        stamped.length === 1
+          ? `${stamped[0].qty} × ${skuLabel(stamped[0].skuId)}${
+              stamped[0].priceTier ? ` at the ${TIER_LABEL[stamped[0].priceTier].toLowerCase()} price` : ''
+            }`
+          : `${units} units across ${distinct} ${distinct === 1 ? 'product' : 'products'}`
+      get().record({
+        kind: 'sale',
+        action: 'sale.recorded',
+        summary: `Recorded a sale — ${what} at ${locationName(locationId)}`,
+        entityId: saleId,
+        locationId,
+        detail: countryCode
+          ? `Customer from ${countryName(countryCode)}${segment ? ` · ${MALAYSIA_SEGMENT_LABEL[segment]}` : ''}`
+          : undefined,
+      })
+    },
+
+    removeSaleLine: (lineId) => {
+      const removed = docs.get(docKey('sale_line', lineId))?.doc as SaleLine | undefined
+      if (!removed) return
+      remove('sale_line', [lineId])
+      get().record({
+        kind: 'sale',
+        action: 'sale.removed',
+        summary: `Took back ${removed.qty} × ${skuLabel(removed.skuId)} at ${locationName(removed.locationId ?? '')}`,
+        entityId: removed.saleId ?? lineId,
+        locationId: removed.locationId,
+      })
+    },
+
+    removeSale: (saleId) => {
+      const lines = live<SaleLine>('sale_line').filter((l) => l.saleId === saleId)
+      if (lines.length === 0) return
+      remove(
+        'sale_line',
+        lines.map((l) => l.id!),
+      )
+      const units = lines.reduce((a, l) => a + l.qty, 0)
+      get().record({
+        kind: 'sale',
+        action: 'sale.removed',
+        summary: `Took back a whole sale — ${units} ${units === 1 ? 'unit' : 'units'} at ${locationName(lines[0].locationId ?? '')}`,
+        entityId: saleId,
+        locationId: lines[0].locationId,
+        detail: lines[0].countryCode ? `Customer from ${countryName(lines[0].countryCode)}` : undefined,
+      })
+    },
+
+    // ── Closing ──────────────────────────────────────────────────────
+    submitClosing: (closing) => {
+      patchDoc('closing', closing.id, closing, { locationId: closing.locationId, day: closing.period })
+      const units = closing.lines.reduce((a, l) => a + l.qty, 0)
+      get().record({
+        kind: 'closing',
+        action: 'closing.filed',
+        summary: `Filed the ${formatDate(closing.period)} closing for ${locationName(closing.locationId)} — ${rm(closing.revenueMYR)}`,
+        entityId: closing.id,
+        locationId: closing.locationId,
+        detail: `${units} units${closing.writeOffs.length ? `, ${closing.writeOffs.length} written off` : ''}`,
+      })
+    },
+
+    requestCorrection: ({ closingId, requestedBy, reason, revenueMYR }) => {
+      const state = get()
+      const closing = state.closings.find((c) => c.id === closingId)
+      if (!closing) return { ok: false, error: 'That closing no longer exists.' }
+      if (!reason.trim()) return { ok: false, error: 'Say what needs correcting.' }
+
+      const age = daysBetween(closing.period, state.today)
+      if (age > CORRECTION_WINDOW_DAYS) {
+        return {
+          ok: false,
+          error: `Corrections are only allowed for ${CORRECTION_WINDOW_DAYS} days. This one is ${age} days old — ask Kelly to reopen it.`,
+        }
+      }
+
+      const corrected: Closing = {
+        ...closing,
+        revenueMYR,
+        correction: {
+          requestedBy,
+          requestedAt: new Date().toISOString(),
+          reason: reason.trim(),
+          previousRevenueMYR: closing.revenueMYR,
+          status: 'pending',
+        },
+      }
+      patchDoc('closing', corrected.id, corrected, { locationId: corrected.locationId, day: corrected.period })
+      get().record({
+        kind: 'correction',
+        action: 'correction.requested',
+        summary: `Asked to correct the ${formatDate(closing.period)} closing for ${locationName(closing.locationId)}`,
+        entityId: closingId,
+        locationId: closing.locationId,
+        detail: `${rm(closing.revenueMYR)} → ${rm(revenueMYR)} · ${reason.trim()}`,
+      })
+      return { ok: true }
+    },
+
+    resolveCorrection: ({ closingId, approvedBy, role, approve }) => {
+      if (!can(role).approveCorrections) {
+        return { ok: false, error: 'Only Kelly or Davy can approve a correction.' }
+      }
+      const closing = get().closings.find((c) => c.id === closingId)
+      if (!closing?.correction) return { ok: false, error: 'There is nothing to decide.' }
+
+      const resolved: Closing = {
+        ...closing,
+        // A rejected correction puts the original figure back.
+        revenueMYR: approve ? closing.revenueMYR : closing.correction.previousRevenueMYR,
+        correction: {
+          ...closing.correction,
+          approvedBy,
+          approvedAt: new Date().toISOString(),
+          status: approve ? 'approved' : 'rejected',
+        },
+      }
+      patchDoc('closing', resolved.id, resolved, { locationId: resolved.locationId, day: resolved.period })
+      get().record({
+        kind: 'correction',
+        action: approve ? 'correction.approved' : 'correction.rejected',
+        summary: `${approve ? 'Approved' : 'Rejected'} the correction to the ${formatDate(closing.period)} closing for ${locationName(closing.locationId)}`,
+        entityId: closingId,
+        locationId: closing.locationId,
+        detail: approve
+          ? `${rm(closing.correction.previousRevenueMYR)} → ${rm(closing.revenueMYR)}`
+          : `Left at ${rm(closing.correction.previousRevenueMYR)}`,
+        actor: { id: getAuditActor() ?? 'unknown', name: approvedBy, role },
+      })
+      return { ok: true }
+    },
+
+    // ── Orders ───────────────────────────────────────────────────────
+    createPurchaseOrder: (po) => {
+      patchDoc('po', po.id, po, { locationId: po.locationId })
+      const units = po.lines.reduce((a, l) => a + l.qtyRequested, 0)
+      get().record({
+        kind: 'order',
+        action: 'order.raised',
+        summary: `Raised ${po.id} for ${locationName(po.locationId)} — ${po.lines.length} items, ${units} units`,
+        entityId: po.id,
+        locationId: po.locationId,
+        detail: po.priority === 'urgent' ? 'Marked urgent' : undefined,
+      })
+    },
+
+    transitionPo: ({ poId, to, actor, role, note, approvedQty }) => {
+      const po = get().purchaseOrders.find((p) => p.id === poId)
+      if (!po) return { ok: false, error: 'That order no longer exists.' }
+      if (!can(role).canEdit) return { ok: false, error: 'Your sign-in is read-only.' }
+      if (!canTransition(po.status, to, role)) {
+        return { ok: false, error: `A ${role} cannot move an order from ${po.status} to ${to}.` }
+      }
+      if (to === 'rejected' && !note?.trim()) {
+        return { ok: false, error: 'Rejecting an order needs a reason.' }
+      }
+
+      const lines = po.lines.map((l) => {
+        if (to === 'approved') return { ...l, qtyApproved: approvedQty?.[l.skuId] ?? l.qtyRequested }
+        if (to === 'packed') return { ...l, qtyShipped: l.qtyApproved ?? l.qtyRequested }
+        return l
+      })
+      const events = [...po.events, { status: to, actor, role, at: new Date().toISOString(), note }]
+      const next: PurchaseOrder = { ...po, status: to, lines, events }
+      patchDoc('po', poId, next, { locationId: po.locationId })
+
+      const trimmed =
+        to === 'approved'
+          ? lines.filter((l, i) => l.qtyApproved !== po.lines[i].qtyRequested).length
+          : 0
+      get().record({
+        kind: 'order',
+        action: `order.${to}`,
+        summary: `${PO_ACTION_WORD[to]} ${poId} for ${locationName(po.locationId)}`,
+        entityId: poId,
+        locationId: po.locationId,
+        detail:
+          note?.trim() ||
+          (trimmed > 0 ? `${trimmed} ${trimmed === 1 ? 'line' : 'lines'} trimmed` : undefined),
+        actor: { id: getAuditActor() ?? 'unknown', name: actor, role },
+      })
+      return { ok: true }
+    },
+
+    clearAccounts: ({ poId, actor, role, note }) => {
+      const po = get().purchaseOrders.find((p) => p.id === poId)
+      if (!po) return { ok: false, error: 'That order no longer exists.' }
+      if (!canClearAccounts(po, role)) return { ok: false, error: 'Only Finance can clear an approved order.' }
+      const at = new Date().toISOString()
+      const next: PurchaseOrder = {
+        ...po,
+        financeClearedBy: actor,
+        financeClearedAt: at,
+        events: [...po.events, { status: 'accounts_cleared', actor, role, at, note }],
+      }
+      patchDoc('po', poId, next, { locationId: po.locationId })
+      get().record({
+        kind: 'order',
+        action: 'order.accounts_cleared',
+        summary: `Cleared ${poId} for ${locationName(po.locationId)}`,
+        entityId: poId,
+        locationId: po.locationId,
+        detail: note?.trim() || undefined,
+        actor: { id: getAuditActor() ?? 'unknown', name: actor, role },
+      })
+      return { ok: true }
+    },
+
+    // ── Logins ───────────────────────────────────────────────────────
+    addUser: async (person, password) => {
+      const result = await backend().addPerson(getSessionToken(), person, password)
+      if (!result.ok) return result
+      people = [...people, { ...person, passwordChanges: 0 }]
+      set(rebuild(get().today))
+      get().record({
+        kind: 'login',
+        action: 'login.created',
+        summary: `Created a login for ${person.name}, ${ROLE_LABEL[person.role]}`,
+        entityId: person.id,
+        locationId: person.locationId,
+        // The password is never written to the log, here or anywhere else.
+        detail: 'Issued them a starting password',
+      })
+      return result
+    },
+
+    updateUser: (id, changes, opts) => {
+      const before = get().users.find((u) => u.id === id)
+      people = people.map((u) => (u.id === id ? { ...u, ...changes } : u))
+      set(rebuild(get().today))
+      void backend()
+        .updatePerson(getSessionToken(), id, changes)
+        .then((r) => {
+          if (!r.ok) {
+            fail(r.error ?? 'The server refused that change.')
+            void get().sync(true)
+          } else backend().notify()
+        })
+      if (opts?.silent || !before) return
+      const fields = Object.keys(changes).filter(
+        (k) => before[k as keyof Person] !== changes[k as keyof Person],
+      )
+      if (fields.length === 0) return
+      get().record({
+        kind: 'login',
+        action: 'login.updated',
+        summary: `Edited the login for ${before.name}`,
+        entityId: id,
+        detail: fields.map((f) => FIELD_LABEL[f] ?? f).join(', ') + ' changed',
+      })
+    },
+
+    setUserActive: (id, active) => {
+      const target = get().users.find((u) => u.id === id)
+      get().updateUser(id, { active }, { silent: true })
+      if (!target) return
+      get().record({
+        kind: 'login',
+        action: active ? 'login.enabled' : 'login.disabled',
+        summary: `${active ? 'Let' : 'Stopped'} ${target.name} ${active ? 'sign in again' : 'signing in'}`,
+        entityId: id,
+      })
+    },
+
+    setPassword: async ({ actor, targetId, password }) => {
+      const result = await backend().setPassword(getSessionToken(), targetId, password)
+      if (!result.ok) return result
+      // The server writes the log line and the "set by"; reflect it here at once.
+      people = people.map((u) =>
+        u.id === targetId
+          ? {
+              ...u,
+              passwordChanges: u.passwordChanges + 1,
+              passwordSetAt: new Date().toISOString(),
+              passwordSetBy: actor.name,
+            }
+          : u,
+      )
+      set(rebuild(get().today))
+      void get().sync()
+      return result
+    },
+
+    revealPassword: async ({ targetId }) => {
+      const result = await backend().revealPassword(getSessionToken(), targetId)
+      // The look-up is logged by the server; pull the line so the screen shows it.
+      if (result.ok) void get().sync()
+      return result
+    },
+
+    // ── Promotions ───────────────────────────────────────────────────
+    addPromotion: (promotion) => {
+      patchDoc('promotion', promotion.id, promotion)
+      get().record({
+        kind: 'promotion',
+        action: 'promotion.recorded',
+        summary: `Recorded the promotion “${promotion.name}” — ${promotion.detail}`,
+        entityId: promotion.id,
+        detail: `${formatDate(promotion.from)} to ${formatDate(promotion.to)}, planned by ${promotion.plannedBy}`,
+      })
+    },
+
+    updatePromotion: (id, changes) => {
+      const before = get().promotions.find((p) => p.id === id)
+      if (!before) return
+      patchDoc('promotion', id, { ...before, ...changes })
+      const toldIt = changes.informedIt === true && !before.informedIt
+      get().record({
+        kind: 'promotion',
+        action: toldIt ? 'promotion.it_informed' : 'promotion.updated',
+        summary: toldIt
+          ? `Marked Imran as told about “${before.name}”`
+          : `Edited the promotion “${before.name}”`,
+        entityId: id,
+      })
+    },
+
+    // ── Alerts & housekeeping ────────────────────────────────────────
+    markAlertRead: (id) => {
+      const alert = get().alerts.find((a) => a.id === id)
+      if (!alert || alert.read) return
+      const by = getSession()?.personId ?? 'unknown'
+      write([{ kind: 'alert_read', id, doc: { id, by, at: new Date().toISOString() } }])
+      get().record({
+        kind: 'alert',
+        action: 'alert.read',
+        summary: `Read the alert: ${alert.message}`,
+        entityId: id,
+        locationId: alert.locationId,
+      })
+    },
+
+    markAllAlertsRead: () => {
+      const unread = get().alerts.filter((a) => !a.read)
+      if (unread.length === 0) return
+      const by = getSession()?.personId ?? 'unknown'
+      const at = new Date().toISOString()
+      write(unread.map((a) => ({ kind: 'alert_read' as const, id: a.id, doc: { id: a.id, by, at } })))
+      get().record({
+        kind: 'alert',
+        action: 'alert.read_all',
+        summary: `Cleared ${unread.length} ${unread.length === 1 ? 'alert' : 'alerts'}`,
+      })
+    },
+
+    setTarget: (locationId, month, amountMYR) => {
+      const before = get().targets.find((t) => t.locationId === locationId && t.month === month)
+      const target: Target = { locationId, month, amountMYR }
+      patchDoc('target', `${locationId}::${month}`, target, { locationId })
+      get().record({
+        kind: 'target',
+        action: before ? 'target.changed' : 'target.set',
+        summary: `Set the ${month} target for ${locationName(locationId)} to ${rm(amountMYR)}`,
+        entityId: `${locationId}::${month}`,
+        locationId,
+        detail: before ? `Was ${rm(before.amountMYR)}` : undefined,
+      })
+    },
+
+    clearAllData: async () => {
+      const result = await backend().clearAllData(getSessionToken())
+      if (result.ok) {
+        docs.clear()
+        since = undefined
+        await get().sync(true)
+        backend().notify()
+      }
+      return result
+    },
+
+    // ── Sync ─────────────────────────────────────────────────────────
+    applySnapshot: (snapshot, full) => {
+      if (full) docs.clear()
+      for (const d of snapshot.docs) docs.set(docKey(d.kind, d.id), d)
+      if (snapshot.people) people = snapshot.people
+      since = new Date(new Date(snapshot.now).getTime() - OVERLAP_MS).toISOString()
+      set({
+        ...rebuild(snapshot.today),
+        syncStatus: 'ready',
+        lastSyncAt: snapshot.now,
+      })
+    },
+
+    sync: async (full = false) => {
+      const token = getSessionToken()
+      if (!token) return
+      if (inflight) return inflight
+      if (get().syncStatus === 'idle') set({ syncStatus: 'loading' })
+      inflight = (async () => {
+        try {
+          const wantFull = full || !since
+          const snapshot = await backend().load(token, wantFull ? undefined : since)
+          get().applySnapshot(snapshot, wantFull)
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e)
+          set((s) => ({
+            syncStatus: 'offline',
+            lastError: s.syncStatus === 'offline' ? s.lastError : `No connection to the server — ${message}`,
+            errorSeq: s.syncStatus === 'offline' ? s.errorSeq : s.errorSeq + 1,
+          }))
+        } finally {
+          inflight = null
+        }
+      })()
+      return inflight
+    },
+
+    startSync: () => {
+      const b = backend()
+      void get().sync(true)
+      const stopSignal = b.onChange(() => void get().sync())
+      const timer = setInterval(() => void get().sync(), POLL_MS)
+      const onFocus = () => {
+        if (document.visibilityState === 'visible') void get().sync()
+      }
+      document.addEventListener('visibilitychange', onFocus)
+      window.addEventListener('focus', onFocus)
+      window.addEventListener('online', onFocus)
+      return () => {
+        stopSignal()
+        clearInterval(timer)
+        document.removeEventListener('visibilitychange', onFocus)
+        window.removeEventListener('focus', onFocus)
+        window.removeEventListener('online', onFocus)
+      }
+    },
+
+    clearSession: () => {
+      docs.clear()
+      since = undefined
+      set({ ...empty(), unfiledLines: {}, syncStatus: 'idle', lastSyncAt: null })
+    },
+
+    resetDemo: (today = DEMO_TODAY) => {
+      const lb = localBackend()
+      if (!lb) return
+      lb.seed(today)
+      since = undefined
+      const token = getSessionToken()
+      if (token) get().applySnapshot(lb.loadSync(token), true)
+      else set({ ...empty(), today, unfiledLines: {} })
+    },
+  }
+})
 
 export const useToday = () => useData((s) => s.today)
 export const useAlerts = (): Alert[] => useData((s) => s.alerts)

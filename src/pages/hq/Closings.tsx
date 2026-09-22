@@ -218,7 +218,7 @@ export function Closings() {
                               <span
                                 title={
                                   c
-                                    ? `${formatDateShort(d)} · ${rm(c.revenueMYR)} · filed ${formatTimestamp(c.submittedAt)}`
+                                    ? `${formatDateShort(d)} · ${rm(c.revenueMYR)} · filed by ${c.submittedBy} at ${formatTimestamp(c.submittedAt)}`
                                     : `${formatDateShort(d)} · nothing filed`
                                 }
                                 className={`mx-auto flex h-[18px] w-[18px] items-center justify-center rounded-[5px] ${
@@ -241,9 +241,10 @@ export function Closings() {
                         </td>
                         <td className="py-2 text-right">
                           {y ? (
-                            <span className="readout text-[12.5px] text-ink">
-                              {rm(y.revenueMYR)}
-                            </span>
+                            <>
+                              <span className="readout block text-[12.5px] text-ink">{rm(y.revenueMYR)}</span>
+                              <span className="block truncate text-[10.5px] text-ink-3">{y.submittedBy}</span>
+                            </>
                           ) : (
                             <Badge tone="warn" icon="clock">
                               Missing

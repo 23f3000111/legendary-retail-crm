@@ -1,4 +1,6 @@
 import type { Role } from '../data/people'
+import { shortCode } from './ids'
+import { getSession } from './session'
 
 /**
  * The activity log.
@@ -85,27 +87,10 @@ export interface AuditEntry {
   detail?: string
 }
 
-/**
- * Who is doing it.
- *
- * Held in a plain module rather than in either store, so `useData` can write an
- * entry without importing `useAuth` and `useAuth` can set it without importing
- * back — no cycle, and no second copy of the session to keep in step.
- *
- * On the server this is the JWT claim; here it is the same idea with less
- * ceremony.
- */
-let actorId: string | null = null
+/** Who is doing it: the person behind the current session. */
+export const getAuditActor = (): string | null => getSession()?.personId ?? null
 
-export const setAuditActor = (id: string | null) => {
-  actorId = id
-}
-
-export const getAuditActor = (): string | null => actorId
-
-let counter = 0
-
-/** Ids are unique within a session and sort with the timestamp. */
-export const auditId = (at: string): string => `au-${at}-${(counter += 1).toString(36)}`
+/** Ids sort with the timestamp and are unique across every device. */
+export const auditId = (at: string): string => `au-${at}-${shortCode(6)}`
 
 export const newestFirst = (a: AuditEntry, b: AuditEntry): number => (a.at < b.at ? 1 : -1)

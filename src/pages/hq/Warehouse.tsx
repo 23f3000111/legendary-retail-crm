@@ -34,7 +34,8 @@ export function Warehouse() {
   const transitionPo = useData((s) => s.transitionPo)
   const push = useToasts((s) => s.push)
 
-  const toPick = selectPosByStatus(data, ['accounts_cleared'])
+  // Approved by Kelly is enough: the warehouse no longer waits on Finance.
+  const toPick = selectPosByStatus(data, ['approved', 'accounts_cleared'])
   const toDispatch = selectPosByStatus(data, ['packed'])
   const onRoad = selectPosByStatus(data, ['in_transit'])
 

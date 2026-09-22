@@ -37,7 +37,7 @@ import {
 import { countries } from '../data/countries'
 import { addDays, dateRange, daysBetween, monthKey } from '../lib/dates'
 import { effectiveQty, isOpen } from '../lib/po-machine'
-import type { Closing, CrmData, DateStr, PurchaseOrder } from '../data/types'
+import type { Alert, Closing, CrmData, DateStr, PurchaseOrder } from '../data/types'
 
 // ── Filter ─────────────────────────────────────────────────────────────────
 
@@ -165,7 +165,7 @@ export const totalsFor = (data: CrmData, f: Filter): Totals => {
     for (const line of c.lines) {
       if (!lineMatches(line, allowed, f)) continue
       // Counted on whichever price this location is counted on (Revision 2).
-      const price = lineUnitPrice(line.skuId, line.priceTier, basisOf(c.locationId))
+      const price = lineUnitPrice(line, basisOf(c.locationId))
       t.revenue += line.qty * price
       t.units += line.qty
       if (line.countryCode) t.attributedUnits += line.qty
@@ -248,7 +248,7 @@ export const selectTimeSeries = (data: CrmData, f: Filter, metric: Metric): Seri
     const bucket = byDate.get(c.period) ?? { revenue: 0, units: 0 }
     for (const line of c.lines) {
       if (!lineMatches(line, allowed, f)) continue
-      bucket.revenue += line.qty * lineUnitPrice(line.skuId, line.priceTier, basisOf(c.locationId))
+      bucket.revenue += line.qty * lineUnitPrice(line, basisOf(c.locationId))
       bucket.units += line.qty
     }
     byDate.set(c.period, bucket)
@@ -324,7 +324,7 @@ export const selectOriginMix = (data: CrmData, f: Filter, top = 6): OriginSlice[
       if (!lineMatches(line, allowed, f)) continue
       const bucket = tally.get(line.countryCode) ?? { units: 0, revenue: 0 }
       bucket.units += line.qty
-      bucket.revenue += line.qty * lineUnitPrice(line.skuId, line.priceTier, basisOf(c.locationId))
+      bucket.revenue += line.qty * lineUnitPrice(line, basisOf(c.locationId))
       tally.set(line.countryCode, bucket)
     }
   }
@@ -343,7 +343,7 @@ export const selectSkusForCountry = (data: CrmData, f: Filter, countryCode: stri
       if (!allowed.has(line.skuId)) continue
       const b = tally.get(line.skuId) ?? { units: 0, revenue: 0 }
       b.units += line.qty
-      b.revenue += line.qty * lineUnitPrice(line.skuId, line.priceTier, basisOf(c.locationId))
+      b.revenue += line.qty * lineUnitPrice(line, basisOf(c.locationId))
       tally.set(line.skuId, b)
     }
   }
@@ -383,7 +383,7 @@ export const selectSkuPerformance = (data: CrmData, f: Filter): SkuPerformance[]
       if (!lineMatches(line, allowed, f)) continue
       const b = tally.get(line.skuId) ?? { units: 0, revenue: 0 }
       b.units += line.qty
-      b.revenue += line.qty * lineUnitPrice(line.skuId, line.priceTier, basisOf(c.locationId))
+      b.revenue += line.qty * lineUnitPrice(line, basisOf(c.locationId))
       tally.set(line.skuId, b)
     }
   }
@@ -458,7 +458,7 @@ export const selectLocationRows = (
         .filter((c) => c.locationId === l.id && monthKey(c.period) === month)
         .reduce(
           (a, c) =>
-            a + c.lines.reduce((s, ln) => s + ln.qty * lineUnitPrice(ln.skuId, ln.priceTier, l.priceBasis), 0),
+            a + c.lines.reduce((s, ln) => s + ln.qty * lineUnitPrice(ln, l.priceBasis), 0),
           0,
         )
 
@@ -518,6 +518,12 @@ export interface StockRow {
   code: string
   collection: string
   variant: Variant
+  /**
+   * False until the store has filed its first count. Before that nothing is
+   * known about the shelf, and "0 on hand" would raise a low-stock alert on
+   * every product of every store the day the system starts.
+   */
+  counted: boolean
   onHand: number
   reorderPoint: number
   velocity: number
@@ -560,12 +566,14 @@ export const selectStock = (data: CrmData, locationId: string): StockRow[] => {
 
   // Testers are ordered but never counted on a shelf (Revision 2), so they are
   // not part of stock on hand.
+  const counted = Boolean(latest && latest.stockCount.length > 0)
   return countedSkus.map((s) => {
     const onHand = latest?.stockCount.find((m) => m.skuId === s.id)?.counted ?? 0
     const velocity = soldOf(s.id) / periods
     const daysCover = velocity > 0 ? onHand / velocity : null
-    const status: StockRow['status'] =
-      onHand === 0
+    const status: StockRow['status'] = !counted
+      ? 'ok'
+      : onHand === 0
         ? 'out'
         : onHand <= s.reorderPoint / 2
           ? 'critical'
@@ -584,12 +592,13 @@ export const selectStock = (data: CrmData, locationId: string): StockRow[] => {
       code: s.code,
       collection: product?.collection ?? '—',
       variant: s.variant,
+      counted,
       onHand,
       reorderPoint: s.reorderPoint,
       velocity,
       daysCover,
       status,
-      suggested: gap > 0 ? Math.ceil(gap / s.caseSize) * s.caseSize : 0,
+      suggested: counted && gap > 0 ? Math.ceil(gap / s.caseSize) * s.caseSize : 0,
     }
   })
 }
@@ -721,12 +730,103 @@ export const poUnits = (po: PurchaseOrder): number =>
 export const selectClosingFor = (data: CrmData, locationId: string, period: DateStr) =>
   data.closings.find((c) => c.locationId === locationId && c.period === period)
 
-/** Daily locations that have not filed for the given day. */
+/**
+ * Daily locations that have not filed for the given day.
+ *
+ * A store that has never filed anything is not "missing" a day — it has not
+ * started. Only a store with a closing on record before `date` is expected to
+ * file every day after it.
+ */
 export const selectNotFiled = (data: CrmData, date: DateStr): string[] =>
   tradingLocations
     .filter((l) => l.cadence === 'daily')
+    .filter((l) => data.closings.some((c) => c.locationId === l.id && c.period < date))
     .filter((l) => !data.closings.some((c) => c.locationId === l.id && c.period === date))
     .map((l) => l.id)
+
+// ── Alerts ─────────────────────────────────────────────────────────────────
+
+/**
+ * What needs attention, worked out from the data rather than stored.
+ *
+ * Stored alerts drift: a missed-closing alert has to be removed when the
+ * closing arrives, a low-stock alert when the top-up lands. Deriving them
+ * means they are right by construction. Only "read" is remembered, by id.
+ */
+export const deriveAlerts = (data: CrmData, readIds: Set<string>): Alert[] => {
+  const alerts: Alert[] = []
+  const stamp = (d: DateStr, hh: string) => `${d}T${hh}:00+08:00`
+  const daily = tradingLocations.filter((l) => l.cadence === 'daily')
+
+  // Stock at or under its reorder point, where a count exists to say so.
+  for (const loc of daily) {
+    for (const row of selectStock(data, loc.id)) {
+      if (!row.counted || row.status === 'ok') continue
+      alerts.push({
+        id: `low-${loc.id}-${row.skuId}`,
+        type: 'low_stock',
+        severity: row.status === 'out' ? 'critical' : row.status === 'critical' ? 'serious' : 'warn',
+        locationId: loc.id,
+        skuId: row.skuId,
+        message:
+          row.status === 'out'
+            ? `${row.label} is out of stock`
+            : `${row.label} down to ${row.onHand}, at or below the reorder point of ${row.reorderPoint}`,
+        at: stamp(data.today, '07:30'),
+        read: false,
+      })
+    }
+  }
+
+  // Daily locations that did not file. Deadline is 11pm (Q18).
+  for (let back = 1; back <= 4; back++) {
+    const date = addDays(data.today, -back)
+    for (const id of selectNotFiled(data, date)) {
+      alerts.push({
+        id: `missed-${id}-${date}`,
+        type: 'missed_closing',
+        severity: back === 1 ? 'serious' : 'critical',
+        locationId: id,
+        message: `No closing filed for ${date}`,
+        at: stamp(addDays(date, 1), '08:00'),
+        read: false,
+      })
+    }
+  }
+
+  // Orders sitting with Kelly.
+  for (const po of data.purchaseOrders) {
+    if (po.status !== 'submitted') continue
+    alerts.push({
+      id: `po-${po.id}`,
+      type: 'po_waiting',
+      severity: po.priority === 'urgent' ? 'serious' : 'warn',
+      locationId: po.locationId,
+      poId: po.id,
+      message: `${po.id} is waiting for approval`,
+      at: po.createdAt,
+      read: false,
+    })
+  }
+
+  // Corrections waiting on Kelly or Davy.
+  for (const c of data.closings) {
+    if (c.correction?.status !== 'pending') continue
+    alerts.push({
+      id: `correction-${c.id}`,
+      type: 'correction_pending',
+      severity: 'warn',
+      locationId: c.locationId,
+      message: `${c.correction.requestedBy} asked to correct the ${c.period} closing`,
+      at: c.correction.requestedAt,
+      read: false,
+    })
+  }
+
+  return alerts
+    .map((a) => (readIds.has(a.id) ? { ...a, read: true } : a))
+    .sort((a, b) => (a.at < b.at ? 1 : -1))
+}
 
 /** Sales logged at the counter today, before the close is filed. */
 export const selectLiveLines = (data: CrmData, locationId: string) =>

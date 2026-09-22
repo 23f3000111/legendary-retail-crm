@@ -143,7 +143,9 @@ export function StoreDetail() {
       header: 'On hand',
       align: 'right',
       width: '90px',
-      render: (r) => <span className="readout text-[13px] font-semibold text-ink">{num(r.onHand)}</span>,
+      render: (r) => (
+        <span className="readout text-[13px] font-semibold text-ink">{r.counted ? num(r.onHand) : '—'}</span>
+      ),
     },
     {
       key: 'cover',
@@ -343,6 +345,7 @@ export function StoreDetail() {
                   className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5"
                 >
                   <span className="readout text-[12.5px] text-ink-2">{formatDate(c.period)}</span>
+                  <span className="min-w-0 truncate text-[11.5px] text-ink-3">filed by {c.submittedBy}</span>
                   <span className="readout ml-auto text-[13px] font-semibold text-ink">
                     {rm(c.revenueMYR)}
                   </span>

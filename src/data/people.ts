@@ -174,31 +174,32 @@ export interface Person {
   email: string
   role: Role
   title: string
-  /** Promoters are tied to one store; everyone else is head office. */
+  /**
+   * Promoters are tied to one store; everyone else is head office.
+   *
+   * The KL promoters are the exception: they float between the four KL
+   * stores and pick one when they sign in (client's third revision), so
+   * their `locationId` is empty and `storeChoices` lists what they may pick.
+   */
   locationId?: string
+  storeChoices?: string[]
   blurb: string
   initials: string
   home: string
   accent: 'violet' | 'blue' | 'cyan' | 'teal'
   /**
-   * The password.
-   *
-   * Readable, because the client requires senior staff to be able to look one
-   * up, as they could the PIN. The production schema keeps an Argon2 hash to
-   * check it against and a separately encrypted copy for the look-up — see
-   * `docs/spec/auth.md`. Screens never read this field directly; they ask the
-   * store, which checks authority and writes the look-up to the activity log.
+   * The password itself never reaches the browser as part of a person. It is
+   * checked on the server, and read back — by the seniors the client allows —
+   * only through `revealPassword`, which writes the look-up to the activity
+   * log. What is kept here is only when it was last set, by whom, and how many
+   * earlier ones are on record.
    */
-  password: string
-  /** What they have used before. A password is never reused. */
-  passwordHistory: string[]
   passwordSetAt: string
   passwordSetBy: string
+  passwordChanges: number
   active: boolean
   /** Hidden from every other person's Logins screen. IT only. */
   hidden?: boolean
-  /** Shown where something about the person is not yet confirmed. */
-  placeholder?: boolean
 }
 
 export const HOME_FOR_ROLE: Record<Role, string> = {
@@ -297,6 +298,7 @@ interface Seed {
   role: Role
   title?: string
   locationId?: string
+  storeChoices?: string[]
   blurb?: string
   accent?: Person['accent']
   hidden?: boolean
@@ -414,44 +416,36 @@ const DISPLAY_NAME: Record<string, string> = {
 /**
  * The 27 store promoters, from the same list.
  *
- * Two things to confirm with the client:
+ * The twelve under **"KL"** are not fixed to a store: the client's third
+ * revision has them choose one of the four KL stores each time they sign in.
  *
- *   1. The list groups twelve people under **"KL"**, and there are three KL
- *      stores — Pavilion 5th Floor, Parkson Pavilion and KLCC Isetan. All
- *      twelve sit at Pavilion 5th Floor here, which is a placeholder rather
- *      than a decision, and the Logins screen says so against each of them.
- *   2. Display names are split out of the usernames ("teokoknian" → "Teo Kok
- *      Nian"). Word boundaries in a romanised name are a guess, so each should
- *      be checked against how the person writes it.
+ * Display names are split out of the usernames ("teokoknian" → "Teo Kok
+ * Nian"). Word boundaries in a romanised name are a guess, so each should be
+ * checked against how the person writes it.
  */
-const promoterGroups: { locationId: string; usernames: string[]; storeConfirmed: boolean }[] = [
+/**
+ * The four KL stores a "KL" promoter may work at. They choose one each time
+ * they sign in (client's third revision), so none is fixed to a store.
+ */
+export const KL_STORES = ['pavilion-5', 'klcc-isetan', 'parkson-pavilion', 'bsas']
+
+const promoterGroups: { locationId?: string; storeChoices?: string[]; usernames: string[] }[] = [
   {
     locationId: 'klia-t2',
     usernames: ['teokoknian', 'tanshimin', 'yongsetyee', 'sayzhengqiang', 'gohmeeling', 'chweehuining'],
-    storeConfirmed: true,
   },
-  { locationId: 'langkawi', usernames: ['lookpohlei', 'tangwinnie', 'quahchuen'], storeConfirmed: true },
-  { locationId: 'parkson-imago', usernames: ['engellahii'], storeConfirmed: true },
-  { locationId: 'genting', usernames: ['siewziching', 'ngmengxiang'], storeConfirmed: true },
+  { locationId: 'langkawi', usernames: ['lookpohlei', 'tangwinnie', 'quahchuen'] },
+  { locationId: 'parkson-imago', usernames: ['engellahii'] },
+  { locationId: 'genting', usernames: ['siewziching', 'ngmengxiang'] },
   {
-    // "KL" in the client's list — which of the three KL stores is unconfirmed.
-    locationId: 'pavilion-5',
+    storeChoices: KL_STORES,
     usernames: [
       'leekwansern', 'limzhixuan', 'tanjiwei', 'eddielee', 'limyongkent', 'shannesslow',
       'fonghaobin', 'yapboonming', 'desmondchang', 'gohzixuan', 'chanqijun', 'danzeltan',
     ],
-    storeConfirmed: false,
   },
-  {
-    locationId: 'melaka',
-    usernames: ['khookwoktsu', 'chewyingtian', 'kokchewling'],
-    storeConfirmed: true,
-  },
+  { locationId: 'melaka', usernames: ['khookwoktsu', 'chewyingtian', 'kokchewling'] },
 ]
-
-const unconfirmedStore = new Set(
-  promoterGroups.filter((g) => !g.storeConfirmed).flatMap((g) => g.usernames),
-)
 
 const promoters: Seed[] = promoterGroups.flatMap((g) =>
   g.usernames.map((username) => ({
@@ -460,19 +454,19 @@ const promoters: Seed[] = promoterGroups.flatMap((g) =>
     name: DISPLAY_NAME[username] ?? username,
     role: 'promoter' as Role,
     locationId: g.locationId,
+    storeChoices: g.storeChoices,
     accent: 'teal' as const,
   })),
 )
 
 /**
- * Starting passwords.
+ * Starting passwords — **for the local, single-browser build only.**
  *
- * Issued by a senior, the way the PINs were. Promoters keep the one they are
- * given; everybody else may change theirs. In the real system these are
- * generated once and handed over; here they are derived so a walkthrough is
- * repeatable. They deliberately avoid the word "Legendary" — the rules below
- * reject it, and a password the system would refuse is a confusing thing to
- * hand somebody.
+ * The shared system never uses these: its migration gives every person a
+ * random password that Imran reads off the Logins screen and hands over, so
+ * nothing in this public repository opens a real account. Here they are
+ * derived so a walkthrough on one machine is repeatable. They avoid the word
+ * "Legendary" because the rules below reject it.
  */
 export const startingPassword = (username: string) => `Start-${username.slice(0, 5)}-26`
 
@@ -484,17 +478,16 @@ const toPerson = (s: Seed): Person => ({
   role: s.role,
   title: s.title ?? ROLE_LABEL[s.role],
   locationId: s.locationId,
+  ...(s.storeChoices ? { storeChoices: s.storeChoices } : {}),
   blurb: s.blurb ?? DEFAULT_BLURB[s.role],
   initials: initialsOf(s.name),
   home: HOME_FOR_ROLE[s.role],
   accent: s.accent ?? 'blue',
-  password: startingPassword(s.username),
-  passwordHistory: [],
   passwordSetAt: SEEDED_AT,
   passwordSetBy: 'Imran',
+  passwordChanges: 0,
   active: true,
   ...(s.hidden ? { hidden: true } : {}),
-  ...(unconfirmedStore.has(s.username) ? { placeholder: true } : {}),
 })
 
 export const seedPeople: Person[] = [...headOffice, ...promoters].map(toPerson)
@@ -534,13 +527,14 @@ export interface PasswordCheck {
 }
 
 /**
- * Validates a proposed password.
+ * Validates a proposed password, as far as the browser can.
  *
- * Length first, because length is what actually matters, and then the three
- * rules the client's own process implies: not an obvious one, not the one they
- * are already using, and never one they have used before.
+ * Length first, because length is what actually matters, then the obvious
+ * ones. "Not the one already in use, and never one they have used before" is
+ * checked on the server, which is the only place the old ones exist; the same
+ * rules are applied there again. `WEAK` is mirrored in the migration.
  */
-export function checkPassword(password: string, target: Person): PasswordCheck {
+export function checkPassword(password: string): PasswordCheck {
   const value = password.trim()
   if (value.length < PASSWORD_MIN) {
     return { ok: false, error: `Use at least ${PASSWORD_MIN} characters.` }
@@ -552,14 +546,10 @@ export function checkPassword(password: string, target: Person): PasswordCheck {
   if (WEAK.some((w) => lower.includes(w))) {
     return { ok: false, error: 'That is too easy to guess. Choose something else.' }
   }
-  if (value === target.password) {
-    return { ok: false, error: 'That is the password already in use.' }
-  }
-  if (target.passwordHistory.includes(value)) {
-    return { ok: false, error: 'That password has been used before. Choose a new one.' }
-  }
   return { ok: true }
 }
+
+export const WEAK_PASSWORD_WORDS = WEAK
 
 /** How strong it looks, for the meter beside the box. 0–3. */
 export const passwordStrength = (password: string): 0 | 1 | 2 | 3 => {

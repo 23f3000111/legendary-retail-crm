@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Panel, PanelBody, PanelHeader, Rule } from '../../components/ui/Panel'
 import { Button, IconButton } from '../../components/ui/Button'
+import { Modal } from '../../components/ui/Modal'
+import { Field, NumberInput } from '../../components/ui/Field'
 import { Icon } from '../../components/ui/icons'
 import { Badge } from '../../components/ui/Badge'
 import { Flag } from '../../components/ui/Flag'
@@ -30,7 +32,7 @@ import {
   MALAYSIA_SEGMENT_LABEL,
   type MalaysiaSegment,
 } from '../../data/countries'
-import { formatDate } from '../../lib/dates'
+import { formatDate, formatTimestamp } from '../../lib/dates'
 import { num, rm } from '../../lib/format'
 import type { SaleLine } from '../../data/types'
 
@@ -57,6 +59,7 @@ export function Sell() {
   const data = useData()
   const recordSale = useData((s) => s.recordSale)
   const removeSaleLine = useData((s) => s.removeSaleLine)
+  const removeSale = useData((s) => s.removeSale)
   const push = useToasts((s) => s.push)
 
   const locationId = user?.locationId ?? ''
@@ -66,6 +69,9 @@ export function Sell() {
   /** What this customer is buying, before it is committed. */
   const [basket, setBasket] = useState<SaleLine[]>([])
   const [pickerOpen, setPickerOpen] = useState(false)
+  /** The "Other" price being typed for an item, before it goes in the basket. */
+  const [otherFor, setOtherFor] = useState<string | null>(null)
+  const [otherAmount, setOtherAmount] = useState('')
 
   const needsCountry = location?.recordsCountries ?? false
   // Which of the two prices this store's revenue is counted on (Revision 2).
@@ -79,12 +85,24 @@ export function Sell() {
 
   const basketUnits = basket.reduce((a, l) => a + l.qty, 0)
   const basketTotal = basket.reduce(
-    (a, l) => a + l.qty * lineUnitPrice(l.skuId, l.priceTier, basis),
+    (a, l) => a + l.qty * lineUnitPrice(l, basis),
     0,
   )
 
-  const todayTotal = lines.reduce((a, l) => a + l.qty * lineUnitPrice(l.skuId, l.priceTier, basis), 0)
+  const todayTotal = lines.reduce((a, l) => a + l.qty * lineUnitPrice(l, basis), 0)
   const todayUnits = lines.reduce((a, l) => a + l.qty, 0)
+  // A customer is a basket, however many bottles were in it.
+  const customers = new Set(lines.map((l) => l.saleId ?? l.id)).size
+
+  /** The day's sales, one group per customer, newest first. */
+  const sales = useMemo(() => {
+    const groups = new Map<string, SaleLine[]>()
+    for (const l of lines) {
+      const k = l.saleId ?? l.id ?? String(lines.indexOf(l))
+      ;(groups.get(k) ?? groups.set(k, []).get(k)!).push(l)
+    }
+    return [...groups.entries()].reverse()
+  }, [lines])
 
   const mix = useMemo(() => {
     const tally = new Map<string, { units: number; revenue: number }>()
@@ -92,29 +110,47 @@ export function Sell() {
       if (!l.countryCode) continue
       const b = tally.get(l.countryCode) ?? { units: 0, revenue: 0 }
       b.units += l.qty
-      b.revenue += l.qty * lineUnitPrice(l.skuId, l.priceTier, basis)
+      b.revenue += l.qty * lineUnitPrice(l, basis)
       tally.set(l.countryCode, b)
     }
     return originSlicesFrom(tally)
   }, [lines])
 
   // A basket line is an item *at a price*, so the same bottle at retail and at
-  // promotion sit side by side rather than merging.
-  const same = (l: SaleLine, skuId: string, tier: PriceTier) =>
-    l.skuId === skuId && l.priceTier === tier
+  // promotion sit side by side rather than merging — and two "other" prices
+  // are two lines as well.
+  const same = (l: SaleLine, skuId: string, tier: PriceTier, unitPrice: number) =>
+    l.skuId === skuId && l.priceTier === tier && l.unitPriceMYR === unitPrice
 
-  const add = (skuId: string, tier: PriceTier) =>
+  const add = (skuId: string, tier: PriceTier, unitPrice: number) =>
     setBasket((b) => {
-      const found = b.find((l) => same(l, skuId, tier))
+      const found = b.find((l) => same(l, skuId, tier, unitPrice))
       return found
-        ? b.map((l) => (same(l, skuId, tier) ? { ...l, qty: l.qty + 1 } : l))
-        : [...b, { skuId, qty: 1, priceTier: tier }]
+        ? b.map((l) => (same(l, skuId, tier, unitPrice) ? { ...l, qty: l.qty + 1 } : l))
+        : [...b, { skuId, qty: 1, priceTier: tier, unitPriceMYR: unitPrice }]
     })
 
-  const bump = (skuId: string, tier: PriceTier, by: number) =>
+  /** A named price goes straight in; "Other" asks for the figure first. */
+  const tap = (skuId: string, tier: PriceTier) => {
+    if (tier === 'other') {
+      setOtherFor(skuId)
+      setOtherAmount('')
+      return
+    }
+    add(skuId, tier, priceAtTier(skuById(skuId), tier))
+  }
+
+  const confirmOther = () => {
+    const amount = Math.round(Number(otherAmount) * 100) / 100
+    if (!otherFor || !(amount > 0)) return
+    add(otherFor, 'other', amount)
+    setOtherFor(null)
+  }
+
+  const bump = (line: SaleLine, by: number) =>
     setBasket((b) =>
       b
-        .map((l) => (same(l, skuId, tier) ? { ...l, qty: l.qty + by } : l))
+        .map((l) => (l === line ? { ...l, qty: l.qty + by } : l))
         .filter((l) => l.qty > 0),
     )
 
@@ -138,6 +174,39 @@ export function Sell() {
         onClose={() => setPickerOpen(false)}
         onPick={(code, segment) => commit(code, segment)}
       />
+
+      <Modal
+        open={otherFor !== null}
+        onClose={() => setOtherFor(null)}
+        title="What did it go for?"
+        subtitle={otherFor ? skuById(otherFor)?.label : undefined}
+        width="max-w-sm"
+        footer={
+          <>
+            <Button variant="ghost" size="sm" onClick={() => setOtherFor(null)}>
+              Cancel
+            </Button>
+            <Button variant="primary" size="sm" onClick={confirmOther} disabled={!(Number(otherAmount) > 0)}>
+              Add to the basket
+            </Button>
+          </>
+        }
+      >
+        <Field label="Price for one" hint="The amount the customer actually paid for one unit.">
+          <NumberInput
+            prefix="RM"
+            min={0}
+            step={1}
+            value={otherAmount}
+            onChange={(e) => setOtherAmount(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') confirmOther()
+            }}
+            placeholder="0.00"
+            autoFocus
+          />
+        </Field>
+      </Modal>
 
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
@@ -173,7 +242,7 @@ export function Sell() {
         <div className="col-span-2 rounded-2xl bg-grad-cyan px-4 py-3.5 text-white shadow-tile sm:col-span-1">
           <p className="eyebrow text-white/75">Customers served</p>
           <p className="readout mt-2 font-display text-[22px] font-semibold leading-none sm:text-[26px]">
-            {num(lines.length)}
+            {num(customers)}
           </p>
         </div>
       </div>
@@ -216,7 +285,7 @@ export function Sell() {
                         >
                           <div className="mb-2 flex items-center justify-between gap-2 px-1 sm:mb-0 sm:w-[112px] sm:shrink-0">
                             <span className="text-[13.5px] font-medium text-ink">
-                              {v.variant === 'set' ? 'Set' : v.size}
+                              {v.variant === 'set' ? 'Set' : v.variant === 'travel' ? 'Travel Kit' : v.size}
                             </span>
                             {taken > 0 && (
                               <span className="readout flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-semibold text-white">
@@ -230,14 +299,15 @@ export function Sell() {
                             }`}
                           >
                             {tiers.map((t) => {
-                              const inBasket = basket.find((l) => same(l, v.id, t))
+                              const inBasket = basket.filter((l) => l.skuId === v.id && l.priceTier === t)
+                              const inQty = inBasket.reduce((a, l) => a + l.qty, 0)
                               const usual = t === basis
                               return (
                                 <button
                                   key={t}
-                                  onClick={() => add(v.id, t)}
+                                  onClick={() => tap(v.id, t)}
                                   className={`relative min-h-[56px] rounded-lg border px-2.5 py-2 text-left transition-all duration-200 active:scale-[0.98] sm:min-w-[124px] sm:px-3.5 sm:hover:-translate-y-0.5 ${
-                                    inBasket
+                                    inQty
                                       ? 'border-primary bg-primary/14 shadow-glass'
                                       : usual
                                         ? 'border-primary/35 bg-surface sm:hover:border-primary/60 sm:hover:shadow-glass'
@@ -246,17 +316,17 @@ export function Sell() {
                                 >
                                   <span
                                     className={`block text-[10.5px] font-semibold uppercase tracking-[0.08em] ${
-                                      inBasket || usual ? 'text-primary' : 'text-ink-3'
+                                      inQty || usual ? 'text-primary' : 'text-ink-3'
                                     }`}
                                   >
                                     {TIER_LABEL[t]}
                                   </span>
                                   <span className="readout mt-0.5 block text-[14px] font-semibold text-ink">
-                                    {rm(priceAtTier(v, t))}
+                                    {t === 'other' ? 'RM …' : rm(priceAtTier(v, t))}
                                   </span>
-                                  {inBasket && (
+                                  {inQty > 0 && (
                                     <span className="readout absolute right-1.5 top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[11px] font-semibold text-white">
-                                      {inBasket.qty}
+                                      {inQty}
                                     </span>
                                   )}
                                 </button>
@@ -292,33 +362,33 @@ export function Sell() {
               />
               <Rule />
               <PanelBody className="space-y-2">
-                {basket.map((l) => {
+                {basket.map((l, i) => {
                   const s = skuById(l.skuId)
                   const tier = l.priceTier ?? basis
                   return (
                     <div
-                      key={`${l.skuId}-${tier}`}
+                      key={`${l.skuId}-${tier}-${l.unitPriceMYR ?? ''}-${i}`}
                       className="rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 sm:flex sm:items-center sm:gap-3"
                     >
                       {/* Phone: name and total on one row, price and quantity on the next. */}
                       <div className="flex items-center justify-between gap-3 sm:min-w-0 sm:flex-1">
                         <span className="min-w-0 truncate text-[13.5px] text-ink">{s?.label}</span>
                         <span className="readout text-[12.5px] text-ink-2 sm:hidden">
-                          {rm(l.qty * lineUnitPrice(l.skuId, l.priceTier, basis))}
+                          {rm(l.qty * lineUnitPrice(l, basis))}
                         </span>
                       </div>
                       <div className="mt-2 flex items-center gap-3 sm:mt-0">
                         <Badge tone={tier === basis ? 'neutral' : 'active'}>
-                          {TIER_LABEL[tier]} · {rm(lineUnitPrice(l.skuId, l.priceTier, basis))}
+                          {TIER_LABEL[tier]} · {rm(lineUnitPrice(l, basis))}
                         </Badge>
                         <span className="readout hidden text-[12.5px] text-ink-2 sm:inline">
-                          {rm(l.qty * lineUnitPrice(l.skuId, l.priceTier, basis))}
+                          {rm(l.qty * lineUnitPrice(l, basis))}
                         </span>
                         <div className="ml-auto flex items-center gap-2">
                           <IconButton
                             name="minus"
                             label="One fewer"
-                            onClick={() => bump(l.skuId, tier, -1)}
+                            onClick={() => bump(l, -1)}
                             className="h-10 w-10 border border-line bg-surface"
                           />
                           <span className="readout w-8 text-center font-display text-[19px] font-semibold text-ink">
@@ -327,7 +397,7 @@ export function Sell() {
                           <IconButton
                             name="plus"
                             label="One more"
-                            onClick={() => bump(l.skuId, tier, 1)}
+                            onClick={() => bump(l, 1)}
                             className="h-10 w-10 border border-primary/40 bg-primary/10 text-primary"
                           />
                         </div>
@@ -394,11 +464,11 @@ export function Sell() {
         <Panel>
           <PanelHeader
             eyebrow="Today"
-            title={`${lines.length} ${lines.length === 1 ? 'line' : 'lines'} logged`}
-            meta="Tap the cross to remove a mistake."
+            title={`${customers} ${customers === 1 ? 'customer' : 'customers'} · ${lines.length} ${lines.length === 1 ? 'line' : 'lines'}`}
+            meta="Every sale recorded at this store today, by anyone. Take back a line, or a whole sale, if something was keyed in wrongly."
           />
           <Rule />
-          <PanelBody className="space-y-2">
+          <PanelBody className="space-y-2.5">
             {lines.length === 0 ? (
               <EmptyState
                 icon="plus"
@@ -406,38 +476,69 @@ export function Sell() {
                 body="Record each sale as it happens and tonight's closing becomes a quick check."
               />
             ) : (
-              [...lines].reverse().map((l, revIndex) => {
-                const index = lines.length - 1 - revIndex
-                const s = skuById(l.skuId)
-                const c = l.countryCode ? countryByCode(l.countryCode) : null
+              sales.map(([saleId, group]) => {
+                const first = group[0]
+                const c = first.countryCode ? countryByCode(first.countryCode) : null
+                const total = group.reduce((a, l) => a + l.qty * lineUnitPrice(l, basis), 0)
                 return (
-                  <div
-                    key={`${index}-${l.skuId}`}
-                    className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5"
-                  >
-                    <span className="readout text-[13px] font-semibold text-ink">{l.qty} ×</span>
-                    <span className="min-w-0 flex-1 truncate text-[13px] text-ink">{s?.label}</span>
-                    {l.priceTier && l.priceTier !== basis && (
-                      <Badge tone="neutral">{TIER_LABEL[l.priceTier]}</Badge>
-                    )}
-                    {c && (
-                      <Badge tone="active">
-                        <Flag code={c.code} size={14} />
-                        {c.name}
-                        {l.segment ? ` · ${MALAYSIA_SEGMENT_LABEL[l.segment]}` : ''}
-                      </Badge>
-                    )}
-                    <span className="readout text-[12.5px] text-ink-2">
-                      {rm(l.qty * lineUnitPrice(l.skuId, l.priceTier, basis))}
-                    </span>
-                    <IconButton
-                      name="x"
-                      label="Remove this line"
-                      onClick={() => {
-                        removeSaleLine(locationId, index)
-                        push('Line removed', 'info')
-                      }}
-                    />
+                  <div key={saleId} className="rounded-xl border border-line bg-surface-2">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line/70 px-3.5 py-2">
+                      {c ? (
+                        <Badge tone="active">
+                          <Flag code={c.code} size={14} />
+                          {c.name}
+                          {first.segment ? ` · ${MALAYSIA_SEGMENT_LABEL[first.segment]}` : ''}
+                        </Badge>
+                      ) : (
+                        <Badge tone="neutral">Customer</Badge>
+                      )}
+                      <span className="text-[11.5px] text-ink-3">
+                        {first.at ? formatTimestamp(first.at).split(' · ').pop() : ''}
+                        {first.byName ? ` · ${first.byName}` : ''}
+                      </span>
+                      <span className="readout ml-auto text-[12.5px] font-semibold text-ink">{rm(total)}</span>
+                      <button
+                        onClick={() => {
+                          removeSale(saleId)
+                          push('Sale taken back', 'info')
+                        }}
+                        className="flex items-center gap-1 text-[11.5px] text-critical hover:underline"
+                      >
+                        <Icon name="x" className="h-3 w-3" />
+                        Delete sale
+                      </button>
+                    </div>
+                    <div className="space-y-1 px-3.5 py-2">
+                      {group.map((l) => {
+                        const s = skuById(l.skuId)
+                        return (
+                          <div key={l.id ?? `${saleId}-${l.skuId}`} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                            <span className="readout text-[13px] font-semibold text-ink">{l.qty} ×</span>
+                            <span className="min-w-0 flex-1 truncate text-[13px] text-ink">{s?.label}</span>
+                            {l.priceTier && l.priceTier !== basis && (
+                              <Badge tone="neutral">
+                                {TIER_LABEL[l.priceTier]}
+                                {l.priceTier === 'other' ? ` · ${rm(lineUnitPrice(l, basis))}` : ''}
+                              </Badge>
+                            )}
+                            <span className="readout text-[12.5px] text-ink-2">
+                              {rm(l.qty * lineUnitPrice(l, basis))}
+                            </span>
+                            {group.length > 1 && l.id && (
+                              <IconButton
+                                name="x"
+                                label="Remove this line"
+                                className="h-8 w-8"
+                                onClick={() => {
+                                  removeSaleLine(l.id!)
+                                  push('Line removed', 'info')
+                                }}
+                              />
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
                   </div>
                 )
               })

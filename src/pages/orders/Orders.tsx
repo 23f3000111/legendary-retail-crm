@@ -11,13 +11,7 @@ import { useData } from '../../store/useData'
 import { useCan, useCurrentUser } from '../../store/useAuth'
 import { useToasts } from '../../components/ui/Toast'
 import { poUnits, poValue } from '../../store/selectors'
-import {
-  availableTransitions,
-  chainProgress,
-  isOpen,
-  STATUS_LABEL,
-  STATUS_OWNER,
-} from '../../lib/po-machine'
+import { STATUS_LABEL, STATUS_OWNER, availableTransitions, canClearAccounts, chainProgress, isOpen } from '../../lib/po-machine'
 import { locationById } from '../../data/locations'
 import { relativeDay } from '../../lib/dates'
 import { downloadCsv } from '../../lib/exportCsv'
@@ -39,6 +33,7 @@ export function Orders() {
   const capability = useCan()
   const data = useData()
   const transitionPo = useData((s) => s.transitionPo)
+  const clearAccounts = useData((s) => s.clearAccounts)
   const push = useToasts((s) => s.push)
 
   const isPromoter = user?.role === 'promoter'
@@ -55,7 +50,11 @@ export function Orders() {
   const waitingOnMe = useMemo(
     () =>
       user
-        ? scoped.filter((p) => availableTransitions(p, user.role).some((t) => t.to !== 'rejected'))
+        ? scoped.filter(
+            (p) =>
+              availableTransitions(p, user.role).some((t) => t.to !== 'rejected') ||
+              canClearAccounts(p, user.role),
+          )
         : [],
     [scoped, user],
   )
@@ -74,7 +73,10 @@ export function Orders() {
 
   const act = (p: PurchaseOrder, to: string, label: string) => {
     if (!user) return
-    const result = transitionPo({ poId: p.id, to: to as never, actor: user.name, role: user.role })
+    const result =
+      to === 'accounts_cleared'
+        ? clearAccounts({ poId: p.id, actor: user.name, role: user.role })
+        : transitionPo({ poId: p.id, to: to as never, actor: user.name, role: user.role })
     if (!result.ok) {
       push(result.error ?? 'That move is not allowed.', 'critical')
       return
@@ -149,7 +151,9 @@ export function Orders() {
       width: capability.canEdit ? '210px' : '150px',
       render: (p) => {
         const moves = user ? availableTransitions(p, user.role) : []
-        const primary = moves.find((m) => m.to !== 'rejected')
+        const primary =
+          moves.find((m) => m.to !== 'rejected') ??
+          (user && canClearAccounts(p, user.role) ? { to: 'accounts_cleared', label: 'Clear' } : undefined)
         return (
           <div className="flex items-center justify-end gap-2">
             <StatusChip status={p.status} />

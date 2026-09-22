@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { Panel, PanelBody, PanelHeader, Rule } from '../../components/ui/Panel'
 import { Button } from '../../components/ui/Button'
-import { Badge } from '../../components/ui/Badge'
+import { Badge, StatusChip } from '../../components/ui/Badge'
 import { StatTile } from '../../components/ui/StatTile'
 import { EmptyState } from '../../components/ui/DataTable'
 import { Icon } from '../../components/ui/icons'
@@ -22,7 +22,7 @@ import {
   selectWriteOffs,
 } from '../../store/selectors'
 import { CHANNEL_PLURAL, locationsInChannel, locationById } from '../../data/locations'
-import { availableTransitions } from '../../lib/po-machine'
+import { awaitingFinance } from '../../lib/po-machine'
 import { addDays, monthKey, monthLabel } from '../../lib/dates'
 import { downloadCsv } from '../../lib/exportCsv'
 import { num, rm, rmCompact } from '../../lib/format'
@@ -47,11 +47,9 @@ export function Finance() {
   const channels = selectChannelSplit(data, filter)
   const writeOffs = selectWriteOffs(data, filter)
 
-  const waitingOnMe = user
-    ? data.purchaseOrders.filter((p) =>
-        availableTransitions(p, user.role).some((t) => t.to !== 'rejected'),
-      )
-    : []
+  // Every approved order Finance has not yet cleared — the warehouse may
+  // already be packing it; that no longer waits on Finance.
+  const waitingOnMe = user?.role === 'finance' ? data.purchaseOrders.filter(awaitingFinance) : []
 
   const channelSlices: DonutSlice[] = channels.map((c) => ({
     key: c.channel,
@@ -169,8 +167,8 @@ export function Finance() {
         <Panel>
           <PanelHeader
             eyebrow="Needs you"
-            title={`${waitingOnMe.length} approved orders to clear`}
-            meta="Clearing releases the order to the warehouse for picking."
+            title={`${waitingOnMe.length} approved ${waitingOnMe.length === 1 ? 'order' : 'orders'} to clear`}
+            meta="The warehouse has these already. Clearing records that accounts has them too."
             action={
               <Link to="/orders">
                 <Button size="sm" variant="ghost" iconRight="chevronRight">
@@ -190,8 +188,10 @@ export function Finance() {
                 <span className="readout text-[12.5px] font-medium text-ink">{po.id}</span>
                 <span className="text-[11.5px] text-ink-2">
                   {locationById(po.locationId)?.shortName}
+                  <span className="text-ink-3"> · by {po.createdBy}</span>
                 </span>
                 {po.priority === 'urgent' && <Badge tone="critical">Urgent</Badge>}
+                <StatusChip status={po.status} />
                 <span className="readout ml-auto text-[12px] text-ink">{rm(poValue(po))}</span>
                 <Icon name="chevronRight" className="h-3.5 w-3.5 shrink-0 text-ink-3" />
               </Link>

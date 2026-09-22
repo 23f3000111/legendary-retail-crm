@@ -70,7 +70,9 @@ export function StockPage() {
       header: 'On hand',
       align: 'right',
       width: '90px',
-      render: (r) => <span className="readout text-[13px] text-ink">{num(r.onHand)}</span>,
+      render: (r) => (
+        <span className="readout text-[13px] text-ink">{r.counted ? num(r.onHand) : '—'}</span>
+      ),
     },
     {
       key: 'cover',
@@ -284,10 +286,10 @@ export function StockPage() {
                         return (
                           <td key={l.id} className="px-1 py-2 text-center">
                             <span
-                              title={`${l.name} · ${s.label} · ${cell?.onHand ?? 0} on hand`}
+                              title={`${l.name} · ${s.label} · ${cell?.counted ? `${cell.onHand} on hand` : 'no count filed yet'}`}
                               className={`readout mx-auto flex h-7 min-w-[38px] items-center justify-center rounded-lg border text-[12px] ${tone(cell?.status)}`}
                             >
-                              {cell?.onHand ?? 0}
+                              {cell?.counted ? cell.onHand : '—'}
                             </span>
                           </td>
                         )

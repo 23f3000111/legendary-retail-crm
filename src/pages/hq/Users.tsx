@@ -27,6 +27,7 @@ import {
   ACCENT_GRADIENT,
   type Person,
   type Role,
+  KL_STORES,
 } from '../../data/people'
 import { locationById, locationsInChannel } from '../../data/locations'
 import { downloadCsv } from '../../lib/exportCsv'
@@ -40,6 +41,9 @@ const ACCENTS: Person['accent'][] = ['violet', 'blue', 'cyan', 'teal']
  * id from the outset: a select whose value is `undefined` still *renders* its
  * first option, so leaving it blank shows a store that was never chosen.
  */
+/** The option in the store picker that means "one of the four KL stores". */
+const KL_CHOICE = '__kl__'
+
 const blank = (defaultLocationId: string): Person => ({
   id: '',
   username: '',
@@ -52,10 +56,9 @@ const blank = (defaultLocationId: string): Person => ({
   home: HOME_FOR_ROLE.promoter,
   accent: 'teal',
   locationId: defaultLocationId,
-  password: '',
-  passwordHistory: [],
   passwordSetAt: new Date().toISOString(),
   passwordSetBy: '',
+  passwordChanges: 0,
   active: true,
 })
 
@@ -91,13 +94,13 @@ export function Users() {
   /** id → the password, once it has been asked for. Cleared when it is hidden. */
   const [revealed, setRevealed] = useState<Record<string, string>>({})
 
-  const toggleReveal = (p: Person) => {
+  const toggleReveal = async (p: Person) => {
     if (revealed[p.id]) {
       setRevealed(({ [p.id]: _gone, ...rest }) => rest)
       return
     }
     if (!me) return
-    const result = revealPassword({ actor: me, targetId: p.id })
+    const result = await revealPassword({ actor: me, targetId: p.id })
     if (!result.ok || !result.password) {
       push(result.error ?? 'That password cannot be shown.', 'critical')
       return
@@ -123,7 +126,10 @@ export function Users() {
   const openEdit = (p: Person) => {
     setEditing({
       ...p,
-      locationId: p.role === 'promoter' ? (p.locationId ?? mainStores[0]?.id) : p.locationId,
+      locationId:
+        p.role === 'promoter' && !p.storeChoices?.length
+          ? (p.locationId ?? mainStores[0]?.id)
+          : p.locationId,
     })
     setIsNew(false)
     setError(null)
@@ -140,7 +146,7 @@ export function Users() {
     })
   }
 
-  const save = () => {
+  const save = async () => {
     if (!editing || !me) return
     const name = editing.name.trim()
     if (!name) return setError('Give the person a name.')
@@ -152,8 +158,8 @@ export function Users() {
     if (allUsers.some((u) => u.username === username && u.id !== editing.id)) {
       return setError('Somebody already has that username.')
     }
-    if (editing.role === 'promoter' && !editing.locationId) {
-      return setError('A store promoter has to belong to a store.')
+    if (editing.role === 'promoter' && !editing.locationId && !editing.storeChoices?.length) {
+      return setError('A store promoter has to belong to a store, or choose one of the KL stores.')
     }
     if (isNew && firstPassword.trim().length < 10) {
       return setError('Set a starting password of at least 10 characters.')
@@ -167,18 +173,17 @@ export function Users() {
       initials: editing.initials.trim() || initialsOf(name),
       title: editing.title.trim() || ROLE_LABEL[editing.role],
       id: isNew ? username : editing.id,
-      password: isNew ? firstPassword.trim() : editing.password,
       passwordSetBy: isNew ? me.name : editing.passwordSetBy,
-      placeholder: false,
     }
 
     if (isNew) {
-      addUser(person)
+      const result = await addUser(person, firstPassword.trim())
+      if (!result.ok) return setError(result.error ?? 'That login could not be created.')
       push(`${person.name} can sign in as ${person.username}`, 'good')
     } else {
       // The password is never changed from this form — it has its own flow.
-      const { password, passwordHistory, passwordSetAt, passwordSetBy, ...rest } = person
-      void password, passwordHistory, passwordSetAt, passwordSetBy
+      const { passwordSetAt, passwordSetBy, passwordChanges, ...rest } = person
+      void passwordSetAt, passwordSetBy, passwordChanges
       updateUser(person.id, rest)
       push(`${person.name} updated`, 'good')
     }
@@ -218,7 +223,7 @@ export function Users() {
           </div>
           {!p.active && <Badge tone="neutral">Disabled</Badge>}
           {p.hidden && <Badge tone="active">Hidden</Badge>}
-          {p.placeholder && <Badge tone="warn">Store to confirm</Badge>}
+          {p.storeChoices?.length ? <Badge tone="active">Chooses a KL store</Badge> : null}
         </div>
       ),
     },
@@ -229,7 +234,11 @@ export function Users() {
         <div>
           <p className="text-[12px] leading-snug text-ink-2">{ROLE_ACCESS[p.role]}</p>
           <p className="text-[11px] text-ink-3">
-            {p.locationId ? locationById(p.locationId)?.shortName : 'Head Office'}
+            {p.storeChoices?.length
+              ? 'KL — chooses a store at sign-in'
+              : p.locationId
+                ? locationById(p.locationId)?.shortName
+                : 'Head Office'}
           </p>
         </div>
       ),
@@ -305,7 +314,11 @@ export function Users() {
         p.email,
         ROLE_LABEL[p.role],
         ROLE_ACCESS[p.role],
-        p.locationId ? (locationById(p.locationId)?.name ?? '') : 'Head Office',
+        p.storeChoices?.length
+          ? 'KL (chooses at sign-in)'
+          : p.locationId
+            ? (locationById(p.locationId)?.name ?? '')
+            : 'Head Office',
         p.active ? 'Yes' : 'No',
         p.passwordSetAt.slice(0, 10),
         p.passwordSetBy,
@@ -450,11 +463,21 @@ export function Users() {
             </Field>
 
             {editing.role === 'promoter' && (
-              <Field label="Store" hint="A promoter only ever sees their own store.">
+              <Field
+                label="Store"
+                hint="A promoter only ever sees their own store. The KL promoters pick one of the four KL stores each time they sign in."
+              >
                 <Select
-                  value={editing.locationId ?? ''}
-                  onChange={(e) => setEditing({ ...editing, locationId: e.target.value })}
+                  value={editing.storeChoices?.length ? KL_CHOICE : (editing.locationId ?? '')}
+                  onChange={(e) =>
+                    setEditing(
+                      e.target.value === KL_CHOICE
+                        ? { ...editing, locationId: undefined, storeChoices: KL_STORES }
+                        : { ...editing, locationId: e.target.value, storeChoices: undefined },
+                    )
+                  }
                 >
+                  <option value={KL_CHOICE}>Kuala Lumpur — chooses a store at sign-in</option>
                   {mainStores.map((l) => (
                     <option key={l.id} value={l.id}>
                       {l.name}

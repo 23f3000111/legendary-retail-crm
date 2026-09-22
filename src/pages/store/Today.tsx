@@ -39,6 +39,8 @@ export function Today() {
 
   const closedToday = selectClosingFor(data, locationId, data.today)
   const lines = data.liveLines[locationId] ?? []
+  // Earlier days with sales on record and no closing — a missed night.
+  const missed = Object.entries(data.unfiledLines[locationId] ?? {}).sort((a, b) => (a[0] < b[0] ? 1 : -1))
   const stock = selectStock(data, locationId)
   const low = stock.filter((s) => s.status !== 'ok')
   const openOrders = selectOpenPos(data, locationId)
@@ -52,7 +54,7 @@ export function Today() {
   const mix = selectOriginMix(data, window30)
   const row = selectLocationRows(data, window30)[0]
 
-  const liveRevenue = lines.reduce((a, l) => a + l.qty * lineUnitPrice(l.skuId, l.priceTier, basis), 0)
+  const liveRevenue = lines.reduce((a, l) => a + l.qty * lineUnitPrice(l, basis), 0)
   const liveUnits = lines.reduce((a, l) => a + l.qty, 0)
 
   const todayMix = useMemo(() => {
@@ -62,7 +64,7 @@ export function Today() {
       if (!l.countryCode) continue
       const b = tally.get(l.countryCode) ?? { units: 0, revenue: 0 }
       b.units += l.qty
-      b.revenue += l.qty * lineUnitPrice(l.skuId, l.priceTier, basis)
+      b.revenue += l.qty * lineUnitPrice(l, basis)
       tally.set(l.countryCode, b)
     }
     return originSlicesFrom(tally)
@@ -96,6 +98,30 @@ export function Today() {
           </Link>
         </div>
       </div>
+
+      {missed.length > 0 && (
+        <div className="space-y-2">
+          {missed.map(([day, dayLines]) => (
+            <div
+              key={day}
+              className="flex flex-wrap items-center gap-3 rounded-2xl border border-warn/40 bg-warn/8 px-4 py-3"
+            >
+              <Icon name="alert" className="h-4 w-4 shrink-0 text-warn" />
+              <p className="min-w-0 flex-1 text-[13px] text-ink">
+                <b>{formatDate(day)} was not closed.</b>{' '}
+                <span className="text-ink-2">
+                  {dayLines.length} {dayLines.length === 1 ? 'sale line was' : 'sale lines were'} recorded that day.
+                </span>
+              </p>
+              <Link to={`/close?day=${day}`}>
+                <Button size="sm" variant="primary" icon="clipboard">
+                  Close {formatDate(day)}
+                </Button>
+              </Link>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile

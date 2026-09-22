@@ -35,7 +35,14 @@ jobs:
       # those rules never reaches the published site.
       - run: npx vitest run
 
+      # The shared server. Both values come from the Supabase project's
+      # Settings → API page and are set as repository secrets; the anon key is
+      # meant to be public — the server refuses anything it is not shown a
+      # valid session for. Without them the build runs on one browser only.
       - run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
 
       - uses: actions/upload-pages-artifact@v3
         with:

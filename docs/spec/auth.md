@@ -1,7 +1,8 @@
 # Signing in
 
-**Date:** 2026-09-11
-**Status:** Built.
+**Date:** 2026-09-11, updated 2026-09-22 for the shared server
+**Status:** Built. The e-mailed code is written but switched off until a mail
+sender is connected (see the end).
 
 ---
 
@@ -106,14 +107,20 @@ way; it is a small change back if the client ever wants it.
 
 | Stored | What it is |
 |---|---|
-| `password_hash` | Argon2id. Checked at sign-in. Not reversible. |
-| `password_cipher` | Encrypted with a Vault key. Read only through `reveal_password()`. |
+| `password_hash` | bcrypt. Checked at sign-in. Not reversible. |
+| `password_cipher` | Encrypted with a key held in Supabase Vault. Read only through `reveal_password()`, which writes the look-up to the log. |
 | `password_history` | Every password they have held, hashed, so none is ever reissued. |
-| `login_codes` | The second step, for leadership and IT only. Hashed, single use, ten minutes. |
+| `pending_codes` | The second step, for leadership and IT only. Hashed, single use, ten minutes. |
 | `login_attempts` | Who tried and whether it worked. **Never what they typed.** |
+| `sessions` | A 48-character random token per signed-in device, and the store a KL promoter chose. A month unused and it ends. |
 
-The hash and the encrypted copy are made in the Edge Function, not in SQL — a
-password should not pass through the query log on its way in.
+All of it is in [`0001_init.sql`](../../supabase/migrations/0001_init.sql).
+The browser never touches these tables: it calls functions that take the
+session token and apply the rules above.
+
+**No password is in the repository.** The server gives every login a random
+password when it is set up; the one password chosen by hand is Imran's, at
+set-up, and he reads the rest off the Logins screen.
 
 ---
 
@@ -141,13 +148,16 @@ Checked in the browser for an immediate message, and again in the database:
 
 ---
 
-## Before real staff use this
+## The code by e-mail: written, switched off
 
-1. **Turn off the walkthrough panel** — `SHOW_DEMO_HELP` in
-   [`src/pages/Login.tsx`](../../src/pages/Login.tsx). It lists the demo logins
-   and shows the code that would have been e-mailed.
-2. **Wire the mail.** No mail is sent in this build. In production
-   `beginSignIn` becomes one request to an Edge Function that checks the
-   password, sends the code where one is needed, and returns only "sent".
-3. **Confirm the e-mail addresses.** Every account is currently
-   `‹username›@legendary.com.my`. The code goes to whatever is on the account.
+The server generates, hashes and checks the code, and the app has the screen
+for it. What is missing is somewhere to send mail from. Until a sender is
+connected (Resend, Brevo, or the company's SMTP), `settings.two_step` is
+`false` and leadership sign in on the password alone — the trial runs that
+way. The walkthrough panel that used to show the code on screen exists only
+in the single-browser build a developer runs; the published site never
+renders it.
+
+To switch the code on: add the send at the `TODO` in `sign_in()`, confirm the
+e-mail addresses (every account is `‹username›@legendary.com.my` until the
+client says otherwise), and set `two_step` to `true`.

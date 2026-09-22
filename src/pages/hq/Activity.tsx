@@ -6,8 +6,11 @@ import { StatTile } from '../../components/ui/StatTile'
 import { EmptyState } from '../../components/ui/DataTable'
 import { ChipToggle, SegmentedControl, Select, TextInput } from '../../components/ui/Field'
 import { useData } from '../../store/useData'
-import { AUDIT_OVERLAY_LIMIT } from '../../store/useData'
-import { AUDIT_HISTORY_DAYS } from '../../data/seed'
+import { useCurrentUser } from '../../store/useAuth'
+import { useToasts } from '../../components/ui/Toast'
+import { Modal } from '../../components/ui/Modal'
+import { Field } from '../../components/ui/Field'
+import { isShared } from '../../api'
 import {
   AUDIT_KIND_LABEL,
   AUDIT_KIND_TONE,
@@ -68,6 +71,17 @@ const PAGE = 60
 export function Activity() {
   const data = useData()
   const audit = useData((s) => s.audit)
+  const clearAllData = useData((s) => s.clearAllData)
+  const me = useCurrentUser()
+  const push = useToasts((s) => s.push)
+
+  // "Please clear all the current data, and we will start over again." Davy
+  // and Imran can, from here, with the phrase typed out — it takes every sale,
+  // closing and order from every device at once.
+  const canStartOver = me?.role === 'md' || me?.role === 'it'
+  const [startOver, setStartOver] = useState(false)
+  const [phrase, setPhrase] = useState('')
+  const [wiping, setWiping] = useState(false)
 
   const [range, setRange] = useState<RangeKey>('7')
   const [kinds, setKinds] = useState<AuditKind[]>([])
@@ -103,9 +117,6 @@ export function Activity() {
     setShown(PAGE)
   }
 
-  // The demo's "today" is fixed, but anything done during a walkthrough carries
-  // the real clock — so this counts from the demo day onward rather than on it,
-  // and a change made now shows up here straight away.
   const todayCount = audit.filter((e) => e.at.slice(0, 10) >= data.today).length
   const passwordCount = audit.filter((e) => e.kind === 'password').length
   const people = useMemo(() => {
@@ -165,7 +176,7 @@ export function Activity() {
           label="On record"
           value={audit.length}
           format={(n) => num(Math.round(n))}
-          footnote={`last ${AUDIT_HISTORY_DAYS} days`}
+          footnote={audit.length ? `since ${formatDate(audit[audit.length - 1].at.slice(0, 10))}` : 'nothing yet'}
           tone="blue"
           icon="doc"
         />
@@ -252,7 +263,26 @@ export function Activity() {
         <PanelHeader
           eyebrow="Log"
           title="What has happened"
-          meta={`This wireframe seeds the last ${AUDIT_HISTORY_DAYS} days and keeps the newest ${AUDIT_OVERLAY_LIMIT} of your own actions across a refresh. The real system keeps every row for ten years.`}
+          meta={
+            isShared()
+              ? 'Every action from every device, kept for ten years. Nothing here can be edited or removed.'
+              : 'This build runs on one browser. Its log starts when the sample data was loaded.'
+          }
+          action={
+            canStartOver ? (
+              <Button
+                size="sm"
+                variant="danger"
+                icon="alert"
+                onClick={() => {
+                  setPhrase('')
+                  setStartOver(true)
+                }}
+              >
+                Start over
+              </Button>
+            ) : undefined
+          }
         />
         <Rule />
         <PanelBody>
@@ -294,6 +324,43 @@ export function Activity() {
           )}
         </PanelBody>
       </Panel>
+      <Modal
+        open={startOver}
+        onClose={() => setStartOver(false)}
+        title="Start over"
+        subtitle="Every sale, closing, order, target and promotion, on every device. Logins stay."
+        footer={
+          <>
+            <Button variant="ghost" size="sm" onClick={() => setStartOver(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              disabled={phrase.trim().toUpperCase() !== 'START OVER' || wiping}
+              onClick={async () => {
+                setWiping(true)
+                const r = await clearAllData()
+                setWiping(false)
+                if (!r.ok) return push(r.error ?? 'That did not work.', 'critical')
+                setStartOver(false)
+                push('Everything has been cleared. The promoters can begin.', 'good')
+              }}
+            >
+              Clear everything
+            </Button>
+          </>
+        }
+      >
+        <p className="mb-4 text-[12.5px] leading-relaxed text-ink-2">
+          This cannot be undone. It is for the moment the client asked for — clearing the trial
+          so the promoters begin with nothing on record. Type <b className="text-ink">START OVER</b>{' '}
+          to confirm.
+        </p>
+        <Field label="Confirm">
+          <TextInput value={phrase} onChange={(e) => setPhrase(e.target.value)} placeholder="START OVER" autoFocus />
+        </Field>
+      </Modal>
     </div>
   )
 }

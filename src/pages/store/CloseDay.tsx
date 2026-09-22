@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Panel, PanelBody, PanelHeader, Rule } from '../../components/ui/Panel'
 import { Button, IconButton } from '../../components/ui/Button'
 import { Badge } from '../../components/ui/Badge'
@@ -17,8 +17,9 @@ import {
   testerSkus,
   TIER_LABEL,
 } from '../../data/products'
-import { formatDate } from '../../lib/dates'
+import { formatDate, formatTimestamp } from '../../lib/dates'
 import { num, rm } from '../../lib/format'
+import { newOrderId } from '../../lib/ids'
 import type { Closing, PurchaseOrder, StockCount } from '../../data/types'
 
 /**
@@ -43,10 +44,15 @@ import type { Closing, PurchaseOrder, StockCount } from '../../data/types'
  * of cards with the box to type in always on screen. The shelf table only
  * appears where there is room for it.
  *
+ * A day with no sales can still be closed, and an order still raised (client's
+ * third revision). A day that was missed can be filed late from the Today
+ * screen, which opens this page with `?day=`.
+ *
  * The deadline is 11pm and anyone at the counter may file it (Q17, Q18).
  */
 export function CloseDay() {
   const navigate = useNavigate()
+  const [params] = useSearchParams()
   const user = useCurrentUser()
   const data = useData()
   const submitClosing = useData((s) => s.submitClosing)
@@ -57,15 +63,19 @@ export function CloseDay() {
   const location = locationById(locationId)
   // Which of the two prices this store is counted on (Revision 2).
   const basis = location?.priceBasis ?? 'promotion'
-  const already = selectClosingFor(data, locationId, data.today)
+  // Today, unless an earlier unfiled day was asked for.
+  const day = params.get('day') && params.get('day')! < data.today ? params.get('day')! : data.today
+  const already = selectClosingFor(data, locationId, day)
   const stock = useMemo(() => selectStock(data, locationId), [data, locationId])
-  const lines = data.liveLines[locationId] ?? []
+  const lines = day === data.today ? (data.liveLines[locationId] ?? []) : (data.unfiledLines[locationId]?.[day] ?? [])
+  // Sales rung up after the day was filed, so a re-file is offered for them.
+  const sinceFiled = already ? lines.filter((l) => l.at && l.at > already.submittedAt).length : 0
 
   const [refiling, setRefiling] = useState(false)
   const [tried, setTried] = useState(false)
   const [showLines, setShowLines] = useState(false)
 
-  const revenue = lines.reduce((a, l) => a + l.qty * lineUnitPrice(l.skuId, l.priceTier, basis), 0)
+  const revenue = lines.reduce((a, l) => a + l.qty * lineUnitPrice(l, basis), 0)
   const units = lines.reduce((a, l) => a + l.qty, 0)
 
   /** What sold of each product today, from the sales recorded at the counter. */
@@ -116,9 +126,6 @@ export function CloseDay() {
 
   // ── What still needs doing, in the promoter's own terms ─────────────────
   const problems: string[] = []
-  if (lines.length === 0) {
-    problems.push('No sales recorded today. Record them on the Record a sale screen first.')
-  }
   if (revenue > 0 && cash === '') {
     problems.push('Type how much came in as cash — enter 0 if it was all card.')
   }
@@ -156,10 +163,10 @@ export function CloseDay() {
     }))
 
     const closing: Closing = {
-      id: `${locationId}-${data.today}`,
+      id: `${locationId}-${day}`,
       locationId,
       channel: location.channel,
-      period: data.today,
+      period: day,
       periodType: 'day',
       revenueMYR: revenue,
       tender: {
@@ -188,9 +195,8 @@ export function CloseDay() {
     }))
 
     if (raisePo && poLines.length) {
-      const seq = data.purchaseOrders.length + 400
       const po: PurchaseOrder = {
-        id: `PO-2026-${String(seq).padStart(4, '0')}`,
+        id: newOrderId(data.today),
         locationId,
         createdBy: user.name,
         createdAt: new Date().toISOString(),
@@ -226,8 +232,12 @@ export function CloseDay() {
       <Panel>
         <PanelHeader
           eyebrow={location.name}
-          title={`${formatDate(data.today)} is already closed`}
-          meta={`Filed by ${already.submittedBy}. Filing again replaces what is on record.`}
+          title={`${formatDate(day)} is already closed`}
+          meta={
+            sinceFiled > 0
+              ? `Filed by ${already.submittedBy} at ${formatTimestamp(already.submittedAt)}. ${sinceFiled} ${sinceFiled === 1 ? 'sale has' : 'sales have'} been recorded since — file it again to include ${sinceFiled === 1 ? 'it' : 'them'}.`
+              : `Filed by ${already.submittedBy} at ${formatTimestamp(already.submittedAt)}. Filing again replaces what is on record.`
+          }
         />
         <Rule />
         <PanelBody className="flex flex-wrap items-center gap-5">
@@ -280,21 +290,24 @@ export function CloseDay() {
     <div className="mx-auto max-w-3xl space-y-5">
       <div>
         <p className="eyebrow">{location.name}</p>
-        <h1 className="page-title mt-1">Close the day · {formatDate(data.today)}</h1>
+        <h1 className="page-title mt-1">
+          {day === data.today ? 'Close the day' : 'Close a missed day'} · {formatDate(day)}
+        </h1>
         <p className="mt-1 text-[13px] text-ink-2">
-          Everything below is filled in from the sales you recorded today. Check it, type the
-          cash, and close.
+          {day === data.today
+            ? 'Everything below is filled in from the sales recorded today. Check it, type the cash, and close.'
+            : 'This day was never closed. Everything below is filled in from the sales recorded that day.'}
         </p>
       </div>
 
       {/* ── Today's sales ─────────────────────────────────────────────── */}
       <Panel>
         <PanelHeader
-          eyebrow="Today's sales"
-          title={lines.length === 0 ? 'Nothing recorded yet' : `${rm(revenue)} from ${num(units)} units`}
+          eyebrow={day === data.today ? "Today's sales" : `Sales on ${formatDate(day)}`}
+          title={lines.length === 0 ? 'No sales recorded' : `${rm(revenue)} from ${num(units)} units`}
           meta={
             lines.length === 0
-              ? 'Record today’s sales first — they fill this page in.'
+              ? 'A quiet day can still be closed — the count and the top-up matter just as much.'
               : `${lines.length} ${lines.length === 1 ? 'line' : 'lines'} from Record a sale.`
           }
           action={
@@ -338,7 +351,7 @@ export function CloseDay() {
                           <Badge tone="neutral">{TIER_LABEL[l.priceTier]}</Badge>
                         )}
                         <span className="readout text-[12px] text-ink-2">
-                          {rm(l.qty * lineUnitPrice(l.skuId, l.priceTier, basis))}
+                          {rm(l.qty * lineUnitPrice(l, basis))}
                         </span>
                       </li>
                     )
@@ -566,7 +579,9 @@ export function CloseDay() {
                   <p className="text-[13px] text-ink">{sku?.label ?? line.skuId}</p>
                   <p className="text-[11px] text-ink-3">
                     {row
-                      ? `${num(row.onHand)} on hand · reorder at ${num(row.reorderPoint)}`
+                      ? row.counted
+                        ? `${num(row.onHand)} on hand · reorder at ${num(row.reorderPoint)}`
+                        : `No count filed yet · reorder at ${num(row.reorderPoint)}`
                       : 'Tester — not counted on the shelf'}
                   </p>
                 </div>

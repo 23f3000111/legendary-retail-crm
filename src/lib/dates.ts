@@ -8,6 +8,21 @@ export const toDateStr = (d: Date): DateStr => {
   return `${y}-${m}-${day}`
 }
 
+/**
+ * The trading day right now, in Malaysia.
+ *
+ * Every store is on Malaysian time and so is the 11pm deadline, so the day is
+ * taken in that zone whatever the device is set to — a phone left on a foreign
+ * time zone after a holiday must not file yesterday's closing as today's.
+ */
+export const todayInMalaysia = (now: Date = new Date()): DateStr =>
+  new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kuala_Lumpur',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now)
+
 export const parseDate = (s: DateStr): Date => {
   const [y, m, d] = s.split('-').map(Number)
   return new Date(y, m - 1, d)

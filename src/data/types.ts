@@ -18,17 +18,38 @@ export type DateStr = string
  * Dealers and consignment leave it undefined — they never capture it.
  */
 export interface SaleLine {
+  /** Unique across the whole system. Absent only on lines from before the shared backend. */
+  id?: string
+  /**
+   * One customer's basket. Every line rung up together carries the same id, so
+   * "customers served" is a count of baskets, not of bottles, and a whole sale
+   * can be taken back in one go.
+   */
+  saleId?: string
+  /** The trading day it was rung up on, Malaysian time. */
+  day?: DateStr
+  locationId?: string
+  /** When, and by whom — the promoter's id and name at the time. */
+  at?: string
+  by?: string
+  byName?: string
   skuId: string
   qty: number
   countryCode?: string
   /**
    * Which price was charged for this line.
    *
-   * Left undefined where nobody chose one — the seeded history, and the dealer
-   * and consignment channels, which report a figure rather than ringing up a
-   * sale. Those fall back to the location's own basis.
+   * Left undefined where nobody chose one — the dealer and consignment
+   * channels, which report a figure rather than ringing up a sale. Those fall
+   * back to the location's own basis.
    */
   priceTier?: PriceTier
+  /**
+   * What one unit actually went for. Set on every line rung up at a counter,
+   * and the only source of a price for an "other" line, where the promoter
+   * typed the figure.
+   */
+  unitPriceMYR?: number
   /**
    * Malaysian customers only, and never guessed.
    *
@@ -149,6 +170,13 @@ export interface PurchaseOrder {
   status: PoStatus
   lines: PoLine[]
   events: PoEvent[]
+  /**
+   * Finance's acknowledgement, alongside the chain rather than a link in it.
+   * After Kelly approves, Finance and the warehouse both receive the order at
+   * once; the warehouse does not wait for this (client's third revision).
+   */
+  financeClearedBy?: string
+  financeClearedAt?: string
 }
 
 // ── Alerts ─────────────────────────────────────────────────────────────────
@@ -184,7 +212,7 @@ export interface Target {
 // ── Store shape ────────────────────────────────────────────────────────────
 
 export interface CrmData {
-  /** The demo's fixed "today", so seeded history always lines up. */
+  /** The trading day, Malaysian time. Fixed in the test fixtures, live in the app. */
   today: DateStr
   closings: Closing[]
   purchaseOrders: PurchaseOrder[]

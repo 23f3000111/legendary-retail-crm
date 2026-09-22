@@ -206,7 +206,7 @@ export function History() {
                       if (!l.countryCode) return m
                       const b = m.get(l.countryCode) ?? { units: 0, revenue: 0 }
                       b.units += l.qty
-                      b.revenue += l.qty * lineUnitPrice(l.skuId, l.priceTier, basis)
+                      b.revenue += l.qty * lineUnitPrice(l, basis)
                       m.set(l.countryCode, b)
                       return m
                     }, new Map<string, { units: number; revenue: number }>()),

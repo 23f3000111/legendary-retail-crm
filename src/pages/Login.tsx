@@ -6,6 +6,7 @@ import { Button } from '../components/ui/Button'
 import { Field, TextInput } from '../components/ui/Field'
 import { useAuth } from '../store/useAuth'
 import { useData } from '../store/useData'
+import { localBackend } from '../api'
 import {
   startingPassword,
   CODE_LENGTH,
@@ -15,17 +16,18 @@ import {
   type Role,
 } from '../data/people'
 import { locationById } from '../data/locations'
-import { formatDate } from '../lib/dates'
+import { formatDate, todayInMalaysia } from '../lib/dates'
 
 /**
- * The walkthrough aid: shows the code that would have been e-mailed, and a list
- * of who can sign in.
+ * The walkthrough aid: the sample logins, a button to load the sample
+ * history, and the code that would have been e-mailed.
  *
- * Set this to `false` before real staff use the system. It is the only thing
- * that has to change on this screen — in production the code never reaches the
- * browser at all, so there would be nothing to show even if this were left on.
+ * It exists only in a build with no server behind it. The moment the shared
+ * server is connected (the two secrets in the deploy workflow) this panel is
+ * not rendered at all — nothing on the published site depends on a flag
+ * being remembered.
  */
-const SHOW_DEMO_HELP = true
+const SHOW_DEMO_HELP = localBackend() !== null
 
 /** The demo list in the order of the company chart, promoters last and by store. */
 const DEMO_ORDER: Role[] = ['director', 'md', 'ops', 'pa', 'finance', 'warehouse', 'it', 'promoter']
@@ -62,11 +64,11 @@ export function Login() {
   const navigate = useNavigate()
   const beginSignIn = useAuth((s) => s.beginSignIn)
   const submitCode = useAuth((s) => s.submitCode)
-  const resendCode = useAuth((s) => s.resendCode)
   const cancelSignIn = useAuth((s) => s.cancelSignIn)
   const pending = useAuth((s) => s.pending)
   const users = useData((s) => s.users)
-  const today = useData((s) => s.today)
+  const resetDemo = useData((s) => s.resetDemo)
+  const today = todayInMalaysia()
 
   const [step, setStep] = useState<Step>('credentials')
   const [username, setUsername] = useState('')
@@ -87,42 +89,48 @@ export function Login() {
     }
   }, [step])
 
-  const submitCredentials = (e?: React.FormEvent) => {
+  /** Opens the person's screen — or the store picker, for a KL promoter. */
+  const welcome = (person: Person, needsStore?: boolean) => {
+    setGreeting(person.name)
+    const to = needsStore ? '/choose-store' : person.home
+    // A brief beat so the person sees whose account they opened.
+    setTimeout(() => navigate(to), 550)
+  }
+
+  const submitCredentials = async (e?: React.FormEvent) => {
     e?.preventDefault()
     if (busy) return
     setError(null)
     setBusy(true)
-    const result = beginSignIn(username, password)
+    const result = await beginSignIn(username, password)
     setBusy(false)
     if (!result.ok) return setError(result.error ?? 'That did not work.')
-    // Most people are in straight away; only leadership gets the code step.
-    if (result.person) {
-      setGreeting(result.person.name)
-      const home = result.person.home
-      setTimeout(() => navigate(home), 550)
+    // Most people are in straight away; only leadership may get the code step.
+    if (result.needsCode) {
+      setCode('')
+      setStep('code')
       return
     }
-    setCode('')
-    setStep('code')
+    if (result.person) welcome(result.person, result.needsStore)
   }
 
-  const submitTheCode = (e?: React.FormEvent) => {
+  const submitTheCode = async (e?: React.FormEvent) => {
     e?.preventDefault()
+    if (busy) return
     setError(null)
-    const result = submitCode(code)
+    setBusy(true)
+    const result = await submitCode(code)
+    setBusy(false)
     if (!result.ok) {
       setCode('')
-      // Five wrong codes throws the attempt away, so go back to the start.
+      // A thrown-away attempt goes back to the start.
       if (!useAuth.getState().pending) {
         setStep('credentials')
         setPassword('')
       }
       return setError(result.error ?? 'That code is not right.')
     }
-    const person = result.person!
-    setGreeting(person.name)
-    // A brief beat so the person sees whose account they opened.
-    setTimeout(() => navigate(person.home), 550)
+    welcome(result.person!, result.needsStore)
   }
 
   const startOver = () => {
@@ -289,7 +297,7 @@ export function Login() {
                   variant="primary"
                   className="w-full justify-center"
                   onClick={() => submitTheCode()}
-                  disabled={code.length < CODE_LENGTH}
+                  disabled={busy || code.length < CODE_LENGTH}
                 >
                   Sign in
                 </Button>
@@ -305,14 +313,10 @@ export function Login() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      resendCode()
-                      setCode('')
-                      setError(null)
-                    }}
+                    onClick={startOver}
                     className="text-primary transition-colors hover:underline"
                   >
-                    Send another code
+                    Sign in again for a new code
                   </button>
                 </div>
               </motion.form>
@@ -330,10 +334,10 @@ export function Login() {
                   been:
                 </p>
                 <button
-                  onClick={() => setCode(pending.code)}
+                  onClick={() => setCode(localBackend()?.peekCode(pending.token) ?? '')}
                   className="readout mt-2 text-[24px] font-semibold tracking-[0.3em] text-primary hover:underline"
                 >
-                  {pending.code}
+                  {localBackend()?.peekCode(pending.token)}
                 </button>
                 <p className="mt-1 text-[11px] text-ink-3">Tap it to fill the box.</p>
               </div>
@@ -354,11 +358,22 @@ export function Login() {
                 className="mt-3 rounded-2xl border border-warn/30 bg-warn/8 p-4"
               >
                 <p className="text-[11.5px] leading-relaxed text-ink-2">
-                  <b className="text-ink">For the walkthrough only.</b> Tap a name to fill in
-                  their username and starting password. Set{' '}
-                  <code className="readout text-[11px] text-ink">SHOW_DEMO_HELP</code> to false
-                  before real staff use the system.
+                  <b className="text-ink">No server is connected to this build yet</b> — it runs
+                  on this browser alone, and nothing here reaches anybody else. Tap a name to
+                  fill in their username and starting password, or load ninety days of sample
+                  history first.
                 </p>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="mt-3 w-full"
+                  onClick={() => {
+                    resetDemo(todayInMalaysia())
+                    setError(null)
+                  }}
+                >
+                  Load the sample history
+                </Button>
                 <div className="mt-3 max-h-[280px] space-y-3 overflow-y-auto pr-1">
                   {demoGroups(users).map((g) => (
                     <div key={g.role}>
