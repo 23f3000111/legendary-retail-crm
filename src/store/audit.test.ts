@@ -324,13 +324,15 @@ describe('sign-in in the log', () => {
     expect(result.ok).toBe(true)
     expect(result.person?.id).toBe('teokoknian')
     expect(useAuth.getState().personId).toBe('teokoknian')
-    expect(useAuth.getState().locationId).toBe('klia-t2')
+    // No code, but no counter either until they pick one.
+    expect(result.needsStore).toBe(true)
+    expect(useAuth.getState().locationId).toBeNull()
     expect(useAuth.getState().pending).toBeNull()
     await refresh()
     expect(actions()).not.toContain('session.code_sent')
   })
 
-  it('asks a promoter which outlet, where their town has more than one', async () => {
+  it('asks a promoter which outlet, from every one in their town', async () => {
     signOutForTests()
     const danzel = person('danzeltan')
     expect(danzel.city).toBe('Kuala Lumpur')
@@ -354,7 +356,7 @@ describe('sign-in in the log', () => {
     expect(refused.error).toMatch(/your town/i)
   })
 
-  it('puts a promoter whose town has one outlet straight at it', async () => {
+  it('asks a promoter in a one-outlet town too, and records nothing until they pick', async () => {
     signOutForTests()
     const melaka = person('khookwoktsu')
     expect(melaka.city).toBe('Melaka')
@@ -362,9 +364,21 @@ describe('sign-in in the log', () => {
 
     const result = await useAuth.getState().beginSignIn(melaka.username, startingPassword(melaka.username))
     expect(result.ok).toBe(true)
-    // Nothing worth asking, so no picker.
-    expect(result.needsStore).toBe(false)
+    expect(result.needsStore).toBe(true)
+    expect(useAuth.getState().locationId).toBeNull()
+
+    const chosen = await useAuth.getState().chooseStore('melaka', 'Melaka')
+    expect(chosen.ok).toBe(true)
     expect(useAuth.getState().locationId).toBe('melaka')
+  })
+
+  it('refuses a sale from a promoter who has not picked an outlet', async () => {
+    const token = lb.openSessionForTests('khookwoktsu')
+    const r = await lb.put(token, [
+      { kind: 'sale_line', id: 'sl-unpicked', locationId: 'melaka', doc: { skuId: 'orchid-retail', qty: 1 } },
+    ])
+    expect(r.ok).toBe(false)
+    expect(r.error).toMatch(/choose which outlet/i)
   })
 
   it('rotates a promoter between the outlets in their own town', async () => {

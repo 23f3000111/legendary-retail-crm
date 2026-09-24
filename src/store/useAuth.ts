@@ -48,9 +48,8 @@ export const useAuth = create<AuthState>()(
   persist(
     (set, get) => {
       const open = (token: string, person: Person, locationId?: string) => {
-        // A promoter whose town has one outlet is put straight at it; only a
-        // real choice is worth a question.
-        const at = storeForSession(person, locationId) ?? person.locationId ?? null
+        // A promoter is at no counter until they have picked one.
+        const at = storeForSession(person, locationId) ?? null
         setSession({ token, personId: person.id, locationId: at ?? undefined })
         set({ token, personId: person.id, locationId: at, pending: null, status: 'ready' })
         return { ok: true, person, needsStore: picksStore(person) && !locationId }

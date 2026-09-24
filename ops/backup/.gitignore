@@ -1,0 +1,9 @@
+# Anything a restore produces on your own machine. Never commit a backup,
+# decrypted or not, and never a dump.
+node_modules/
+out/
+*.tar.gz
+*.tar.gz.gpg
+/schema.sql
+/data.sql
+/counts-*.txt

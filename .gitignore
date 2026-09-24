@@ -17,3 +17,5 @@ docs/client-input/
 docs/.env
 !.env.example
 passwords*.txt
+backup-url*.txt
+backup-passphrase*.txt

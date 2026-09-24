@@ -17,6 +17,7 @@ import {
   PASSWORD_MIN,
   storeChoicesFor,
   picksStore,
+  storeForSession,
   startingPassword,
   type Person,
   type Role,
@@ -150,19 +151,31 @@ describe('the revised staff list', () => {
     expect(picksStore(kl[0])).toBe(true)
   })
 
-  it('asks a promoter which outlet only where the town has more than one', () => {
+  it('asks every promoter which outlet, even where the town has only one', () => {
     const byCity = new Map<string, number>()
     for (const p of seedPeople.filter((x) => x.role === 'promoter')) {
       byCity.set(p.city!, storeChoicesFor(p).length)
+      // Confirming the counter is part of starting the day, for everyone.
+      expect(picksStore(p), p.username).toBe(true)
     }
-    // One open outlet each today, so nothing to ask.
     for (const city of ['KLIA', 'Langkawi', 'Genting Highlands', 'Melaka', 'Kota Kinabalu']) {
       expect(byCity.get(city), city).toBe(1)
     }
     expect(byCity.get('Kuala Lumpur')).toBe(4)
+  })
 
+  it('never asks head office', () => {
+    for (const p of seedPeople.filter((x) => x.role !== 'promoter')) {
+      expect(picksStore(p), p.username).toBe(false)
+    }
+  })
+
+  it('puts nobody at a counter until they have picked it', () => {
     const solo = seedPeople.find((p) => p.city === 'Melaka')!
-    expect(picksStore(solo)).toBe(false)
+    expect(storeForSession(solo)).toBeUndefined()
+    expect(storeForSession(solo, 'melaka')).toBe('melaka')
+    // Not one of theirs, so not accepted.
+    expect(storeForSession(solo, 'pavilion-5')).toBeUndefined()
   })
 
   it('never offers an outlet that has not opened', () => {

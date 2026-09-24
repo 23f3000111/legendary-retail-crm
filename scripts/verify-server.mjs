@@ -8,9 +8,12 @@
  * returning NEW, which is null, silently cancelling every delete) was exactly
  * the kind that looks fine until the day somebody presses "Start over".
  *
- * It creates its own rows and clears up after itself, and refuses to run if
- * the server already holds documents, so it can never wipe a trial in
- * progress.
+ * **Safe on the live server.** Every check runs inside one transaction that is
+ * rolled back at the end, so nothing it does persists: no test sale, no test
+ * session, and no line in the activity log filed against a real person's
+ * name. Checks that would lock the documents table — "Start over" — run only
+ * when the server is empty, because on a live one the lock would stall every
+ * promoter's screen while it held.
  */
 import { connect } from './db.mjs'
 
@@ -21,22 +24,33 @@ await client.connect()
 const checks = []
 const check = (name, pass, detail = '') => checks.push({ name, pass, detail })
 const one = async (sql, params) => (await client.query(sql, params)).rows[0]
+// An error aborts the whole transaction, so an expected one is fenced off in
+// a savepoint and the transaction carries on.
+let fence = 0
 const refuses = async (sql) => {
+  const sp = `expected_${(fence += 1)}`
+  await client.query(`savepoint ${sp}`)
   try {
     await client.query(sql)
+    await client.query(`release savepoint ${sp}`)
     return false
   } catch {
+    await client.query(`rollback to savepoint ${sp}`)
     return true
   }
 }
 
+const { n: existing } = await one('select count(*)::int n from docs')
+const live = existing > 0
+console.log(
+  live
+    ? `Live server, ${existing} documents on it. Checking inside a transaction that is rolled back.`
+    : 'Empty server. Checking everything, inside a transaction that is rolled back.',
+)
+console.log('')
+
+await client.query('begin')
 try {
-  const { n: existing } = await one('select count(*)::int n from docs')
-  if (existing > 0) {
-    console.error(`Refusing to run: ${existing} documents are already on this server.`)
-    console.error('This check clears up after itself, so it only runs on an empty one.')
-    process.exit(1)
-  }
 
   check('the 39 logins are there', (await one('select count(*)::int n from people')).n === 39)
 
@@ -69,6 +83,7 @@ try {
     return token
   }
   const promoter = await session('teokoknian')
+  await one("select choose_store($1, 'klia-t2', 'KLIA T2') r", [promoter])
   const imran = await session('imran')
   const vins = await session('vinslim')
   const put = (token, docs) => one('select put_docs($1, $2::jsonb) r', [token, JSON.stringify(docs)])
@@ -116,13 +131,21 @@ try {
   ])
   check('and writes go to the outlet they picked', klWrite.r.ok === true, klWrite.r.error)
 
-  // A town with one outlet asks nothing, so the session must find it anyway —
-  // otherwise those promoters could write nothing at all.
+  // Every promoter picks at every sign-in, even in a one-outlet town — and
+  // until they have, they are at no counter and can record nothing.
   const solo = await session('khookwoktsu')
-  const soloWrite = await put(solo, [
+  const soloBefore = await put(solo, [
     { kind: 'sale_line', id: 'sl-solo', location_id: 'melaka', doc: { skuId: 'x', qty: 1 } },
   ])
-  check('a one-outlet town needs no choice before writing', soloWrite.r.ok === true, soloWrite.r.error)
+  check('a promoter must pick an outlet before recording', soloBefore.r.ok === false, soloBefore.r.error)
+  const soloPick = await one("select choose_store($1, 'melaka', 'Melaka') r", [solo])
+  check('a one-outlet town still offers its outlet', soloPick.r.ok === true, soloPick.r.error)
+  const soloAfter = await put(solo, [
+    { kind: 'sale_line', id: 'sl-solo', location_id: 'melaka', doc: { skuId: 'x', qty: 1 } },
+  ])
+  check('and once picked, recording works', soloAfter.r.ok === true, soloAfter.r.error)
+  const who = await one('select whoami($1) r', [solo])
+  check('the session remembers the outlet picked', who.r.locationId === 'melaka', who.r.locationId)
 
   // Passwords.
   const weak = await one("select set_password($1, 'kim', 'legendary123') r", [imran])
@@ -141,26 +164,23 @@ try {
   const badPw = await one("select sign_in('kellytew', 'whatever-123') r")
   check('sign-in gives nothing away', noUser.r.error === badPw.r.error, noUser.r.error)
 
-  // Starting over.
+  // Starting over. A refusal takes no lock, so that half always runs.
   const promoterClear = await one('select clear_all_data($1) r', [promoter])
   check('a promoter cannot start over', promoterClear.r.ok === false, promoterClear.r.error)
-  const itClear = await one('select clear_all_data($1) r', [imran])
-  check('IT can start over', itClear.r.ok === true, itClear.r.error)
-  // One line survives: the record that it happened.
-  check('and it really empties the documents', (await one('select count(*)::int n from docs')).n === 1)
-  check('leaving the record that it happened',
-    (await one(`select count(*)::int n from docs where doc->>'action'='data.cleared'`)).n === 1)
-  check('and every login untouched', (await one('select count(*)::int n from people')).n === 39)
+  if (!live) {
+    const itClear = await one('select clear_all_data($1) r', [imran])
+    check('IT can start over', itClear.r.ok === true, itClear.r.error)
+    // One line survives: the record that it happened.
+    check('and it really empties the documents', (await one('select count(*)::int n from docs')).n === 1)
+    check('leaving the record that it happened',
+      (await one(`select count(*)::int n from docs where doc->>'action'='data.cleared'`)).n === 1)
+    check('and every login untouched', (await one('select count(*)::int n from people')).n === 39)
+  }
 } finally {
-  await client.query('delete from sessions')
-  await client.query('delete from login_attempts')
-  // The log guard has no off switch, so clearing up goes the same way the
-  // app does: disable the trigger inside one transaction, and put it back.
-  await client.query('begin')
-  await client.query('alter table docs disable trigger docs_audit_append_only')
-  await client.query('delete from docs')
-  await client.query('alter table docs enable trigger docs_audit_append_only')
-  await client.query('commit')
+  // Nothing above is kept: not a session, not a sale, not a line in the log.
+  await client.query('rollback')
+  const { n: after } = await one('select count(*)::int n from docs')
+  check('and the server is exactly as it was', after === existing, `${existing} before, ${after} after`)
   await client.end()
 }
 
@@ -169,4 +189,7 @@ for (const c of checks) {
   console.log(`${c.pass ? 'ok  ' : 'FAIL'}  ${c.name}${c.detail ? `  - ${c.detail}` : ''}`)
 }
 console.log(`\n${checks.length - failed.length}/${checks.length} passed`)
+if (live) {
+  console.log('("Start over" was not exercised: on a live server it would lock the documents while it ran.)')
+}
 process.exit(failed.length ? 1 : 0)

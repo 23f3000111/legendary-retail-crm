@@ -172,13 +172,11 @@ language sql volatile as $$ select substr(encode(extensions.gen_random_bytes(n),
 
 -- Who is behind a token. Null if the session is gone or the login disabled.
 --
--- The outlet is worked out the same way the app works it out:
---
---   1. the one they chose when they signed in, if they chose;
---   2. the one on their login, for anybody not rotated between counters;
---   3. for a promoter, the only open outlet in their town — where a town has
---      one, there was no question to ask, and the session must still know
---      where they are or they could write nothing at all.
+-- The outlet is the one they picked when they signed in, and only that. A
+-- promoter picks at every sign-in, even in a town with one outlet (client,
+-- 24 September), so until they have picked they are at no counter and every
+-- write for a store is refused. Anybody not rotated between counters keeps
+-- the store on their login, if they have one.
 create or replace function _session(p_token text)
 returns table (person_id text, role text, location_id text, doc jsonb, name text)
 language plpgsql security definer set search_path = public as $$
@@ -189,19 +187,8 @@ begin
   update sessions set last_seen = now() where token = p_token;
   return query
     select p.id, p.role,
-      coalesce(
-        s.location_id,
-        p.doc->>'locationId',
-        case when p.role = 'promoter' then (
-          -- An aggregate with `having`, so this is the id only where the town
-          -- has exactly one open outlet; two or more and it is null, because
-          -- then they have to choose.
-          select max(l.id) from locations l
-          where l.channel = 'main' and l.status = 'open'
-            and l.city is not distinct from p.doc->>'city'
-          having count(*) = 1
-        ) end
-      ),
+      case when p.role = 'promoter' then s.location_id
+           else coalesce(s.location_id, p.doc->>'locationId') end,
       p.doc, p.doc->>'name'
     from sessions s join people p on p.id = s.person_id
     where s.token = p_token and p.active;
@@ -510,6 +497,9 @@ language plpgsql immutable as $$
 begin
   if not _can_edit(p_role) and kind not in ('alert_read','audit') then return 'Your sign-in is read-only.'; end if;
   if not _may_write(p_role, kind) then return 'Your role cannot change that.'; end if;
+  if p_role = 'promoter' and location_id is not null and p_session_location is null then
+    return 'Choose which outlet you are at first.';
+  end if;
   if p_role = 'promoter' and location_id is not null and location_id is distinct from p_session_location then
     return 'That belongs to another store.';
   end if;

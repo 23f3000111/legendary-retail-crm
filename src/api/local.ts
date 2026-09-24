@@ -444,6 +444,9 @@ export class LocalBackend implements Backend {
       return 'Your sign-in is read-only.'
     }
     if (!WRITERS[kind].includes(s.person.role)) return `A ${ROLE_LABEL[s.person.role]} cannot change that.`
+    if (s.person.role === 'promoter' && locationId && !s.locationId) {
+      return 'Choose which outlet you are at first.'
+    }
     if (s.person.role === 'promoter' && locationId && locationId !== s.locationId) {
       return 'That belongs to another store.'
     }

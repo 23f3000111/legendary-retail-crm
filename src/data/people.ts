@@ -515,19 +515,22 @@ export const storeChoicesFor = (person: Person): string[] =>
 /**
  * Whether this person is asked which outlet they are at.
  *
- * Only where there is a genuine choice: one outlet in the town means no
- * question worth asking, and the picker appears by itself when a second one
- * opens.
+ * Every store promoter, at every sign-in — even where their town has only
+ * one outlet open (client, 24 September). Confirming the counter is part of
+ * starting the day, and it means the question is already there the day a
+ * second outlet opens in that town.
  */
-export const picksStore = (person: Person): boolean => storeChoicesFor(person).length > 1
+export const picksStore = (person: Person): boolean =>
+  person.role === 'promoter' && storeChoicesFor(person).length > 0
 
-/** Where a promoter is working, given the store they chose for this session. */
+/**
+ * Where a promoter is working this session: the outlet they picked, and only
+ * that. Nothing is assumed, even for a one-outlet town — until they have
+ * picked, they are not at a counter and cannot record anything.
+ */
 export const storeForSession = (person: Person, chosen?: string | null): string | undefined => {
   if (person.role !== 'promoter') return person.locationId
-  const choices = storeChoicesFor(person)
-  if (chosen && choices.includes(chosen)) return chosen
-  // One outlet in the town, so there was nothing to ask.
-  return choices.length === 1 ? choices[0] : undefined
+  return chosen && storeChoicesFor(person).includes(chosen) ? chosen : undefined
 }
 
 /** Static lookup for the data generator, which runs before the store exists. */

@@ -1,8 +1,27 @@
 # Sending mail from the CRM
 
-**Date:** 2026-09-22
-**Status:** Built and installed, switched off. One mail account and four
-statements turn it on.
+**Date:** 2026-09-22, updated 2026-09-24
+**Status:** Connected and tested. The sign-in code itself is still **off**,
+waiting on one thing only — the right e-mail addresses (below).
+
+## Where it stands
+
+| | |
+|---|---|
+| Mail account | Resend, with `legendary.com.my` **verified** — mail can go to any inbox |
+| Key | Stored in Supabase Vault (24 September) — not in a table, not in the repository |
+| Sent from | `Legendary <noreply@legendary.com.my>` |
+| Test | Sent to Resend's test inbox on 24 September; Resend accepted it |
+| Sign-in code | **Off** |
+
+**Why it is still off:** every leadership login has a guessed address
+(`vinslim@`, `limdavy28@`, `kellytew@`, `chloechock@`, `imran@` — all
+`@legendary.com.my`). The moment the code is on, it goes to whatever address
+the login holds. One wrong address and that person cannot sign in. Confirm
+the five (see *Before you do turn it on*, below), correct any that are wrong
+on the Logins screen, then run step 4.
+
+---
 
 The only mail the system sends today is the **six-digit sign-in code** for
 leadership and IT. Everything else it has to say, it says on screen.
@@ -117,9 +136,10 @@ update people set doc = doc || '{"email":"kelly@legendary.com.my"}'::jsonb
 ```
 
 **Keep one way back in.** If leadership's mail breaks, nobody at the top can
-sign in. Imran can always be taken out of the second step, or the whole thing
-switched off with the statement above — which is why it is one setting and not
-a code change.
+sign in to the CRM. The way back is the Supabase dashboard, which does not go
+through the CRM's sign-in at all: SQL Editor, the statement above that turns
+it off, and everybody is in on their password again. That is why it is one
+setting and not a code change — keep the Supabase login somewhere safe.
 
 ---
 

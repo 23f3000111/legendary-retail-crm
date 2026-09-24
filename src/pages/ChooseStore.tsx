@@ -15,8 +15,8 @@ import { locationById } from '../data/locations'
  * everything they record until they sign out is filed against that outlet.
  * They can change it from the menu part-way through a day.
  *
- * Where a town has one outlet open there is nothing to ask, and this screen
- * is skipped — it appears by itself the day a second one opens.
+ * Every promoter sees it at every sign-in, even where their town has one
+ * outlet open — confirming the counter is part of starting the day.
  */
 export function ChooseStore() {
   const navigate = useNavigate()

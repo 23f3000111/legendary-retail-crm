@@ -211,7 +211,7 @@ describe('promotions', () => {
 describe('what the server refuses is undone', () => {
   it('rolls back a write the backend rejects', async () => {
     // A promoter at KLIA T2 cannot write a sale for Pavilion.
-    signInAs(lb, 'teokoknian')
+    signInAs(lb, 'teokoknian', 'klia-t2')
     useData.getState().recordSale({
       locationId: 'pavilion-5',
       lines: [{ skuId: 'orchid-retail', qty: 1 }],

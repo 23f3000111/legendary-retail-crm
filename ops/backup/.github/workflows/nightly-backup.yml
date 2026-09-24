@@ -1,0 +1,167 @@
+name: Nightly backup
+
+# 02:30 in Malaysia, when every store has closed and nobody is signed in.
+on:
+  schedule:
+    - cron: '30 18 * * *'
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: 'Also keep this one permanently, as a monthly backup would be'
+        type: boolean
+        default: false
+
+permissions:
+  # To attach the monthly backup to a release, which is kept for good.
+  contents: write
+
+concurrency:
+  group: backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # A throwaway database, gone when the job ends. Every backup is restored
+    # into it and counted, so one that could not be put back fails tonight —
+    # not on the day it is needed.
+    services:
+      scratch:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: scratch
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+
+    env:
+      SOURCE: ${{ secrets.BACKUP_DATABASE_URL }}
+      SCRATCH: postgresql://postgres:scratch@localhost:5432/postgres
+      TABLES: people docs locations settings
+      # The server's certificate is checked against Supabase's own root, so
+      # the backup cannot be quietly pointed somewhere else.
+      PGSSLMODE: verify-full
+      PGSSLROOTCERT: ${{ github.workspace }}/supabase-ca.crt
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the secrets are set
+        env:
+          PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          [ -n "$SOURCE" ] || { echo "::error::BACKUP_DATABASE_URL is not set"; exit 1; }
+          [ -n "$PASSPHRASE" ] || { echo "::error::BACKUP_PASSPHRASE is not set"; exit 1; }
+
+      # The server is Postgres 17, and pg_dump refuses a newer server than itself.
+      - name: Install the Postgres 17 client
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17 > /dev/null
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+
+      - name: Take the backup
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          stamp=$(TZ=Asia/Kuala_Lumpur date +%Y-%m-%d_%H%M)
+          echo "STAMP=$stamp" >> "$GITHUB_ENV"
+          args=(); for t in $TABLES; do args+=(--table="public.$t"); done
+
+          count() { for t in $TABLES; do psql "$SOURCE" -Atc "select '$t', count(*) from public.$t"; done; }
+          count > out/counts-before.txt
+
+          pg_dump "$SOURCE" --schema-only --no-owner --no-privileges "${args[@]}" > out/schema.sql
+          # Row-by-row with column names, so it restores into a server whose
+          # columns have moved about since.
+          pg_dump "$SOURCE" --data-only --enable-row-security --column-inserts \
+            --rows-per-insert=200 "${args[@]}" > out/data.sql
+
+          count > out/counts-after.txt
+          echo "Dump: $(du -h out/data.sql | cut -f1) of data."
+
+      - name: Restore it into the scratch database
+        env:
+          PGSSLMODE: disable
+        run: |
+          set -euo pipefail
+          npm install --silent --no-audit --no-fund
+          psql "$SCRATCH" -v ON_ERROR_STOP=1 -q -f scratch-setup.sql
+          psql "$SCRATCH" -v ON_ERROR_STOP=1 -q -f out/schema.sql
+          DATABASE_URL="$SCRATCH" node restore.mjs out/data.sql --yes
+
+      - name: Check nothing went missing
+        env:
+          PGSSLMODE: disable
+        run: |
+          set -euo pipefail
+          # Rows are only ever added between the two counts (sales are taken
+          # back by marking them, not deleting them), so the restored count
+          # must sit between the count before the dump and the count after.
+          ok=1
+          {
+            echo "### Backup $STAMP"
+            echo
+            echo "| Table | Before | Restored | After |"
+            echo "|---|---:|---:|---:|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for t in $TABLES; do
+            before=$(grep "^$t|" out/counts-before.txt | cut -d'|' -f2)
+            after=$(grep "^$t|" out/counts-after.txt | cut -d'|' -f2)
+            got=$(psql "$SCRATCH" -Atc "select count(*) from public.$t")
+            echo "| $t | $before | $got | $after |" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$got" -lt "$before" ] || [ "$got" -gt "$after" ]; then
+              echo "::error::$t restored $got rows; expected between $before and $after"
+              ok=0
+            fi
+          done
+          [ "$ok" = 1 ]
+
+      - name: Encrypt
+        env:
+          PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          name="legendary-crm-$STAMP"
+          echo "NAME=$name" >> "$GITHUB_ENV"
+          tar -C out -czf "$name.tar.gz" schema.sql data.sql counts-before.txt counts-after.txt
+          printf '%s' "$PASSPHRASE" | gpg --batch --yes --quiet --pinentry-mode loopback \
+            --passphrase-fd 0 --symmetric --cipher-algo AES256 \
+            --output "$name.tar.gz.gpg" "$name.tar.gz"
+          # Nothing readable is left lying about on the runner.
+          shred -u "$name.tar.gz" out/*
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Encrypted: $(du -h "$name.tar.gz.gpg" | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
+
+      # Thirty nights, kept by GitHub and deleted after.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.NAME }}
+          path: ${{ env.NAME }}.tar.gz.gpg
+          retention-days: 30
+          if-no-files-found: error
+
+      # The first night of each month is also kept for good, as a release.
+      - name: Keep the monthly one
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEEP: ${{ inputs.keep }}
+        run: |
+          set -euo pipefail
+          day=$(TZ=Asia/Kuala_Lumpur date +%d)
+          if [ "$day" = "01" ] || [ "$KEEP" = "true" ]; then
+            tag="backup-${STAMP%%_*}"
+            gh release create "$tag" "$NAME.tar.gz.gpg" \
+              --title "Backup ${STAMP%%_*}" \
+              --notes "Encrypted with the backup passphrase. See README.md to restore." \
+              || gh release upload "$tag" "$NAME.tar.gz.gpg" --clobber
+            echo "Kept permanently as release $tag." >> "$GITHUB_STEP_SUMMARY"
+          fi

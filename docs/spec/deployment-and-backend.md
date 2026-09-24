@@ -135,8 +135,9 @@ already holds documents, so it cannot disturb a trial in progress.
 **Mail.** Installed and switched off. One Resend account and four statements
 turn it on: [`email-setup.md`](./email-setup.md).
 
-**Backups.** The free tier takes none. The nightly `pg_dump` described below
-is still the right answer and still to do before the system holds real sales.
+**Backups.** Running since 24 September — nightly, encrypted, and tested by
+restoring each one. See [`backups.md`](./backups.md). Hosting, and the move to
+Cloudflare Pages, is in [`hosting.md`](./hosting.md).
 
 ---
 
