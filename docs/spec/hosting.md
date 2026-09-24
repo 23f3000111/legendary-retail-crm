@@ -23,12 +23,12 @@ The rest of this page is the reasoning, and how it was done.
 
 | Part | Service | Free plan covers | Where it would run out |
 |---|---|---|---|
-| The app (the pages staff open) | GitHub Pages, today | Unlimited use for a site this size | See the move below — the limit is the licence, not the traffic |
+| The app (the pages staff open) | Cloudflare Pages, at `crm.legendary.com.my` | Unlimited traffic, 500 publishes a month | Nowhere near — about one publish per change |
 | Database and every rule | Supabase | 500 MB of data, unlimited sign-ins | Years away. The database is 12 MB today and should grow by roughly 15 MB a year. |
 | Sign-in codes by e-mail | Resend | 3,000 a month, 100 a day | Only with far more than five people on the second step |
 | Nightly backup | GitHub Actions, private repository | 2,000 minutes a month | A night takes about 2 minutes: 60 a month |
 | Keeping backups | GitHub | 500 MB of run artifacts; releases unlimited | 30 nights of backups at ~50 KB today. At a year's data, ~15 MB each — still inside it |
-| A web address | `*.pages.dev` / `*.github.io` | Free | Only if you want `crm.legendary.com.my`: about RM 50–80 a year |
+| The web address | `crm.legendary.com.my` | A subdomain of the domain Legendary already owns | Costs nothing extra |
 
 ### Two things the free plans do not do
 
@@ -99,9 +99,9 @@ The deploy workflow is already written for it and waits for two secrets.
 7. **Tell staff the new address**, and turn GitHub Pages off: Settings →
    Pages → Unpublish.
 
-This step has not been run yet — it needs your Cloudflare account. Check the
-new address works at step 5 before doing step 6; until then, nothing about the
-current site changes.
+Steps 1–5 were done on 24 September (the project was created through the
+API, as wrangler's own create call failed with Cloudflare's generic error).
+Steps 6 and 7 wait for the new address to be confirmed in use.
 
 ### `crm.legendary.com.my`
 
