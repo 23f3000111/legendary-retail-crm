@@ -51,15 +51,18 @@ jobs:
       # Cloudflare Pages: free, no limit on traffic, and — unlike GitHub Pages
       # on a free plan — it publishes from a private repository. Does nothing
       # until the two secrets are added; see docs/spec/hosting.md.
+      #
+      # The `legendary-crm` project was created once, on 24 September. While the
+      # repository is public GitHub Pages carries the site too, so a Cloudflare
+      # hiccup must not stop that copy being published; once it is private,
+      # Cloudflare is the only copy and a failure fails the run.
       - name: Publish to Cloudflare Pages
         if: env.HAS_CLOUDFLARE == 'true'
+        continue-on-error: ${{ !github.event.repository.private }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          # Creating it a second time fails harmlessly; the deploy is what counts.
-          npx --yes wrangler@4 pages project create legendary-crm --production-branch main || true
-          npx --yes wrangler@4 pages deploy dist --project-name legendary-crm --branch main --commit-dirty=true
+        run: npx --yes wrangler@4 pages deploy dist --project-name legendary-crm --branch main --commit-dirty=true
 
       - uses: actions/upload-pages-artifact@v3
         if: ${{ !github.event.repository.private }}
