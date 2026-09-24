@@ -2,9 +2,20 @@
 
 **Date:** 2026-09-24
 
-**It already is.** Everything below is on a free plan today, and nothing needs
-a card. The one thing worth changing is where the app's pages are served
-from — see [the recommended move](#the-one-change-worth-making).
+**It already is.** Everything below is on a free plan, and nothing needs a
+card.
+
+## Where it stands — 24 September
+
+| | |
+|---|---|
+| **The CRM's address** | **https://crm.legendary.com.my** — live, HTTPS, served by Cloudflare Pages |
+| Also at | `legendary-crm.pages.dev` (the same site), and the old GitHub Pages address until the repository is made private |
+| DNS | One record added to `legendary.com.my` in Cloudflare: `crm` → `legendary-crm.pages.dev`, proxied. The main website is untouched. |
+| Publishing | Every push to `main` that passes the tests goes to Cloudflare and, for now, GitHub Pages too |
+| Still to do | Make the repository private (step 6 below), once the new address has been used and confirmed; then remove the **DNS · Edit** permission from the Cloudflare token — only **Cloudflare Pages · Edit** is needed from here on |
+
+The rest of this page is the reasoning, and how it was done.
 
 ---
 
