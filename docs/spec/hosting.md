@@ -60,8 +60,11 @@ repository, and gives an address like `legendary-crm.pages.dev`.
 
 The deploy workflow is already written for it and waits for two secrets.
 
-1. **Make a Cloudflare account** at [dash.cloudflare.com](https://dash.cloudflare.com/sign-up).
-   Free; no card.
+1. **Sign in to the Cloudflare account that already holds `legendary.com.my`**
+   at [dash.cloudflare.com](https://dash.cloudflare.com) — the domain's DNS
+   is there, so using the same account lets `crm.legendary.com.my` be added in
+   one click later. (Only if that is out of reach, make a new free account;
+   see *If the Cloudflare account is not yours* below.)
 2. **Find the account ID.** Dashboard → any page → right-hand side, *Account
    ID*. Copy it.
 3. **Make an API token.** My Profile → API Tokens → *Create Token* → *Create
@@ -89,11 +92,47 @@ This step has not been run yet — it needs your Cloudflare account. Check the
 new address works at step 5 before doing step 6; until then, nothing about the
 current site changes.
 
-### Your own address (optional)
+### `crm.legendary.com.my`
 
-With a domain — `legendary.com.my` is already yours — Cloudflare Pages →
-the project → Custom domains → add `crm.legendary.com.my`, and follow the one
-DNS record it asks for. Free; the domain itself is the only cost.
+Checked on 24 September:
+
+| | |
+|---|---|
+| Who runs `legendary.com.my`'s DNS | **Cloudflare** (nameservers `dexter` and `shaz.ns.cloudflare.com`) |
+| `www.legendary.com.my` | The main website, on Vercel — untouched by any of this |
+| `crm.legendary.com.my` | Free — no record exists |
+
+Because the domain is already in Cloudflare, the CRM address is part of the
+move above, not a separate job. **Use the Cloudflare account that holds
+`legendary.com.my`** for steps 1–5, then:
+
+- Workers & Pages → `legendary-crm` → **Custom domains** → *Set up a custom
+  domain* → `crm.legendary.com.my` → *Activate domain*.
+
+Cloudflare creates the DNS record and the HTTPS certificate itself, usually
+within a few minutes. Nothing about the main website changes. The app needs
+no change either — it loads from relative paths and routes with `#`, so it
+runs at the root of any address.
+
+**Everybody signs in once more** on the new address: a browser keeps a
+session per address, so the old one's does not carry over. Passwords and data
+are the same.
+
+#### If the Cloudflare account is not yours
+
+If the website agency holds it and you cannot get in, the CRM can stay on
+GitHub Pages and still use the address. Ask them to add one record in
+Cloudflare DNS:
+
+| Type | Name | Target | Proxy |
+|---|---|---|---|
+| CNAME | `crm` | `23f3000111.github.io` | **DNS only** (grey cloud) |
+
+Then, in this repository: Settings → Pages → Custom domain →
+`crm.legendary.com.my` → Save, and tick *Enforce HTTPS* once GitHub offers it
+(up to an hour). The proxy must be off, or GitHub cannot issue the
+certificate. The repository then stays public, so the staff-list concern above
+remains.
 
 ---
 
