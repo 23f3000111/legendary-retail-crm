@@ -333,32 +333,57 @@ export function StoreDetail() {
       {/* ── Recent closings and orders ────────────────────────────────── */}
       <div className="grid gap-5 lg:grid-cols-2">
         <Panel>
-          <PanelHeader eyebrow="History" title="Recent closings" />
+          <PanelHeader
+            eyebrow="History"
+            title="Recent closings"
+            meta={capability.approveCorrections ? 'Open a day to see it in full or change it.' : undefined}
+          />
           <Rule />
           <PanelBody className="space-y-2">
             {closings.length === 0 ? (
               <EmptyState icon="clipboard" title="Nothing filed yet" body="No closing on record." />
             ) : (
-              closings.map((c) => (
-                <div
-                  key={c.id}
-                  className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5"
-                >
-                  <span className="readout text-[12.5px] text-ink-2">{formatDate(c.period)}</span>
-                  <span className="min-w-0 truncate text-[11.5px] text-ink-3">filed by {c.submittedBy}</span>
-                  <span className="readout ml-auto text-[13px] font-semibold text-ink">
-                    {rm(c.revenueMYR)}
-                  </span>
-                  <span className="text-[11.5px] text-ink-3">
-                    {c.lines.reduce((a, l) => a + l.qty, 0)} units
-                  </span>
-                  {c.correction && (
-                    <Badge tone={c.correction.status === 'pending' ? 'warn' : 'neutral'}>
-                      {c.correction.status === 'pending' ? 'Correction waiting' : 'Corrected'}
-                    </Badge>
-                  )}
-                </div>
-              ))
+              closings.map((c) => {
+                const row = (
+                  <>
+                    <span className="readout text-[12.5px] text-ink-2">{formatDate(c.period)}</span>
+                    <span className="min-w-0 truncate text-[11.5px] text-ink-3">
+                      filed by {c.submittedBy}
+                      {c.editedBy ? ` · changed by ${c.editedBy}` : ''}
+                    </span>
+                    <span className="readout ml-auto text-[13px] font-semibold text-ink">
+                      {rm(c.revenueMYR)}
+                    </span>
+                    <span className="text-[11.5px] text-ink-3">
+                      {c.lines.reduce((a, l) => a + l.qty, 0)} units
+                    </span>
+                    {c.correction && (
+                      <Badge tone={c.correction.status === 'pending' ? 'warn' : 'neutral'}>
+                        {c.correction.status === 'pending'
+                          ? 'Correction waiting'
+                          : c.correction.status === 'approved'
+                            ? 'Corrected'
+                            : 'Correction turned down'}
+                      </Badge>
+                    )}
+                  </>
+                )
+                const look =
+                  'flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5'
+                return capability.approveCorrections ? (
+                  <Link
+                    key={c.id}
+                    to={`/close?store=${c.locationId}&day=${c.period}`}
+                    className={`${look} transition-colors hover:border-primary/40`}
+                  >
+                    {row}
+                  </Link>
+                ) : (
+                  <div key={c.id} className={look}>
+                    {row}
+                  </div>
+                )
+              })
             )}
           </PanelBody>
         </Panel>

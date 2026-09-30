@@ -20,20 +20,36 @@ import { backend, localBackend } from '../api'
 import { docKey, type Doc, type DocKind, type PutDoc, type Result, type Snapshot } from '../api/backend'
 import { canClearAccounts, canTransition } from '../lib/po-machine'
 import { can, seedPeople, ROLE_LABEL, type Person, type Role } from '../data/people'
-import { daysBetween, formatDate, todayInMalaysia } from '../lib/dates'
+import { formatDate, todayInMalaysia } from '../lib/dates'
 import { skuLabel, TIER_LABEL } from '../data/products'
 import { countryName, MALAYSIA_SEGMENT_LABEL, type MalaysiaSegment } from '../data/countries'
-import { locationName } from '../data/locations'
+import { basisOf, locationName } from '../data/locations'
 import { rm } from '../lib/format'
 import { getSession, getSessionToken } from '../lib/session'
 import { auditId, getAuditActor, newestFirst, type AuditEntry, type AuditKind } from '../lib/audit'
 import { newId } from '../lib/ids'
+import {
+  CORRECTION_WINDOW_DAYS,
+  closingEditMode,
+  orderEditMode,
+  saleEditable,
+  sameContent,
+} from '../lib/editing'
+import {
+  clock,
+  describeClosingChanges,
+  describeLineChanges,
+  describeOrderChanges,
+  figuresOf,
+} from '../lib/changes'
 import { deriveAlerts } from './selectors'
 import type {
   Alert,
   Closing,
+  ClosingFigures,
   CrmData,
   DateStr,
+  PoLine,
   PoStatus,
   PurchaseOrder,
   SaleLine,
@@ -43,7 +59,7 @@ import type { Promotion } from '../data/promotions'
 import { DEMO_TODAY } from '../data/seed'
 
 /** Corrections are allowed for three days after the period (Q19). */
-export const CORRECTION_WINDOW_DAYS = 3
+export { CORRECTION_WINDOW_DAYS }
 
 /** How often to ask the server for changes, on top of the change signal. */
 const POLL_MS = 20_000
@@ -108,19 +124,42 @@ export interface DataState extends CrmData {
   removeSaleLine: (lineId: string) => void
   /** Takes back a whole basket — the client's "delete sales option". */
   removeSale: (saleId: string) => void
-
-  submitClosing: (closing: Closing) => void
-  requestCorrection: (args: {
-    closingId: string
-    requestedBy: string
-    reason: string
-    revenueMYR: number
+  /**
+   * Changes a sale already rung up: what was bought, at what price, where the
+   * customer is from. A line that keeps its id is changed, a line left out is
+   * taken back, and a line with no id is added to the same sale. Today's
+   * sales, or a day not yet closed — a closed day is changed through its
+   * closing.
+   */
+  updateSale: (args: {
+    saleId: string
+    lines: SaleLine[]
+    countryCode?: string
+    segment?: MalaysiaSegment
   }) => Result
+
+  /** Files a day for the first time. */
+  submitClosing: (closing: Closing) => void
+  /**
+   * Changes a filed closing outright — the store on the day itself, Kelly or
+   * Davy on any day. `figures` is the closing as it should now read.
+   */
+  editClosing: (args: { closingId: string; figures: ClosingFigures }) => Result
+  /**
+   * Asks Kelly or Davy to change an earlier day's closing. `figures` is the
+   * whole closing as the store says it should read; nothing on it moves until
+   * one of them approves. Asking again replaces the request.
+   */
+  requestCorrection: (args: { closingId: string; figures: ClosingFigures; reason: string }) => Result
+  /** Takes back a request nobody has decided yet. */
+  withdrawCorrection: (closingId: string) => Result
   resolveCorrection: (args: {
     closingId: string
     approvedBy: string
     role: Role
     approve: boolean
+    /** Why not, for the store, when it is turned down. */
+    note?: string
   }) => Result
 
   createPurchaseOrder: (po: PurchaseOrder) => void
@@ -131,9 +170,21 @@ export interface DataState extends CrmData {
     role: Role
     note?: string
     approvedQty?: Record<string, number>
+    /** What the warehouse actually put in the box, where it is short. */
+    packedQty?: Record<string, number>
   }) => Result
   /** Finance's acknowledgement, beside the chain. */
   clearAccounts: (args: { poId: string; actor: string; role: Role; note?: string }) => Result
+  /**
+   * Changes an order's lines, note or urgency while it waits for Kelly — or,
+   * once she has turned it down, changes it and sends it to her again.
+   */
+  editPurchaseOrder: (args: {
+    poId: string
+    lines: { skuId: string; qty: number }[]
+    notes: string
+    priority: PurchaseOrder['priority']
+  }) => Result
 
   addUser: (person: Person, password: string) => Promise<Result>
   /**
@@ -312,6 +363,46 @@ export const useData = create<DataState>()((set, get) => {
   const patchDoc = <T>(kind: DocKind, id: string, next: T, extra: Partial<PutDoc> = {}) =>
     write([{ kind, id, doc: next, ...extra }])
 
+  /** Whoever holds the session, as a person. */
+  const me = (): Person | undefined => get().users.find((u) => u.id === getSession()?.personId)
+
+  const putClosing = (c: Closing) => patchDoc('closing', c.id, c, { locationId: c.locationId, day: c.period })
+
+  /**
+   * Keeps the sale documents saying what a changed closing says.
+   *
+   * Once a day is filed its closing carries the sales, and the reports read
+   * them from there. When a closing's sales are changed — by Kelly, or by an
+   * approved correction — the sale documents behind them are brought into
+   * line too, so the two can never be found telling different stories. Only
+   * the lines the edit touched are written: a sale rung up after the closing
+   * was filed is none of this edit's business and is left alone.
+   */
+  const syncSaleDocs = (before: SaleLine[], after: SaleLine[], closing: Closing) => {
+    const put: PutDoc[] = []
+    for (const l of after) {
+      if (!l.id || !l.saleId) continue
+      const current = docs.get(docKey('sale_line', l.id))
+      if (current && !current.deleted && sameContent(current.doc, l)) continue
+      put.push({
+        kind: 'sale_line',
+        id: l.id,
+        locationId: l.locationId ?? closing.locationId,
+        day: l.day ?? closing.period,
+        doc: l,
+      })
+    }
+    const gone = before
+      .filter((l) => l.id && l.saleId && !after.some((a) => a.id === l.id))
+      .filter((l) => {
+        const current = docs.get(docKey('sale_line', l.id!))
+        return current && !current.deleted
+      })
+      .map((l) => l.id!)
+    if (put.length) write(put)
+    if (gone.length) remove('sale_line', gone)
+  }
+
   return {
     ...empty(),
     unfiledLines: {},
@@ -410,9 +501,68 @@ export const useData = create<DataState>()((set, get) => {
       })
     },
 
+    updateSale: ({ saleId, lines, countryCode, segment }) => {
+      const state = get()
+      const before = live<SaleLine>('sale_line').filter((l) => l.saleId === saleId)
+      if (before.length === 0) return { ok: false, error: 'That sale is no longer on record.' }
+      if (lines.length === 0) {
+        return { ok: false, error: 'A sale needs at least one item. To take it all back, delete the sale.' }
+      }
+      const noQty = lines.find((l) => !Number.isInteger(l.qty) || l.qty < 1)
+      if (noQty) return { ok: false, error: `${skuLabel(noQty.skuId)} needs a quantity of at least 1.` }
+      const noPrice = lines.find((l) => l.priceTier === 'other' && !((l.unitPriceMYR ?? 0) > 0))
+      if (noPrice) return { ok: false, error: `Type what ${skuLabel(noPrice.skuId)} went for.` }
+
+      const first = before[0]
+      const day = first.day ?? state.today
+      const locationId = first.locationId ?? ''
+      const filed = state.closings.some((c) => c.locationId === locationId && c.period === day)
+      if (!saleEditable(first, state.today, filed)) {
+        return { ok: false, error: `${formatDate(day)} is closed. Change it from that day's closing.` }
+      }
+
+      const who = me()
+      const at = new Date().toISOString()
+      const next: SaleLine[] = lines.map((l) => {
+        const was = l.id ? before.find((b) => b.id === l.id) : undefined
+        // The customer is one answer for the whole sale, set below.
+        const { countryCode: _c, segment: _s, ...rest } = { ...was, ...l }
+        void _c, _s
+        return {
+          ...rest,
+          id: was?.id ?? newId(),
+          saleId,
+          day,
+          locationId,
+          at: was?.at ?? first.at,
+          by: was?.by ?? first.by,
+          byName: was?.byName ?? first.byName,
+          ...(countryCode ? { countryCode } : {}),
+          ...(countryCode === 'MY' && segment ? { segment } : {}),
+          editedAt: at,
+          editedBy: who?.name,
+        }
+      })
+
+      const changes = describeLineChanges(before, next, basisOf(locationId))
+      if (changes.length === 0) return { ok: true }
+      const gone = before.filter((b) => !next.some((n) => n.id === b.id)).map((b) => b.id!)
+      write(next.map((l) => ({ kind: 'sale_line' as const, id: l.id!, locationId, day, doc: l })))
+      if (gone.length) remove('sale_line', gone)
+      get().record({
+        kind: 'sale',
+        action: 'sale.edited',
+        summary: `Changed a sale at ${locationName(locationId)}${first.at ? `, rung up at ${clock(first.at)}` : ''}`,
+        entityId: saleId,
+        locationId,
+        detail: changes.join(' · '),
+      })
+      return { ok: true }
+    },
+
     // ── Closing ──────────────────────────────────────────────────────
     submitClosing: (closing) => {
-      patchDoc('closing', closing.id, closing, { locationId: closing.locationId, day: closing.period })
+      putClosing(closing)
       const units = closing.lines.reduce((a, l) => a + l.qty, 0)
       get().record({
         kind: 'closing',
@@ -424,71 +574,148 @@ export const useData = create<DataState>()((set, get) => {
       })
     },
 
-    requestCorrection: ({ closingId, requestedBy, reason, revenueMYR }) => {
+    editClosing: ({ closingId, figures }) => {
       const state = get()
       const closing = state.closings.find((c) => c.id === closingId)
       if (!closing) return { ok: false, error: 'That closing no longer exists.' }
-      if (!reason.trim()) return { ok: false, error: 'Say what needs correcting.' }
-
-      const age = daysBetween(closing.period, state.today)
-      if (age > CORRECTION_WINDOW_DAYS) {
-        return {
-          ok: false,
-          error: `Corrections are only allowed for ${CORRECTION_WINDOW_DAYS} days. This one is ${age} days old — ask Kelly to reopen it.`,
-        }
+      const who = me()
+      if (!who) return { ok: false, error: 'Sign in again.' }
+      const mode = closingEditMode(who, getSession()?.locationId, closing, state.today)
+      if (mode === 'request') {
+        return { ok: false, error: 'An earlier day is changed with Kelly’s approval. Send it to her instead.' }
+      }
+      if (mode !== 'direct') return { ok: false, error: 'You cannot change this closing.' }
+      if (closing.correction?.status === 'pending') {
+        return { ok: false, error: 'A correction is waiting on this day. Approve or reject it first.' }
       }
 
-      const corrected: Closing = {
+      const changes = describeClosingChanges(figuresOf(closing), figures, basisOf(closing.locationId))
+      if (changes.length === 0) return { ok: false, error: 'Nothing has been changed.' }
+      const next: Closing = {
         ...closing,
-        revenueMYR,
-        correction: {
-          requestedBy,
-          requestedAt: new Date().toISOString(),
-          reason: reason.trim(),
-          previousRevenueMYR: closing.revenueMYR,
-          status: 'pending',
-        },
+        ...figures,
+        editedBy: who.name,
+        editedAt: new Date().toISOString(),
       }
-      patchDoc('closing', corrected.id, corrected, { locationId: corrected.locationId, day: corrected.period })
+      putClosing(next)
+      syncSaleDocs(closing.lines, figures.lines, closing)
       get().record({
-        kind: 'correction',
-        action: 'correction.requested',
-        summary: `Asked to correct the ${formatDate(closing.period)} closing for ${locationName(closing.locationId)}`,
-        entityId: closingId,
+        kind: 'closing',
+        action: 'closing.edited',
+        summary: `Changed the ${formatDate(closing.period)} closing for ${locationName(closing.locationId)}`,
+        entityId: closing.id,
         locationId: closing.locationId,
-        detail: `${rm(closing.revenueMYR)} → ${rm(revenueMYR)} · ${reason.trim()}`,
+        detail: changes.join(' · '),
       })
       return { ok: true }
     },
 
-    resolveCorrection: ({ closingId, approvedBy, role, approve }) => {
+    requestCorrection: ({ closingId, figures, reason }) => {
+      const state = get()
+      const closing = state.closings.find((c) => c.id === closingId)
+      if (!closing) return { ok: false, error: 'That closing no longer exists.' }
+      const who = me()
+      if (!who) return { ok: false, error: 'Sign in again.' }
+      const mode = closingEditMode(who, getSession()?.locationId, closing, state.today)
+      if (mode === 'direct') return { ok: false, error: 'You can change this one directly — save it instead.' }
+      if (mode === 'locked') {
+        return {
+          ok: false,
+          error: `Corrections are only allowed for ${CORRECTION_WINDOW_DAYS} days. Ask Kelly to change it.`,
+        }
+      }
+      if (mode !== 'request') return { ok: false, error: 'You cannot change this closing.' }
+      if (!reason.trim()) return { ok: false, error: 'Say what was wrong, for Kelly.' }
+
+      const changes = describeClosingChanges(figuresOf(closing), figures, basisOf(closing.locationId))
+      if (changes.length === 0) return { ok: false, error: 'Nothing has been changed.' }
+      const again = closing.correction?.status === 'pending'
+      // Only the request is written. The closing itself stays exactly as it
+      // was until Kelly or Davy decides — the server holds the store to that.
+      putClosing({
+        ...closing,
+        correction: {
+          requestedBy: who.name,
+          requestedAt: new Date().toISOString(),
+          reason: reason.trim(),
+          previousRevenueMYR: closing.revenueMYR,
+          proposed: figures,
+          changes,
+          status: 'pending',
+        },
+      })
+      get().record({
+        kind: 'correction',
+        action: 'correction.requested',
+        summary: `${again ? 'Changed what was asked for on' : 'Asked to correct'} the ${formatDate(closing.period)} closing for ${locationName(closing.locationId)}`,
+        entityId: closingId,
+        locationId: closing.locationId,
+        detail: `${reason.trim()} — ${changes.join(' · ')}`,
+      })
+      return { ok: true }
+    },
+
+    withdrawCorrection: (closingId) => {
+      const closing = get().closings.find((c) => c.id === closingId)
+      if (!closing || closing.correction?.status !== 'pending') {
+        return { ok: false, error: 'There is no request waiting on this day.' }
+      }
+      const { correction, ...rest } = closing
+      putClosing(rest)
+      get().record({
+        kind: 'correction',
+        action: 'correction.withdrawn',
+        summary: `Took back the request to correct the ${formatDate(closing.period)} closing for ${locationName(closing.locationId)}`,
+        entityId: closingId,
+        locationId: closing.locationId,
+        detail: correction.reason,
+      })
+      return { ok: true }
+    },
+
+    resolveCorrection: ({ closingId, approvedBy, role, approve, note }) => {
       if (!can(role).approveCorrections) {
         return { ok: false, error: 'Only Kelly or Davy can approve a correction.' }
       }
       const closing = get().closings.find((c) => c.id === closingId)
-      if (!closing?.correction) return { ok: false, error: 'There is nothing to decide.' }
+      const asked = closing?.correction
+      if (!closing || asked?.status !== 'pending') return { ok: false, error: 'There is nothing to decide.' }
 
-      const resolved: Closing = {
-        ...closing,
-        // A rejected correction puts the original figure back.
-        revenueMYR: approve ? closing.revenueMYR : closing.correction.previousRevenueMYR,
-        correction: {
-          ...closing.correction,
-          approvedBy,
-          approvedAt: new Date().toISOString(),
-          status: approve ? 'approved' : 'rejected',
-        },
+      const decided = {
+        ...asked,
+        approvedBy,
+        approvedAt: new Date().toISOString(),
+        status: approve ? ('approved' as const) : ('rejected' as const),
+        ...(note?.trim() ? { note: note.trim() } : {}),
       }
-      patchDoc('closing', resolved.id, resolved, { locationId: resolved.locationId, day: resolved.period })
+      let resolved: Closing
+      if (asked.proposed) {
+        // The store's version replaces the closing only if approved.
+        resolved = approve
+          ? { ...closing, ...asked.proposed, correction: decided }
+          : { ...closing, correction: decided }
+      } else {
+        // Asked for before 29 September, when a correction changed the revenue
+        // alone and at once. Rejecting puts the original figure back.
+        resolved = {
+          ...closing,
+          revenueMYR: approve ? closing.revenueMYR : asked.previousRevenueMYR,
+          correction: decided,
+        }
+      }
+      putClosing(resolved)
+      if (approve && asked.proposed) syncSaleDocs(closing.lines, asked.proposed.lines, closing)
+
+      const what = asked.changes?.length
+        ? asked.changes.join(' · ')
+        : `${rm(asked.previousRevenueMYR)} → ${rm(closing.revenueMYR)}`
       get().record({
         kind: 'correction',
         action: approve ? 'correction.approved' : 'correction.rejected',
-        summary: `${approve ? 'Approved' : 'Rejected'} the correction to the ${formatDate(closing.period)} closing for ${locationName(closing.locationId)}`,
+        summary: `${approve ? 'Approved' : 'Rejected'} ${asked.requestedBy}’s correction to the ${formatDate(closing.period)} closing for ${locationName(closing.locationId)}`,
         entityId: closingId,
         locationId: closing.locationId,
-        detail: approve
-          ? `${rm(closing.correction.previousRevenueMYR)} → ${rm(closing.revenueMYR)}`
-          : `Left at ${rm(closing.correction.previousRevenueMYR)}`,
+        detail: approve ? what : `Left as it was${note?.trim() ? ` — ${note.trim()}` : ''}`,
         actor: { id: getAuditActor() ?? 'unknown', name: approvedBy, role },
       })
       return { ok: true }
@@ -508,7 +735,7 @@ export const useData = create<DataState>()((set, get) => {
       })
     },
 
-    transitionPo: ({ poId, to, actor, role, note, approvedQty }) => {
+    transitionPo: ({ poId, to, actor, role, note, approvedQty, packedQty }) => {
       const po = get().purchaseOrders.find((p) => p.id === poId)
       if (!po) return { ok: false, error: 'That order no longer exists.' }
       if (!can(role).canEdit) return { ok: false, error: 'Your sign-in is read-only.' }
@@ -518,10 +745,15 @@ export const useData = create<DataState>()((set, get) => {
       if (to === 'rejected' && !note?.trim()) {
         return { ok: false, error: 'Rejecting an order needs a reason.' }
       }
+      const given = to === 'approved' ? approvedQty : to === 'packed' ? packedQty : undefined
+      const bad = Object.entries(given ?? {}).find(([, q]) => !Number.isInteger(q) || q < 0)
+      if (bad) return { ok: false, error: `${skuLabel(bad[0])} needs a whole number, 0 or more.` }
 
       const lines = po.lines.map((l) => {
         if (to === 'approved') return { ...l, qtyApproved: approvedQty?.[l.skuId] ?? l.qtyRequested }
-        if (to === 'packed') return { ...l, qtyShipped: l.qtyApproved ?? l.qtyRequested }
+        if (to === 'packed') {
+          return { ...l, qtyShipped: packedQty?.[l.skuId] ?? l.qtyApproved ?? l.qtyRequested }
+        }
         return l
       })
       const events = [...po.events, { status: to, actor, role, at: new Date().toISOString(), note }]
@@ -531,7 +763,9 @@ export const useData = create<DataState>()((set, get) => {
       const trimmed =
         to === 'approved'
           ? lines.filter((l, i) => l.qtyApproved !== po.lines[i].qtyRequested).length
-          : 0
+          : to === 'packed'
+            ? lines.filter((l, i) => l.qtyShipped !== (po.lines[i].qtyApproved ?? po.lines[i].qtyRequested)).length
+            : 0
       get().record({
         kind: 'order',
         action: `order.${to}`,
@@ -540,8 +774,70 @@ export const useData = create<DataState>()((set, get) => {
         locationId: po.locationId,
         detail:
           note?.trim() ||
-          (trimmed > 0 ? `${trimmed} ${trimmed === 1 ? 'line' : 'lines'} trimmed` : undefined),
+          (trimmed > 0
+            ? `${trimmed} ${trimmed === 1 ? 'line' : 'lines'} ${to === 'packed' ? 'packed short' : 'trimmed'}`
+            : undefined),
         actor: { id: getAuditActor() ?? 'unknown', name: actor, role },
+      })
+      return { ok: true }
+    },
+
+    editPurchaseOrder: ({ poId, lines, notes, priority }) => {
+      const po = get().purchaseOrders.find((p) => p.id === poId)
+      if (!po) return { ok: false, error: 'That order no longer exists.' }
+      const who = me()
+      if (!who) return { ok: false, error: 'Sign in again.' }
+      const mode = orderEditMode(who, getSession()?.locationId, po)
+      if (mode === 'none') {
+        return {
+          ok: false,
+          error:
+            po.status === 'submitted' || po.status === 'rejected'
+              ? 'You cannot change this order.'
+              : 'Kelly has approved this order, so it can no longer be changed. Ask for anything else on a new one.',
+        }
+      }
+      if (lines.length === 0) return { ok: false, error: 'An order needs at least one item.' }
+      const bad = lines.find((l) => !Number.isInteger(l.qty) || l.qty < 1)
+      if (bad) return { ok: false, error: `${skuLabel(bad.skuId)} needs a quantity of at least 1.` }
+      if (new Set(lines.map((l) => l.skuId)).size !== lines.length) {
+        return { ok: false, error: 'Each item goes on the order once.' }
+      }
+
+      const nextLines: PoLine[] = lines.map((l) => ({
+        skuId: l.skuId,
+        qtyRequested: l.qty,
+        qtyApproved: null,
+        qtyShipped: null,
+      }))
+      const changes = describeOrderChanges(po, { lines: nextLines, notes, priority })
+      if (mode === 'edit' && changes.length === 0) return { ok: false, error: 'Nothing has been changed.' }
+      const at = new Date().toISOString()
+      const next: PurchaseOrder = {
+        ...po,
+        lines: nextLines,
+        notes,
+        priority,
+        editedBy: who.name,
+        editedAt: at,
+        ...(mode === 'resend'
+          ? {
+              status: 'submitted' as const,
+              events: [
+                ...po.events,
+                { status: 'submitted' as const, actor: who.name, role: who.role, at, note: 'Changed and sent again' },
+              ],
+            }
+          : {}),
+      }
+      patchDoc('po', poId, next, { locationId: po.locationId })
+      get().record({
+        kind: 'order',
+        action: mode === 'resend' ? 'order.resubmitted' : 'order.edited',
+        summary: `${mode === 'resend' ? 'Sent again' : 'Changed'} ${poId} for ${locationName(po.locationId)}`,
+        entityId: poId,
+        locationId: po.locationId,
+        detail: changes.length ? changes.join(' · ') : 'Sent again unchanged',
       })
       return { ok: true }
     },

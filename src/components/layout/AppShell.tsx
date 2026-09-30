@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Icon, Wordmark } from '../ui/icons'
@@ -32,7 +32,7 @@ export function AppShell() {
   const user = useCurrentUser()
   const capability = useCan()
   const navigate = useNavigate()
-  const { pathname } = useLocation()
+  const { pathname, search } = useLocation()
   const signOut = useAuth((s) => s.signOut)
   const data = useData()
   const syncStatus = useData((s) => s.syncStatus)
@@ -45,6 +45,13 @@ export function AppShell() {
   const [pinOpen, setPinOpen] = useState(false)
 
   useCommandPaletteHotkey(() => setPaletteOpen(true))
+
+  // A new screen opens at its top, not wherever the last one was scrolled to —
+  // "Ask to correct" at the foot of a long history must not land half way
+  // down the form it opens.
+  useEffect(() => {
+    window.scrollTo(0, 0)
+  }, [pathname, search])
 
   if (!user) return null
 

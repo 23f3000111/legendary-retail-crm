@@ -36,6 +36,7 @@ export type IconName =
   | 'lock'
   | 'eye'
   | 'eyeOff'
+  | 'pencil'
 
 const paths: Record<IconName, JSX.Element> = {
   grid: (
@@ -183,6 +184,12 @@ const paths: Record<IconName, JSX.Element> = {
       <path d="M10.6 6a9.6 9.6 0 0 1 1.4-.1c6 0 9.5 6.1 9.5 6.1a17 17 0 0 1-2.6 3.4M6.3 7.8A16.6 16.6 0 0 0 2.5 12S6 18.1 12 18.1a9.3 9.3 0 0 0 3.6-.7" />
       <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" />
       <path d="m3.5 3.5 17 17" />
+    </>
+  ),
+  pencil: (
+    <>
+      <path d="M15.2 5.2 18.8 8.8" />
+      <path d="M4.5 19.5 5.3 15.6 16.4 4.5a1.8 1.8 0 0 1 2.6 0l.5.5a1.8 1.8 0 0 1 0 2.6L8.4 18.7Z" />
     </>
   ),
 }

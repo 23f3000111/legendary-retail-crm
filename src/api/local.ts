@@ -30,6 +30,7 @@ import {
 import { buildSeed, DEMO_TODAY } from '../data/seed'
 import { todayInMalaysia } from '../lib/dates'
 import { auditId, type AuditEntry } from '../lib/audit'
+import { closingWriteRefusal } from '../lib/editing'
 import { newId } from '../lib/ids'
 import type { CrmData, DateStr } from '../data/types'
 import {
@@ -411,7 +412,11 @@ export class LocalBackend implements Backend {
     const s = this.session(token)
     if (!s) return { ok: false, error: 'Sign in again.' }
     for (const d of docs) {
-      const refused = this.refuse(s, d.kind, d.locationId ?? undefined)
+      const refused =
+        this.refuse(s, d.kind, d.locationId ?? undefined) ??
+        (d.kind === 'closing'
+          ? closingWriteRefusal(s.person.role, this.docs.get(docKey(d.kind, d.id)), d.doc, this.today)
+          : null)
       if (refused) return { ok: false, error: refused }
       if (d.kind === 'audit') {
         // Append-only: a line that exists is never rewritten. And the actor is
@@ -461,6 +466,11 @@ export class LocalBackend implements Backend {
     const s = this.session(token)
     if (!s) return { ok: false, error: 'Sign in again.' }
     if (kind === 'audit') return { ok: false, error: 'The activity log cannot be edited.' }
+    // A filed day is changed, never deleted — deleting one would be a way
+    // round asking Kelly. Mirrored in remove_docs.
+    if (kind === 'closing' && s.person.role !== 'md' && s.person.role !== 'ops') {
+      return { ok: false, error: 'A filed day cannot be deleted. Change it instead.' }
+    }
     for (const id of ids) {
       const existing = this.docs.get(docKey(kind, id))
       if (!existing) continue

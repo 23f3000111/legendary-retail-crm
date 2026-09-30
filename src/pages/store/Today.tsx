@@ -16,6 +16,7 @@ import {
   emptyFilter,
   originSlicesFrom,
   selectClosingFor,
+  selectClosingOutOfStep,
   selectKpis,
   selectLocationRows,
   selectOpenPos,
@@ -38,6 +39,8 @@ export function Today() {
   const basis = location?.priceBasis ?? 'promotion'
 
   const closedToday = selectClosingFor(data, locationId, data.today)
+  // Closed, and a sale was added, changed or taken back since.
+  const outOfStep = selectClosingOutOfStep(data, locationId)
   const lines = data.liveLines[locationId] ?? []
   // Earlier days with sales on record and no closing — a missed night.
   const missed = Object.entries(data.unfiledLines[locationId] ?? {}).sort((a, b) => (a[0] < b[0] ? 1 : -1))
@@ -82,7 +85,9 @@ export function Today() {
           </h1>
           <p className="mt-1 text-[13px] text-ink-2">
             {formatDate(data.today)} ·{' '}
-            {closedToday ? `Filed by ${closedToday.submittedBy}` : 'File before 11pm'}
+            {closedToday
+              ? `Filed by ${closedToday.submittedBy}${closedToday.editedBy ? ` · changed by ${closedToday.editedBy}` : ''}`
+              : 'File before 11pm'}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -91,13 +96,30 @@ export function Today() {
               Record a sale
             </Button>
           </Link>
-          <Link to="/close">
-            <Button variant={closedToday ? 'secondary' : 'primary'} icon="clipboard">
-              {closedToday ? 'Re-file the closing' : 'Close the day'}
+          <Link to={closedToday ? '/close?edit=1' : '/close'}>
+            <Button variant={closedToday ? 'secondary' : 'primary'} icon={closedToday ? 'pencil' : 'clipboard'}>
+              {closedToday ? 'Change the closing' : 'Close the day'}
             </Button>
           </Link>
         </div>
       </div>
+
+      {outOfStep && (
+        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-warn/40 bg-warn/8 px-4 py-3">
+          <Icon name="alert" className="h-4 w-4 shrink-0 text-warn" />
+          <p className="min-w-[220px] flex-1 text-[13px] text-ink">
+            <b>The sales have changed since today was closed.</b>{' '}
+            <span className="text-ink-2">
+              Update the closing so it matches — the cash and the counts stay as you filed them unless you change them.
+            </span>
+          </p>
+          <Link to="/close?edit=1" className="w-full sm:w-auto">
+            <Button size="sm" variant="primary" icon="pencil" className="w-full">
+              Update the closing
+            </Button>
+          </Link>
+        </div>
+      )}
 
       {missed.length > 0 && (
         <div className="space-y-2">
@@ -107,14 +129,14 @@ export function Today() {
               className="flex flex-wrap items-center gap-3 rounded-2xl border border-warn/40 bg-warn/8 px-4 py-3"
             >
               <Icon name="alert" className="h-4 w-4 shrink-0 text-warn" />
-              <p className="min-w-0 flex-1 text-[13px] text-ink">
+              <p className="min-w-[220px] flex-1 text-[13px] text-ink">
                 <b>{formatDate(day)} was not closed.</b>{' '}
                 <span className="text-ink-2">
                   {dayLines.length} {dayLines.length === 1 ? 'sale line was' : 'sale lines were'} recorded that day.
                 </span>
               </p>
-              <Link to={`/close?day=${day}`}>
-                <Button size="sm" variant="primary" icon="clipboard">
+              <Link to={`/close?day=${day}`} className="w-full sm:w-auto">
+                <Button size="sm" variant="primary" icon="clipboard" className="w-full">
                   Close {formatDate(day)}
                 </Button>
               </Link>

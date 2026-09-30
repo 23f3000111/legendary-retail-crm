@@ -5,6 +5,7 @@ import { settle, signInAs, signOutForTests, startFixture, written } from './test
 import type { LocalBackend } from '../api/local'
 import { can, startingPassword, storeChoicesFor, type Person, type Role } from '../data/people'
 import type { PurchaseOrder } from '../data/types'
+import { figuresOf } from '../lib/changes'
 
 /**
  * The activity log has one job: answer "who did this, and when" for anything
@@ -189,21 +190,22 @@ describe('every action leaves a line', () => {
   })
 
   it('records a correction being asked for and decided', () => {
-    const closing = useData
-      .getState()
-      .closings.find((c) => c.period === '2026-08-20' && c.channel === 'main')!
+    // Asked for by the store, the day after.
+    signInAs(lb, 'teokoknian', 'klia-t2')
+    const closing = useData.getState().closings.find((c) => c.id === 'klia-t2-2026-08-20')!
 
     useData.getState().requestCorrection({
       closingId: closing.id,
-      requestedBy: 'Pavilion KL promoter',
+      figures: { ...figuresOf(closing), tender: { ...closing.tender!, cash: closing.tender!.cash + 500 } },
       reason: 'Miscounted the card total',
-      revenueMYR: closing.revenueMYR + 500,
     })
     expect(actions()[0]).toBe('correction.requested')
     expect(written()[0].detail).toMatch(/Miscounted the card total/)
+    expect(written()[0].actorName).toBe('Teo Kok Nian')
     // The alert follows from the data rather than being stored.
     expect(useData.getState().alerts.some((a) => a.id === `correction-${closing.id}`)).toBe(true)
 
+    signInAs(lb, 'kelly')
     useData.getState().resolveCorrection({
       closingId: closing.id,
       approvedBy: 'Kelly Tew',

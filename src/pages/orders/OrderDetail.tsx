@@ -9,11 +9,13 @@ import { EmptyState } from '../../components/ui/DataTable'
 import { Icon } from '../../components/ui/icons'
 import { PoTimeline } from '../../components/po/PoTimeline'
 import { PoLines } from '../../components/po/PoLines'
+import { OrderEditor } from '../../components/po/OrderEditor'
 import { useData } from '../../store/useData'
 import { useCan, useCurrentUser } from '../../store/useAuth'
 import { useToasts } from '../../components/ui/Toast'
 import { poUnits, poValue } from '../../store/selectors'
 import { availableTransitions, canClearAccounts, STATUS_LABEL, STATUS_OWNER } from '../../lib/po-machine'
+import { orderEditMode } from '../../lib/editing'
 import { locationById, CHANNEL_LABEL } from '../../data/locations'
 import { skuById } from '../../data/products'
 import { formatTimestamp } from '../../lib/dates'
@@ -26,6 +28,11 @@ import type { PoStatus } from '../../data/types'
  * Which buttons appear is decided entirely by the state machine and the signed-in
  * role, so this screen cannot offer a move the workflow does not allow — and a
  * read-only sign-in sees no buttons at all.
+ *
+ * An order can be changed while it waits for Kelly, and changed and sent again
+ * after she turns it down (`lib/editing.ts`). Kelly can trim quantities as she
+ * approves, and the warehouse can pack short — each box starts at the figure
+ * before it, so only a difference is typed.
  */
 export function OrderDetail() {
   const { id } = useParams<{ id: string }>()
@@ -35,12 +42,15 @@ export function OrderDetail() {
   const po = useData((s) => s.purchaseOrders.find((p) => p.id === id))
   const transitionPo = useData((s) => s.transitionPo)
   const clearAccounts = useData((s) => s.clearAccounts)
+  const editPurchaseOrder = useData((s) => s.editPurchaseOrder)
   const push = useToasts((s) => s.push)
 
   const [pending, setPending] = useState<{ to: PoStatus; label: string } | null>(null)
   const [note, setNote] = useState('')
-  const [qty, setQty] = useState<Record<string, number>>({})
+  // The text in each box, so one can be cleared and retyped.
+  const [qty, setQty] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
+  const [changing, setChanging] = useState(false)
 
   if (!po || !user) {
     return (
@@ -60,12 +70,15 @@ export function OrderDetail() {
   // Finance's move sits beside the chain: it is offered whenever the order has
   // been approved and not yet cleared, whatever the warehouse has done since.
   const canClear = capability.canEdit && canClearAccounts(po, user.role)
+  const editMode = orderEditMode(user, user.locationId, po)
+  /** Quantities are asked for when Kelly approves and when the warehouse packs. */
+  const asksQty = pending?.to === 'approved' || pending?.to === 'packed'
 
   const openMove = (to: PoStatus, label: string) => {
     setPending({ to, label })
     setNote('')
     setError(null)
-    setQty(Object.fromEntries(po.lines.map((l) => [l.skuId, l.qtyApproved ?? l.qtyRequested])))
+    setQty(Object.fromEntries(po.lines.map((l) => [l.skuId, String(l.qtyApproved ?? l.qtyRequested)])))
   }
 
   const confirm = () => {
@@ -77,13 +90,20 @@ export function OrderDetail() {
       setPending(null)
       return
     }
+    let counts: Record<string, number> | undefined
+    if (asksQty) {
+      const blank = po.lines.find((l) => qty[l.skuId] === '' || !(Number(qty[l.skuId]) >= 0))
+      if (blank) return setError(`Type a number for ${skuById(blank.skuId)?.label ?? blank.skuId} — 0 leaves it out.`)
+      counts = Object.fromEntries(po.lines.map((l) => [l.skuId, Math.floor(Number(qty[l.skuId]))]))
+    }
     const result = transitionPo({
       poId: po.id,
       to: pending.to,
       actor: user.name,
       role: user.role,
       note: note.trim() || undefined,
-      approvedQty: pending.to === 'approved' ? qty : undefined,
+      approvedQty: pending.to === 'approved' ? counts : undefined,
+      packedQty: pending.to === 'packed' ? counts : undefined,
     })
     if (!result.ok) {
       setError(result.error ?? 'That move is not allowed.')
@@ -121,6 +141,16 @@ export function OrderDetail() {
           </span>
         )}
         <div className="ml-auto flex flex-wrap gap-2">
+          {editMode === 'edit' && (
+            <Button variant="secondary" size="sm" icon="pencil" onClick={() => setChanging(true)}>
+              Change order
+            </Button>
+          )}
+          {editMode === 'resend' && (
+            <Button variant="primary" size="sm" icon="pencil" onClick={() => setChanging(true)}>
+              Change and send again
+            </Button>
+          )}
           {moves.map((m) => (
             <Button
               key={m.to}
@@ -155,7 +185,9 @@ export function OrderDetail() {
             <PanelHeader
               eyebrow="Order lines"
               title={`${num(poUnits(po))} units across ${po.lines.length} products`}
-              meta={`Raised by ${po.createdBy} · ${formatTimestamp(po.createdAt)}`}
+              meta={`Raised by ${po.createdBy} · ${formatTimestamp(po.createdAt)}${
+                po.editedBy && po.editedAt ? ` · changed by ${po.editedBy} at ${formatTimestamp(po.editedAt)}` : ''
+              }`}
             />
             <Rule />
             <PanelBody>
@@ -201,6 +233,19 @@ export function OrderDetail() {
         </Panel>
       </div>
 
+      <OrderEditor
+        open={changing}
+        onClose={() => setChanging(false)}
+        po={po}
+        resend={editMode === 'resend'}
+        forApprover={capability.approvePurchaseOrders}
+        onSave={(changes) => {
+          const result = editPurchaseOrder({ poId: po.id, ...changes })
+          if (result.ok) push(editMode === 'resend' ? `${po.id} sent to Kelly again` : `${po.id} changed`, 'good')
+          return result
+        }}
+      />
+
       <Modal
         open={pending !== null}
         onClose={() => setPending(null)}
@@ -227,26 +272,30 @@ export function OrderDetail() {
           </>
         }
       >
-        {pending?.to === 'approved' && (
+        {asksQty && (
           <div className="mb-4 space-y-2.5">
             <p className="text-[12.5px] text-ink-2">
-              Trim anything you cannot send in full. There is no back-order — the store re-requests
-              what it still needs.
+              {pending?.to === 'approved'
+                ? 'Trim anything you cannot send in full. There is no back-order — the store re-requests what it still needs.'
+                : 'Each box is what Kelly approved. Change one only if you are packing less — the store sees what actually went.'}
             </p>
             {po.lines.map((l) => (
               <div key={l.skuId} className="flex items-center gap-3">
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13px] text-ink">{skuById(l.skuId)?.label}</p>
-                  <p className="text-[11px] text-ink-3">requested {num(l.qtyRequested)}</p>
+                  <p className="text-[11px] text-ink-3">
+                    requested {num(l.qtyRequested)}
+                    {pending?.to === 'packed' && l.qtyApproved !== null ? ` · approved ${num(l.qtyApproved)}` : ''}
+                  </p>
                 </div>
-                <NumberInput
-                  className="w-24"
-                  min={0}
-                  value={qty[l.skuId] ?? l.qtyRequested}
-                  onChange={(e) =>
-                    setQty((q) => ({ ...q, [l.skuId]: Math.max(0, Number(e.target.value)) }))
-                  }
-                />
+                <div className="w-24 shrink-0">
+                  <NumberInput
+                    aria-label={`Units of ${skuById(l.skuId)?.label ?? l.skuId}`}
+                    min={0}
+                    value={qty[l.skuId] ?? ''}
+                    onChange={(e) => setQty((q) => ({ ...q, [l.skuId]: e.target.value }))}
+                  />
+                </div>
               </div>
             ))}
           </div>

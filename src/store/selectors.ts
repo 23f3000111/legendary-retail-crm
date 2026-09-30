@@ -35,6 +35,7 @@ import {
   type Variant,
 } from '../data/products'
 import { countries } from '../data/countries'
+import { linesDiffer } from '../lib/changes'
 import { addDays, dateRange, daysBetween, monthKey } from '../lib/dates'
 import { effectiveQty, isOpen } from '../lib/po-machine'
 import type { Alert, Closing, CrmData, DateStr, PurchaseOrder } from '../data/types'
@@ -538,16 +539,21 @@ const VELOCITY_WINDOW = 30
  * Stock on hand is the counted balance from the location's most recent closing,
  * plus anything already dispatched and not yet received.
  *
+ * `asOf` asks what the shelf held when that day began — the count from the
+ * closing before it. Closing a day needs that and nothing later: counting from
+ * the day's own closing, as editing one used to, took the day's sales off
+ * twice and showed every box short.
+ *
  * This is a count for head office visibility only. The client was explicit that
  * once stock leaves the warehouse it is no longer theirs, and that this must
  * not be confused with SQL Accounting (Q35) — so nothing here is ever valued.
  */
-export const selectStock = (data: CrmData, locationId: string): StockRow[] => {
+export const selectStock = (data: CrmData, locationId: string, asOf?: DateStr): StockRow[] => {
   const history = data.closings
-    .filter((c) => c.locationId === locationId)
+    .filter((c) => c.locationId === locationId && (!asOf || c.period < asOf))
     .sort((a, b) => (a.period < b.period ? 1 : -1))
   const latest = history[0]
-  const since = addDays(data.today, -VELOCITY_WINDOW)
+  const since = addDays(asOf ?? data.today, -VELOCITY_WINDOW)
   const recent = history.filter((c) => daysBetween(since, c.period) >= 0)
   const periods = recent.length || 1
 
@@ -729,6 +735,19 @@ export const poUnits = (po: PurchaseOrder): number =>
 
 export const selectClosingFor = (data: CrmData, locationId: string, period: DateStr) =>
   data.closings.find((c) => c.locationId === locationId && c.period === period)
+
+/**
+ * Today's closing no longer matches the sales on record — one was added,
+ * changed or taken back after it was filed. The store is asked to bring the
+ * closing up to date rather than it being changed behind their back: the cash
+ * they counted is theirs to confirm.
+ */
+export const selectClosingOutOfStep = (data: CrmData, locationId: string): boolean => {
+  const filed = selectClosingFor(data, locationId, data.today)
+  return Boolean(
+    filed && linesDiffer(filed.lines, data.liveLines[locationId] ?? [], basisOf(locationId)),
+  )
+}
 
 /**
  * Daily locations that have not filed for the given day.

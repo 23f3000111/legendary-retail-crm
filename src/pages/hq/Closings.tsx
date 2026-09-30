@@ -1,10 +1,13 @@
 import { useMemo, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { Panel, PanelBody, PanelHeader, Rule } from '../../components/ui/Panel'
 import { Button } from '../../components/ui/Button'
 import { Badge } from '../../components/ui/Badge'
 import { StatTile } from '../../components/ui/StatTile'
 import { EmptyState } from '../../components/ui/DataTable'
-import { SegmentedControl } from '../../components/ui/Field'
+import { Field, SegmentedControl, TextArea } from '../../components/ui/Field'
+import { Modal } from '../../components/ui/Modal'
+import { ChangeList } from '../../components/ui/Notice'
 import { Icon } from '../../components/ui/icons'
 import { Sparkline } from '../../components/charts/Sparkline'
 import { useData } from '../../store/useData'
@@ -14,6 +17,7 @@ import { selectLocationSparkline, selectNotFiled } from '../../store/selectors'
 import { locationById, locationsInChannel, type Channel } from '../../data/locations'
 import { addDays, formatDate, formatDateShort, formatTimestamp } from '../../lib/dates'
 import { rm } from '../../lib/format'
+import type { Closing } from '../../data/types'
 
 const TRAIL = 12
 
@@ -22,15 +26,25 @@ const TRAIL = 12
  *
  * This is Kelly's working screen: the deadline is 11pm, and when a store misses
  * it Davy, Kelly and Chloe are told (Q18). Pending corrections sit at the top,
- * because they are the only thing here that needs a decision.
+ * because they are the only thing here that needs a decision — each one says,
+ * line by line, what approving it would change.
+ *
+ * Every filed day in the grid opens, and Kelly or Davy can change it there
+ * directly: they are the ones who would approve it anyway.
  */
 export function Closings() {
+  const navigate = useNavigate()
   const data = useData()
   const user = useCurrentUser()
   const capability = useCan()
   const resolveCorrection = useData((s) => s.resolveCorrection)
   const push = useToasts((s) => s.push)
   const [channel, setChannel] = useState<Channel>('main')
+  /** The correction being turned down, and what to tell the store. */
+  const [rejecting, setRejecting] = useState<Closing | null>(null)
+  const [note, setNote] = useState('')
+  // Head office opens a store's day on the closing page itself.
+  const openDay = (locationId: string, day: string) => navigate(`/close?store=${locationId}&day=${day}`)
 
   const days = useMemo(
     () => Array.from({ length: TRAIL }, (_, i) => addDays(data.today, -(TRAIL - 1 - i))),
@@ -74,19 +88,21 @@ export function Closings() {
     0,
   )
 
-  const decide = (closingId: string, approve: boolean) => {
+  const decide = (closingId: string, approve: boolean, why?: string) => {
     if (!user) return
     const result = resolveCorrection({
       closingId,
       approvedBy: user.name,
       role: user.role,
       approve,
+      note: why,
     })
     if (!result.ok) {
       push(result.error ?? 'That could not be decided.', 'critical')
       return
     }
-    push(approve ? 'Correction approved' : 'Correction rejected', approve ? 'good' : 'info')
+    push(approve ? 'Correction approved — the closing now reads as corrected' : 'Correction turned down', approve ? 'good' : 'info')
+    setRejecting(null)
   }
 
   return (
@@ -161,45 +177,67 @@ export function Closings() {
           <PanelHeader
             eyebrow="Needs a decision"
             title={`${pending.length} correction${pending.length === 1 ? '' : 's'} pending`}
-            meta="A store has asked to change a filed figure inside the three-day window."
+            meta="A store has asked to change a filed day inside the three-day window. Nothing on it changes until you approve."
           />
           <Rule />
           <PanelBody className="space-y-2">
-            {pending.map((c) => (
-              <div
-                key={c.id}
-                className="flex flex-wrap items-center gap-3 rounded-xl border border-warn/30 bg-warn/8 px-3.5 py-3"
-              >
-                <div className="min-w-[220px] flex-1">
-                  <p className="text-[13px] text-ink">
-                    {locationById(c.locationId)?.shortName} · {formatDateShort(c.period)}
-                  </p>
-                  <p className="mt-0.5 text-[12px] text-ink-2">{c.correction?.reason}</p>
-                  <p className="mt-0.5 text-[11px] text-ink-3">
-                    {c.correction?.requestedBy} ·{' '}
-                    {c.correction && formatTimestamp(c.correction.requestedAt)}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p className="readout text-[12px] text-ink-3 line-through">
-                    {rm(c.correction?.previousRevenueMYR ?? 0)}
-                  </p>
-                  <p className="readout text-[15px] font-semibold text-ink">{rm(c.revenueMYR)}</p>
-                </div>
-                {capability.approveCorrections ? (
-                  <div className="flex gap-2">
-                    <Button size="sm" variant="ghost" onClick={() => decide(c.id, false)}>
-                      Reject
-                    </Button>
-                    <Button size="sm" variant="primary" onClick={() => decide(c.id, true)}>
-                      Approve
-                    </Button>
+            {pending.map((c) => {
+              const asked = c.correction!
+              const after = asked.proposed?.revenueMYR ?? c.revenueMYR
+              return (
+                <div key={c.id} className="rounded-xl border border-warn/30 bg-warn/8 px-3.5 py-3">
+                  <div className="flex flex-wrap items-start gap-3">
+                    <div className="min-w-[220px] flex-1">
+                      <p className="text-[13px] text-ink">
+                        {locationById(c.locationId)?.shortName} · {formatDateShort(c.period)}
+                      </p>
+                      <p className="mt-0.5 text-[12px] text-ink-2">“{asked.reason}”</p>
+                      <p className="mt-0.5 text-[11px] text-ink-3">
+                        {asked.requestedBy} · {formatTimestamp(asked.requestedAt)} · filed by {c.submittedBy}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="readout text-[12px] text-ink-3 line-through">
+                        {rm(asked.previousRevenueMYR)}
+                      </p>
+                      <p className="readout text-[15px] font-semibold text-ink">{rm(after)}</p>
+                    </div>
                   </div>
-                ) : (
-                  <Badge tone="warn">Kelly decides</Badge>
-                )}
-              </div>
-            ))}
+                  {asked.changes?.length ? (
+                    <div className="mt-2.5 rounded-lg border border-line bg-surface px-3 py-2.5">
+                      <p className="eyebrow mb-1.5">Approving changes</p>
+                      <ChangeList changes={asked.changes} />
+                    </div>
+                  ) : null}
+                  <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                    <Button size="sm" variant="ghost" onClick={() => openDay(c.locationId, c.period)}>
+                      See the day
+                    </Button>
+                    {capability.approveCorrections ? (
+                      <div className="ml-auto flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            setRejecting(c)
+                            setNote('')
+                          }}
+                        >
+                          Turn down
+                        </Button>
+                        <Button size="sm" variant="primary" icon="check" onClick={() => decide(c.id, true)}>
+                          Approve
+                        </Button>
+                      </div>
+                    ) : (
+                      <Badge tone="warn" className="ml-auto">
+                        Kelly decides
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
           </PanelBody>
         </Panel>
       )}
@@ -253,17 +291,23 @@ export function Closings() {
                           // Before a store's first closing there is nothing to
                           // chase: it had not started.
                           const due = expected(s.id, d)
+                          const Cell = c && capability.approveCorrections ? 'button' : 'span'
                           return (
                             <td key={d} className="py-2 text-center">
-                              <span
+                              <Cell
+                                {...(Cell === 'button'
+                                  ? { onClick: () => openDay(s.id, d), 'aria-label': `Open ${s.shortName}, ${formatDateShort(d)}` }
+                                  : {})}
                                 title={
                                   c
-                                    ? `${formatDateShort(d)} · ${rm(c.revenueMYR)} · filed by ${c.submittedBy} at ${formatTimestamp(c.submittedAt)}`
+                                    ? `${formatDateShort(d)} · ${rm(c.revenueMYR)} · filed by ${c.submittedBy} at ${formatTimestamp(c.submittedAt)}${
+                                        c.editedBy ? ` · changed by ${c.editedBy}` : ''
+                                      }${capability.approveCorrections ? ' · click to open' : ''}`
                                     : due
                                       ? `${formatDateShort(d)} · nothing filed`
                                       : `${formatDateShort(d)} · before this store started`
                                 }
-                                className={`mx-auto flex h-[18px] w-[18px] items-center justify-center rounded-[5px] ${
+                                className={`mx-auto flex h-[18px] w-[18px] items-center justify-center rounded-[5px] ${Cell === 'button' ? 'transition-transform hover:scale-125' : ''} ${
                                   c
                                     ? 'bg-primary/18 text-primary'
                                     : due
@@ -278,7 +322,7 @@ export function Closings() {
                                 ) : (
                                   <span className="h-1 w-1 rounded-full bg-current" />
                                 )}
-                              </span>
+                              </Cell>
                             </td>
                           )
                         })}
@@ -287,10 +331,17 @@ export function Closings() {
                         </td>
                         <td className="py-2 text-right">
                           {y ? (
-                            <>
-                              <span className="readout block text-[12.5px] text-ink">{rm(y.revenueMYR)}</span>
-                              <span className="block truncate text-[10.5px] text-ink-3">{y.submittedBy}</span>
-                            </>
+                            capability.approveCorrections ? (
+                              <Link to={`/close?store=${s.id}&day=${yesterday}`} className="block hover:underline">
+                                <span className="readout block text-[12.5px] text-ink">{rm(y.revenueMYR)}</span>
+                                <span className="block truncate text-[10.5px] text-ink-3">{y.submittedBy}</span>
+                              </Link>
+                            ) : (
+                              <>
+                                <span className="readout block text-[12.5px] text-ink">{rm(y.revenueMYR)}</span>
+                                <span className="block truncate text-[10.5px] text-ink-3">{y.submittedBy}</span>
+                              </>
+                            )
                           ) : expected(s.id, yesterday) ? (
                             <Badge tone="warn" icon="clock">
                               Missing
@@ -308,6 +359,40 @@ export function Closings() {
           )}
         </PanelBody>
       </Panel>
+
+      <Modal
+        open={rejecting !== null}
+        onClose={() => setRejecting(null)}
+        title="Turn this correction down?"
+        subtitle={
+          rejecting
+            ? `${locationById(rejecting.locationId)?.shortName} · ${formatDateShort(rejecting.period)} · the closing stays as it was filed`
+            : undefined
+        }
+        width="max-w-md"
+        footer={
+          <>
+            <Button variant="ghost" size="sm" onClick={() => setRejecting(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => rejecting && decide(rejecting.id, false, note.trim() || undefined)}
+            >
+              Turn it down
+            </Button>
+          </>
+        }
+      >
+        <Field label="Tell the store why (optional)" hint="They see this on their closing history.">
+          <TextArea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="The card slip total says RM 688 — please check it again."
+          />
+        </Field>
+      </Modal>
 
       {notFiled.length > 0 && (
         <div className="flex flex-wrap items-start gap-2.5 rounded-xl border border-warn/30 bg-warn/8 px-4 py-3">

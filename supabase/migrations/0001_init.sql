@@ -506,18 +506,65 @@ begin
   return null;
 end $$;
 
+-- A closing being written over one already filed. Mirrors
+-- `closingWriteRefusal` in src/lib/editing.ts; keep the two in step.
+--
+-- Anything put in can be changed (client, 29 September), with the one control
+-- the client set at the start (Q19): a store changes today's closing outright,
+-- but an earlier day's only by asking — everything except the correction must
+-- stay as it is, and the request must be pending and inside three days. It may
+-- take back its own pending request, never a decided one. And deciding a
+-- correction is Kelly's or Davy's, whoever sends the document.
+create or replace function _closing_refusal(p_role text, p_old docs, p_new jsonb) returns text
+language plpgsql stable as $$
+declare
+  was text := p_old.doc->'correction'->>'status';
+  now_status text := p_new->'correction'->>'status';
+begin
+  if p_old.id is null or p_old.deleted then return null; end if;
+  if now_status in ('approved', 'rejected') and now_status is distinct from was
+     and p_role not in ('md', 'ops') then
+    return 'Only Kelly or Davy can approve a correction.';
+  end if;
+  if p_role <> 'promoter' or p_old.day is null or p_old.day >= _today() then return null; end if;
+  if (p_new - 'correction') is distinct from (p_old.doc - 'correction') then
+    return 'A day that has passed is changed by asking Kelly, not directly.';
+  end if;
+  if jsonb_typeof(p_new->'correction') is distinct from 'object' then
+    if jsonb_typeof(p_old.doc->'correction') = 'object' and was is distinct from 'pending' then
+      return 'Only Kelly or Davy can undo a decided correction.';
+    end if;
+    return null;
+  end if;
+  if now_status is distinct from 'pending' then
+    if (p_new->'correction') is distinct from (p_old.doc->'correction') then
+      return 'Only Kelly or Davy can approve a correction.';
+    end if;
+    return null;
+  end if;
+  if _today()::date - p_old.day::date > 3 then
+    return 'Corrections are only allowed for 3 days. Ask Kelly to change it.';
+  end if;
+  return null;
+end $$;
+
 create or replace function put_docs(p_token text, p_docs jsonb) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
   s record;
   d jsonb;
   refused text;
+  filed docs;
 begin
   select * into s from _session(p_token);
   if s.person_id is null then return jsonb_build_object('ok', false, 'error', 'Sign in again.'); end if;
 
   for d in select * from jsonb_array_elements(p_docs) loop
     refused := _refusal(s.role, s.location_id, d->>'kind', d->>'location_id');
+    if refused is null and d->>'kind' = 'closing' then
+      select * into filed from docs where kind = 'closing' and id = d->>'id';
+      refused := _closing_refusal(s.role, filed, d->'doc');
+    end if;
     if refused is not null then
       return jsonb_build_object('ok', false, 'error', refused);
     end if;
@@ -554,6 +601,11 @@ begin
   select * into s from _session(p_token);
   if s.person_id is null then return jsonb_build_object('ok', false, 'error', 'Sign in again.'); end if;
   if p_kind = 'audit' then return jsonb_build_object('ok', false, 'error', 'The activity log cannot be edited.'); end if;
+  -- A filed day is changed, never deleted — deleting one would be a way round
+  -- asking Kelly. Mirrors `removeSync` in local.ts.
+  if p_kind = 'closing' and s.role not in ('md', 'ops') then
+    return jsonb_build_object('ok', false, 'error', 'A filed day cannot be deleted. Change it instead.');
+  end if;
 
   foreach one_id in array p_ids loop
     select * into existing from docs where kind = p_kind and id = one_id;

@@ -1,4 +1,4 @@
-import type { Role } from '../../data/people'
+import { can, type Role } from '../../data/people'
 import type { IconName } from '../ui/icons'
 
 export interface NavItem {
@@ -108,6 +108,9 @@ export const allowedPaths = (role: Role): string[] => {
   if (base.includes('/locations') || base.includes('/overview') || base.includes('/operations')) {
     base.push('/stores/')
   }
+  // Kelly and Davy open a store's closing to change it, or to see a
+  // correction in full before deciding it.
+  if (can(role).approveCorrections && !base.includes('/close')) base.push('/close')
   return base
 }
 

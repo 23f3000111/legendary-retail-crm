@@ -44,6 +44,9 @@ update people p
 ]$$::jsonb)
   ) c
  where p.id = c.id
-   and (p.doc->>'city' is distinct from c.city or p.doc ? 'locationId');
+   -- Only logins still fixed to one store. A town changed since on the
+   -- Logins screen is left alone, so running every migration again (which
+   -- scripts/migrate.mjs does) never undoes it.
+   and (p.doc ? 'locationId' or not (p.doc ? 'city'));
 
 select count(*)::int as promoters_on_a_town from people where doc ? 'city';

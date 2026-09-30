@@ -147,6 +147,54 @@ try {
   const who = await one('select whoami($1) r', [solo])
   check('the session remembers the outlet picked', who.r.locationId === 'melaka', who.r.locationId)
 
+  // Changing a filed day (client, 29 September). The store changes today's
+  // outright; an earlier day's only by asking, for three days; only Kelly or
+  // Davy decide. These closings exist only inside this transaction.
+  const daysAgo = async (n) =>
+    (await one(`select to_char(_today()::date - $1::int, 'YYYY-MM-DD') d`, [n])).d
+  const filedDay = async (id, day) => {
+    const doc = { id, locationId: 'klia-t2', period: day, revenueMYR: 800, tender: { cash: 800, ewallet: 0, card: 0 }, lines: [] }
+    await client.query(
+      `insert into docs(kind, id, location_id, day, doc) values ('closing', $1, 'klia-t2', $2, $3::jsonb)`,
+      [id, day, JSON.stringify(doc)],
+    )
+    return doc
+  }
+  const closingPut = (token, doc) =>
+    put(token, [{ kind: 'closing', id: doc.id, location_id: 'klia-t2', day: doc.period, doc }])
+  const request = {
+    status: 'pending',
+    reason: 'verify',
+    requestedBy: 'Teo Kok Nian',
+    requestedAt: '2026-01-01T00:00:00.000Z',
+    previousRevenueMYR: 800,
+  }
+
+  const earlier = await filedDay('verify-closing-earlier', await daysAgo(1))
+  const outright = await closingPut(promoter, { ...earlier, revenueMYR: 1 })
+  check('a store cannot change an earlier day outright', outright.r.ok === false, outright.r.error)
+  const asked = await closingPut(promoter, { ...earlier, correction: request })
+  check('but can ask Kelly to change it', asked.r.ok === true, asked.r.error)
+  const selfApproved = await closingPut(promoter, { ...earlier, correction: { ...request, status: 'approved' } })
+  check('and cannot approve its own request', selfApproved.r.ok === false, selfApproved.r.error)
+  const kelly = await session('kellytew')
+  const approvedDoc = { ...earlier, revenueMYR: 900, correction: { ...request, status: 'approved', approvedBy: 'Kelly Tew' } }
+  const approved = await closingPut(kelly, approvedDoc)
+  check('Kelly can approve it', approved.r.ok === true, approved.r.error)
+  const { correction: _decided, ...undone } = approvedDoc
+  const undo = await closingPut(promoter, undone)
+  check('and the store cannot undo her decision', undo.r.ok === false, undo.r.error)
+
+  const tooOld = await filedDay('verify-closing-old', await daysAgo(5))
+  const late = await closingPut(promoter, { ...tooOld, correction: request })
+  check('nor ask after three days', late.r.ok === false, late.r.error)
+
+  const todays = await filedDay('verify-closing-today', await daysAgo(0))
+  const same = await closingPut(promoter, { ...todays, revenueMYR: 950 })
+  check("a store changes today's closing outright", same.r.ok === true, same.r.error)
+  const gone = await one('select remove_docs($1, $2, $3::text[]) r', [promoter, 'closing', [todays.id]])
+  check('but cannot delete a filed day', gone.r.ok === false, gone.r.error)
+
   // Passwords.
   const weak = await one("select set_password($1, 'kim', 'legendary123') r", [imran])
   check('a weak password is refused', weak.r.ok === false, weak.r.error)

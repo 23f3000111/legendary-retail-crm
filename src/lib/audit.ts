@@ -57,12 +57,17 @@ export const AUDIT_KIND_LABEL: Record<AuditKind, string> = {
  */
 export const AUDIT_ACTION_LABEL: Record<string, string> = {
   'sale.recorded': 'Sale recorded',
+  'sale.edited': 'Sale changed',
   'sale.removed': 'Sale taken back',
   'closing.filed': 'Day closed',
+  'closing.edited': 'Closing changed',
   'correction.requested': 'Correction asked for',
+  'correction.withdrawn': 'Correction request taken back',
   'correction.approved': 'Correction approved',
   'correction.rejected': 'Correction rejected',
   'order.raised': 'Order raised',
+  'order.edited': 'Order changed',
+  'order.resubmitted': 'Order changed and sent again',
   'order.submitted': 'Order sent to HQ',
   'order.approved': 'Order approved',
   'order.rejected': 'Order rejected',

@@ -11,10 +11,11 @@ import { Flag } from '../../components/ui/Flag'
 import { EmptyState } from '../../components/ui/DataTable'
 import { OriginRibbon } from '../../components/charts/OriginRibbon'
 import { CountryPicker } from '../../components/CountryPicker'
+import { SaleEditor } from '../../components/SaleEditor'
 import { useData } from '../../store/useData'
 import { useCurrentUser } from '../../store/useAuth'
 import { useToasts } from '../../components/ui/Toast'
-import { originSlicesFrom } from '../../store/selectors'
+import { originSlicesFrom, selectClosingOutOfStep } from '../../store/selectors'
 import { locationById } from '../../data/locations'
 import {
   lineUnitPrice,
@@ -32,7 +33,8 @@ import {
   MALAYSIA_SEGMENT_LABEL,
   type MalaysiaSegment,
 } from '../../data/countries'
-import { formatDate, formatTimestamp } from '../../lib/dates'
+import { formatDate } from '../../lib/dates'
+import { clock } from '../../lib/changes'
 import { num, rm } from '../../lib/format'
 import type { SaleLine } from '../../data/types'
 
@@ -53,12 +55,16 @@ import type { SaleLine } from '../../data/types'
  * the offer price on the Wishes — because the same bottle is rung up at more
  * than one price in a day and the takings are only right if the line records
  * which. The same item at two prices is two lines in the basket.
+ *
+ * A sale keyed in wrongly is opened again with Change, already filled in, and
+ * only the wrong part is touched — the item, the price, how many, or the
+ * country. Delete sale takes the whole thing back.
  */
 export function Sell() {
   const user = useCurrentUser()
   const data = useData()
   const recordSale = useData((s) => s.recordSale)
-  const removeSaleLine = useData((s) => s.removeSaleLine)
+  const updateSale = useData((s) => s.updateSale)
   const removeSale = useData((s) => s.removeSale)
   const push = useToasts((s) => s.push)
 
@@ -72,6 +78,8 @@ export function Sell() {
   /** The "Other" price being typed for an item, before it goes in the basket. */
   const [otherFor, setOtherFor] = useState<string | null>(null)
   const [otherAmount, setOtherAmount] = useState('')
+  /** The sale being changed, by its id. */
+  const [editing, setEditing] = useState<string | null>(null)
 
   const needsCountry = location?.recordsCountries ?? false
   // Which of the two prices this store's revenue is counted on (Revision 2).
@@ -103,6 +111,10 @@ export function Sell() {
     }
     return [...groups.entries()].reverse()
   }, [lines])
+
+  const editingLines = editing ? (sales.find(([id]) => id === editing)?.[1] ?? []) : []
+  // Filed already, and the sales have moved on since: the closing needs a look.
+  const outOfStep = selectClosingOutOfStep(data, locationId)
 
   const mix = useMemo(() => {
     const tally = new Map<string, { units: number; revenue: number }>()
@@ -175,6 +187,33 @@ export function Sell() {
         onPick={(code, segment) => commit(code, segment)}
       />
 
+      <SaleEditor
+        open={editing !== null && editingLines.length > 0}
+        onClose={() => setEditing(null)}
+        title="Change this sale"
+        subtitle={
+          editingLines[0]
+            ? `Rung up at ${clock(editingLines[0].at)}${editingLines[0].byName ? ` by ${editingLines[0].byName}` : ''}. Change only what is wrong.`
+            : undefined
+        }
+        initial={{
+          lines: editingLines,
+          countryCode: editingLines[0]?.countryCode,
+          segment: editingLines[0]?.segment,
+        }}
+        basis={basis}
+        needsCountry={needsCountry}
+        onSave={(draft) => {
+          const result = updateSale({ saleId: editing!, ...draft })
+          if (result.ok) push('Sale changed', 'good')
+          return result
+        }}
+        onDelete={() => {
+          removeSale(editing!)
+          push('Sale taken back', 'info')
+        }}
+      />
+
       <Modal
         open={otherFor !== null}
         onClose={() => setOtherFor(null)}
@@ -224,6 +263,21 @@ export function Sell() {
           </Button>
         </Link>
       </div>
+
+      {outOfStep && (
+        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-warn/40 bg-warn/8 px-4 py-3">
+          <Icon name="alert" className="h-4 w-4 shrink-0 text-warn" />
+          <p className="min-w-[220px] flex-1 text-[13px] text-ink">
+            <b>Today is already closed, and the sales have changed since.</b>{' '}
+            <span className="text-ink-2">Update the closing so it matches — everything else stays as you filed it.</span>
+          </p>
+          <Link to="/close?edit=1" className="w-full sm:w-auto">
+            <Button size="sm" variant="primary" icon="pencil" className="w-full">
+              Update the closing
+            </Button>
+          </Link>
+        </div>
+      )}
 
       {/* ── Running total ─────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
@@ -465,7 +519,7 @@ export function Sell() {
           <PanelHeader
             eyebrow="Today"
             title={`${customers} ${customers === 1 ? 'customer' : 'customers'} · ${lines.length} ${lines.length === 1 ? 'line' : 'lines'}`}
-            meta="Every sale recorded at this store today, by anyone. Take back a line, or a whole sale, if something was keyed in wrongly."
+            meta="Every sale recorded at this store today, by anyone. Keyed something in wrongly? Change it, or delete the whole sale."
           />
           <Rule />
           <PanelBody className="space-y-2.5">
@@ -480,6 +534,7 @@ export function Sell() {
                 const first = group[0]
                 const c = first.countryCode ? countryByCode(first.countryCode) : null
                 const total = group.reduce((a, l) => a + l.qty * lineUnitPrice(l, basis), 0)
+                const edited = group.find((l) => l.editedAt)
                 return (
                   <div key={saleId} className="rounded-xl border border-line bg-surface-2">
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line/70 px-3.5 py-2">
@@ -493,16 +548,30 @@ export function Sell() {
                         <Badge tone="neutral">Customer</Badge>
                       )}
                       <span className="text-[11.5px] text-ink-3">
-                        {first.at ? formatTimestamp(first.at).split(' · ').pop() : ''}
+                        {clock(first.at)}
                         {first.byName ? ` · ${first.byName}` : ''}
+                        {edited
+                          ? ` · changed ${clock(edited.editedAt)}${
+                              edited.editedBy && edited.editedBy !== first.byName ? ` by ${edited.editedBy}` : ''
+                            }`
+                          : ''}
                       </span>
                       <span className="readout ml-auto text-[12.5px] font-semibold text-ink">{rm(total)}</span>
+                      {group.some((l) => l.id) && (
+                        <button
+                          onClick={() => setEditing(saleId)}
+                          className="flex min-h-[32px] items-center gap-1 rounded-lg px-1.5 text-[11.5px] font-medium text-primary hover:underline"
+                        >
+                          <Icon name="pencil" className="h-3 w-3" />
+                          Change
+                        </button>
+                      )}
                       <button
                         onClick={() => {
                           removeSale(saleId)
                           push('Sale taken back', 'info')
                         }}
-                        className="flex items-center gap-1 text-[11.5px] text-critical hover:underline"
+                        className="flex min-h-[32px] items-center gap-1 rounded-lg px-1.5 text-[11.5px] text-critical hover:underline"
                       >
                         <Icon name="x" className="h-3 w-3" />
                         Delete sale
@@ -524,17 +593,6 @@ export function Sell() {
                             <span className="readout text-[12.5px] text-ink-2">
                               {rm(l.qty * lineUnitPrice(l, basis))}
                             </span>
-                            {group.length > 1 && l.id && (
-                              <IconButton
-                                name="x"
-                                label="Remove this line"
-                                className="h-8 w-8"
-                                onClick={() => {
-                                  removeSaleLine(l.id!)
-                                  push('Line removed', 'info')
-                                }}
-                              />
-                            )}
                           </div>
                         )
                       })}

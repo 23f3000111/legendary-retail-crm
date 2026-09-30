@@ -58,6 +58,9 @@ export interface SaleLine {
    * the count. Set only when `countryCode` is 'MY'.
    */
   segment?: MalaysiaSegment
+  /** The last change after it was rung up, by name, so the log on screen says so. */
+  editedAt?: string
+  editedBy?: string
 }
 
 /** Tonight's physical count. Every product, every night (Q20). */
@@ -89,16 +92,38 @@ export interface Tender {
 }
 
 /**
+ * The parts of a closing a person can get wrong and put right: what sold, how
+ * it was paid, and what was on the shelf.
+ */
+export interface ClosingFigures {
+  revenueMYR: number
+  tender?: Tender
+  lines: SaleLine[]
+  stockCount: StockCount[]
+}
+
+/**
  * A correction filed within three days of the original, held until Kelly
  * approves it (Q19).
+ *
+ * The store fills in the whole closing again, starting from what is on record,
+ * and `proposed` is the result — so Kelly sees exactly what would change and
+ * approving it changes exactly that. Nothing on the closing moves until she
+ * does. Corrections asked for before 29 September changed the revenue figure
+ * alone and carry no `proposed`; those still resolve the old way.
  */
 export interface Correction {
   requestedBy: string
   requestedAt: string
   reason: string
   previousRevenueMYR: number
+  proposed?: ClosingFigures
+  /** What would change, in words, as the store saw it when they sent it. */
+  changes?: string[]
   approvedBy?: string
   approvedAt?: string
+  /** Why it was turned down, where Kelly said. */
+  note?: string
   status: 'pending' | 'approved' | 'rejected'
 }
 
@@ -121,6 +146,12 @@ export interface Closing {
   writeOffs: WriteOff[]
   submittedBy: string
   submittedAt: string
+  /**
+   * The last change made to it after filing, kept apart from who filed it so
+   * both names show. Every change is in the activity log with what it was.
+   */
+  editedBy?: string
+  editedAt?: string
   correction?: Correction
 }
 
@@ -177,6 +208,9 @@ export interface PurchaseOrder {
    */
   financeClearedBy?: string
   financeClearedAt?: string
+  /** The last change to its lines or note while it waited for Kelly. */
+  editedBy?: string
+  editedAt?: string
 }
 
 // ── Alerts ─────────────────────────────────────────────────────────────────
