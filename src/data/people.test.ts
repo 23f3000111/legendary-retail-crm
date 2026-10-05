@@ -88,9 +88,17 @@ describe('the company hierarchy', () => {
 // ── The people on the revised username list ─────────────────────────────────
 
 describe('the revised staff list', () => {
-  it('carries 12 at head office and 27 in the stores', () => {
+  it('carries 12 at head office and 28 in the stores', () => {
     expect(seedPeople.filter((p) => p.role !== 'promoter')).toHaveLength(12)
-    expect(seedPeople.filter((p) => p.role === 'promoter')).toHaveLength(27)
+    expect(seedPeople.filter((p) => p.role === 'promoter')).toHaveLength(28)
+  })
+
+  it('has Thong Gueh Ling with the KL promoters, from the fourth revision', () => {
+    const thong = byId('thongguehling')
+    expect(thong.username).toBe('thongguehling')
+    expect(thong.name).toBe('Thong Gueh Ling')
+    expect(thong.role).toBe('promoter')
+    expect(thong.city).toBe('Kuala Lumpur')
   })
 
   it('has three in Finance, not four — Apple is off the revised list', () => {
@@ -139,12 +147,12 @@ describe('the revised staff list', () => {
 
     // Every promoter belongs to a town and picks the outlet at sign-in.
     const promoters = seedPeople.filter((p) => p.role === 'promoter')
-    expect(promoters).toHaveLength(27)
+    expect(promoters).toHaveLength(28)
     expect(promoters.every((p) => Boolean(p.city) && !p.locationId)).toBe(true)
 
-    // The twelve under "KL" get the four the client listed.
+    // The thirteen under "KL" get the four the client listed.
     const kl = promoters.filter((p) => p.city === 'Kuala Lumpur')
-    expect(kl).toHaveLength(12)
+    expect(kl).toHaveLength(13)
     expect(storeChoicesFor(kl[0]).sort()).toEqual(
       ['bsas', 'klcc-isetan', 'parkson-pavilion', 'pavilion-5'].sort(),
     )

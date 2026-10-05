@@ -85,6 +85,27 @@ describe('a sale, changed at the counter', () => {
     expect(lastAction().detail).toBe('Took off 1 × Man · 50ml')
   })
 
+  it('takes RM 0 as an "Other" price — something given away — but not a missing one', () => {
+    atKlia()
+    const [line] = ringUp([{ skuId: 'orchid-vial', qty: 1, priceTier: 'other', unitPriceMYR: 0 }])
+    expect(line.unitPriceMYR).toBe(0)
+
+    const free = useData.getState().updateSale({
+      saleId: line.saleId!,
+      lines: [{ ...line, qty: 2, unitPriceMYR: 0 }],
+      countryCode: 'CN',
+    })
+    expect(free.ok).toBe(true)
+
+    const missing = useData.getState().updateSale({
+      saleId: line.saleId!,
+      lines: [{ ...line, unitPriceMYR: undefined }],
+      countryCode: 'CN',
+    })
+    expect(missing.ok).toBe(false)
+    expect(missing.error).toMatch(/went for/)
+  })
+
   it('will not empty a sale — that is Delete sale', () => {
     atKlia()
     const [line] = ringUp([{ skuId: 'orchid-retail', qty: 1 }])

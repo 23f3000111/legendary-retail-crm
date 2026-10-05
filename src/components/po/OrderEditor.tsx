@@ -3,7 +3,8 @@ import { Modal } from '../ui/Modal'
 import { Button, IconButton } from '../ui/Button'
 import { Field, NumberInput, Select, TextArea } from '../ui/Field'
 import { Icon } from '../ui/icons'
-import { orderableSkus, skuById, testerSkus } from '../../data/products'
+import { skuById } from '../../data/products'
+import { OrderableOptions } from './OrderableOptions'
 import type { Result } from '../../api/backend'
 import type { PurchaseOrder } from '../../data/types'
 
@@ -124,7 +125,9 @@ export function OrderEditor({
             >
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[13px] text-ink">{sku?.label ?? r.skuId}</p>
-                {sku?.variant === 'tester' && <p className="text-[11px] text-ink-3">Tester</p>}
+                {(sku?.variant === 'tester' || sku?.variant === 'vial') && (
+                  <p className="text-[11px] text-ink-3">{sku.variant === 'vial' ? 'Vial' : 'Tester'}</p>
+                )}
               </div>
               <div className="w-24 shrink-0">
                 <NumberInput
@@ -151,22 +154,7 @@ export function OrderEditor({
           <Field label="Add something else" className="min-w-0 flex-1 basis-full sm:basis-auto">
             <Select value={addSku} onChange={(e) => setAddSku(e.target.value)}>
               <option value="">Choose a product…</option>
-              <optgroup label="Bottles and sets">
-                {orderableSkus
-                  .filter((k) => k.sellable)
-                  .map((k) => (
-                    <option key={k.id} value={k.id}>
-                      {k.label}
-                    </option>
-                  ))}
-              </optgroup>
-              <optgroup label="Testers">
-                {testerSkus.map((k) => (
-                  <option key={k.id} value={k.id}>
-                    {k.label}
-                  </option>
-                ))}
-              </optgroup>
+              <OrderableOptions />
             </Select>
           </Field>
           <Button variant="secondary" icon="plus" className="w-full sm:w-auto" disabled={!addSku} onClick={add}>

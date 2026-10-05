@@ -26,10 +26,17 @@ import {
  */
 export function CountryPicker({
   open,
+  start = 'search',
   onClose,
   onPick,
 }: {
   open: boolean
+  /**
+   * Where it opens. The Malaysia button on Record a sale opens it straight on
+   * Malaysia's own question rather than on the search box — the client's
+   * fourth revision found the button "became a search".
+   */
+  start?: 'search' | 'malaysia'
   onClose: () => void
   onPick: (code: string, segment?: MalaysiaSegment) => void
 }) {
@@ -40,11 +47,11 @@ export function CountryPicker({
   useEffect(() => {
     if (!open) return
     setQuery('')
-    setAskingSegment(false)
+    setAskingSegment(start === 'malaysia')
     // After the entry animation has begun, or the caret jumps on iOS.
     const id = requestAnimationFrame(() => inputRef.current?.focus())
     return () => cancelAnimationFrame(id)
-  }, [open])
+  }, [open, start])
 
   useEffect(() => {
     if (!open) return
@@ -94,7 +101,8 @@ export function CountryPicker({
           >
             {askingSegment ? (
               <SegmentStep
-                onBack={() => setAskingSegment(false)}
+                // Opened on Malaysia, back means not Malaysia after all: close.
+                onBack={start === 'malaysia' ? onClose : () => setAskingSegment(false)}
                 onPick={(segment) => onPick(MALAYSIA, segment)}
               />
             ) : (

@@ -7,6 +7,7 @@ import { Icon } from './ui/icons'
 import { CountryPicker } from './CountryPicker'
 import { countryByCode, MALAYSIA_SEGMENT_LABEL, type MalaysiaSegment } from '../data/countries'
 import {
+  hasListPrice,
   lineUnitPrice,
   priceAtTier,
   products,
@@ -54,7 +55,7 @@ const toRow = (l: SaleLine, basis: PriceBasis, i: number): Row => ({
   skuId: l.skuId,
   tier: l.priceTier ?? basis,
   qty: l.qty,
-  other: l.priceTier === 'other' && l.unitPriceMYR ? String(l.unitPriceMYR) : '',
+  other: l.priceTier === 'other' && typeof l.unitPriceMYR === 'number' ? String(l.unitPriceMYR) : '',
 })
 
 /**
@@ -138,7 +139,8 @@ export function SaleEditor({
     setError(null)
     if (rows.length === 0) return setError('Add at least one item — or delete the sale.')
     if (rows.some((r) => !r.skuId)) return setError('Choose the item on every line, or take the empty line off.')
-    const noPrice = rows.find((r) => r.tier === 'other' && !(Number(r.other) > 0))
+    // RM 0 is allowed — something given away. An empty box is not.
+    const noPrice = rows.find((r) => r.tier === 'other' && (r.other.trim() === '' || !(Number(r.other) >= 0)))
     if (noPrice) return setError(`Type what ${skuById(noPrice.skuId)?.label ?? 'it'} went for.`)
     if (needsCountry && !countryCode) return setError('Choose where the customer is from.')
     const result = onSave({
@@ -195,8 +197,15 @@ export function SaleEditor({
                     <Select
                       aria-label="Item"
                       value={r.skuId}
-                      // A different item starts at the store's usual price.
-                      onChange={(e) => update(r.key, { skuId: e.target.value, tier: basis, other: '' })}
+                      // A different item starts at the store's usual price — or, for
+                      // one with no list price (a vial), at a price to type.
+                      onChange={(e) =>
+                        update(r.key, {
+                          skuId: e.target.value,
+                          tier: hasListPrice(skuById(e.target.value)) ? basis : 'other',
+                          other: '',
+                        })
+                      }
                     >
                       <option value="">Choose an item…</option>
                       {products.map((p) => {
@@ -248,7 +257,7 @@ export function SaleEditor({
                           min={0}
                           value={r.other}
                           onChange={(e) => update(r.key, { other: e.target.value })}
-                          placeholder="Price for one"
+                          placeholder="Price for one, 0 if free"
                         />
                       </div>
                     )}

@@ -38,6 +38,7 @@ update people p
 {"id":"gohzixuan","city":"Kuala Lumpur","storeChoices":["pavilion-5","bsas","parkson-pavilion","klcc-isetan"]},
 {"id":"chanqijun","city":"Kuala Lumpur","storeChoices":["pavilion-5","bsas","parkson-pavilion","klcc-isetan"]},
 {"id":"danzeltan","city":"Kuala Lumpur","storeChoices":["pavilion-5","bsas","parkson-pavilion","klcc-isetan"]},
+{"id":"thongguehling","city":"Kuala Lumpur","storeChoices":["pavilion-5","bsas","parkson-pavilion","klcc-isetan"]},
 {"id":"khookwoktsu","city":"Melaka","storeChoices":["melaka"]},
 {"id":"chewyingtian","city":"Melaka","storeChoices":["melaka"]},
 {"id":"kokchewling","city":"Melaka","storeChoices":["melaka"]}

@@ -25,11 +25,12 @@ import {
   sellableSkus,
   tiersFor,
   TIER_LABEL,
+  variantName,
   type PriceTier,
 } from '../../data/products'
 import {
   countryByCode,
-  topCountries,
+  QUICK_COUNTRIES,
   MALAYSIA_SEGMENT_LABEL,
   type MalaysiaSegment,
 } from '../../data/countries'
@@ -74,7 +75,12 @@ export function Sell() {
 
   /** What this customer is buying, before it is committed. */
   const [basket, setBasket] = useState<SaleLine[]>([])
-  const [pickerOpen, setPickerOpen] = useState(false)
+  /**
+   * The country list, open. "malaysia" opens it straight on Malaysia's own
+   * question — Malay, Chinese, Indian or Others — which is what the Malaysia
+   * button is for; "search" opens the full list.
+   */
+  const [picker, setPicker] = useState<'search' | 'malaysia' | null>(null)
   /** The "Other" price being typed for an item, before it goes in the basket. */
   const [otherFor, setOtherFor] = useState<string | null>(null)
   const [otherAmount, setOtherAmount] = useState('')
@@ -85,11 +91,9 @@ export function Sell() {
   // Which of the two prices this store's revenue is counted on (Revision 2).
   const basis = location?.priceBasis ?? 'promotion'
 
-  // The store's usual nationalities first; everything else is behind search.
-  const quickCodes = (location?.originProfile ?? topCountries.slice(0, 5).map((c) => c.code)).slice(
-    0,
-    5,
-  )
+  // The same five at every outlet (client's fourth revision); everything else
+  // is behind search.
+  const quickCodes = QUICK_COUNTRIES
 
   const basketUnits = basket.reduce((a, l) => a + l.qty, 0)
   const basketTotal = basket.reduce(
@@ -152,10 +156,13 @@ export function Sell() {
     add(skuId, tier, priceAtTier(skuById(skuId), tier))
   }
 
+  // RM 0 is a price too — something given away (client's fourth revision).
+  // An empty box is not.
+  const otherValid = otherAmount.trim() !== '' && Number(otherAmount) >= 0
+
   const confirmOther = () => {
-    const amount = Math.round(Number(otherAmount) * 100) / 100
-    if (!otherFor || !(amount > 0)) return
-    add(otherFor, 'other', amount)
+    if (!otherFor || !otherValid) return
+    add(otherFor, 'other', Math.round(Number(otherAmount) * 100) / 100)
     setOtherFor(null)
   }
 
@@ -174,7 +181,7 @@ export function Sell() {
       : ''
     push(`Sale recorded — ${basketUnits} ${basketUnits === 1 ? 'unit' : 'units'}${where}`, 'good')
     setBasket([])
-    setPickerOpen(false)
+    setPicker(null)
   }
 
   if (!location || !user) return null
@@ -182,8 +189,9 @@ export function Sell() {
   return (
     <div className="space-y-5">
       <CountryPicker
-        open={pickerOpen}
-        onClose={() => setPickerOpen(false)}
+        open={picker !== null}
+        start={picker === 'malaysia' ? 'malaysia' : 'search'}
+        onClose={() => setPicker(null)}
         onPick={(code, segment) => commit(code, segment)}
       />
 
@@ -225,13 +233,13 @@ export function Sell() {
             <Button variant="ghost" size="sm" onClick={() => setOtherFor(null)}>
               Cancel
             </Button>
-            <Button variant="primary" size="sm" onClick={confirmOther} disabled={!(Number(otherAmount) > 0)}>
+            <Button variant="primary" size="sm" onClick={confirmOther} disabled={!otherValid}>
               Add to the basket
             </Button>
           </>
         }
       >
-        <Field label="Price for one" hint="The amount the customer actually paid for one unit.">
+        <Field label="Price for one" hint="What the customer actually paid for one unit — 0 if it was given away.">
           <NumberInput
             prefix="RM"
             min={0}
@@ -339,7 +347,7 @@ export function Sell() {
                         >
                           <div className="mb-2 flex items-center justify-between gap-2 px-1 sm:mb-0 sm:w-[112px] sm:shrink-0">
                             <span className="text-[13.5px] font-medium text-ink">
-                              {v.variant === 'set' ? 'Set' : v.variant === 'travel' ? 'Travel Kit' : v.size}
+                              {variantName(v)}
                             </span>
                             {taken > 0 && (
                               <span className="readout flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-semibold text-white">
@@ -483,7 +491,7 @@ export function Sell() {
                         <button
                           key={code}
                           onClick={() =>
-                            c.code === 'MY' ? setPickerOpen(true) : commit(c.code)
+                            c.code === 'MY' ? setPicker('malaysia') : commit(c.code)
                           }
                           className="min-h-[62px] rounded-xl border border-primary/30 bg-primary/8 px-4 py-2.5 text-left transition-all duration-200 active:scale-[0.98] sm:min-w-[128px] sm:hover:-translate-y-0.5 sm:hover:border-primary/60 sm:hover:bg-primary/14"
                         >
@@ -495,7 +503,7 @@ export function Sell() {
                       )
                     })}
                     <button
-                      onClick={() => setPickerOpen(true)}
+                      onClick={() => setPicker('search')}
                       className="col-span-2 flex min-h-[62px] items-center justify-center gap-2 rounded-xl border border-line bg-surface px-4 text-[13.5px] font-medium text-ink-2 transition-colors hover:border-primary/45 hover:text-ink sm:col-span-1 sm:min-w-[150px]"
                     >
                       <Icon name="search" className="h-4 w-4" />

@@ -7,6 +7,7 @@ import { Icon } from '../../components/ui/icons'
 import { useCan } from '../../store/useAuth'
 import {
   collections,
+  hasListPrice,
   products,
   productById,
   skus,
@@ -71,13 +72,16 @@ export function Catalogue() {
       align: 'right',
       width: '170px',
       render: (s) =>
-        s.sellable ? (
+        !s.sellable ? (
+          <span className="text-[12px] text-ink-3">not sold</span>
+        ) : hasListPrice(s) ? (
           <div>
             <span className="readout text-[13px] text-ink">{rm(s.promotionPriceMYR)}</span>
             <p className="readout text-[10.5px] text-ink-3">was {rm(s.retailPriceMYR)}</p>
           </div>
         ) : (
-          <span className="text-[12px] text-ink-3">not sold</span>
+          // A vial: no list price was given, so the counter types what it went for.
+          <span className="text-[12px] text-ink-3">typed at the counter</span>
         ),
     },
     {
@@ -97,15 +101,26 @@ export function Catalogue() {
   const exportRows = () =>
     downloadCsv(
       'legendary-products.csv',
-      ['Product', 'Variant', 'Size', 'Code', 'Collection', 'Revenue MYR', 'Reorder at', 'Case size'],
+      [
+        'Product',
+        'Variant',
+        'Size',
+        'Code',
+        'Collection',
+        'Retail MYR',
+        'Promotion MYR',
+        'Offer MYR',
+        'Reorder at',
+        'Case size',
+      ],
       skus.map((s) => [
         productById(s.productId)?.name ?? s.productId,
         VARIANT_LABEL[s.variant],
         s.size,
         s.code,
         productById(s.productId)?.collection ?? '',
-        s.sellable ? s.retailPriceMYR : '',
-        s.sellable ? s.promotionPriceMYR : '',
+        hasListPrice(s) ? s.retailPriceMYR : '',
+        hasListPrice(s) ? s.promotionPriceMYR : '',
         s.offerMYR ?? '',
         s.reorderPoint,
         s.caseSize,

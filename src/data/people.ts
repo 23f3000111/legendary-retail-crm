@@ -10,7 +10,7 @@
  *   Operational Manager (Kelly Tew)  sees and edits all, approves changes and orders
  *   Finance (3 people) ............. sees and edits all
  *   Warehouse (4 people) ........... stock data only
- *   Store Promoter (27 people) ..... inputs data for their own store
+ *   Store Promoter (28 people) ..... inputs data for their own store
  *
  * Only the Managing Director and the Operational Manager approve. That is what
  * the chart says, and it is the line the rest of the system is built on:
@@ -418,15 +418,17 @@ const DISPLAY_NAME: Record<string, string> = {
   gohzixuan: 'Goh Zi Xuan',
   chanqijun: 'Chan Qi Jun',
   danzeltan: 'Danzel Tan',
+  // Added in the client's fourth revision (October), name as they wrote it.
+  thongguehling: 'Thong Gueh Ling',
   khookwoktsu: 'Khoo Kwok Tsu',
   chewyingtian: 'Chew Ying Tian',
   kokchewling: 'Kok Chew Ling',
 }
 
 /**
- * The 27 store promoters, from the same list.
+ * The 28 store promoters, from the same list and the fourth revision.
  *
- * The twelve under **"KL"** are not fixed to a store: the client's third
+ * The thirteen under **"KL"** are not fixed to a store: the client's third
  * revision has them choose one of the four KL stores each time they sign in.
  *
  * Display names are split out of the usernames ("teokoknian" → "Teo Kok
@@ -453,6 +455,7 @@ const promoterGroups: { city: City; usernames: string[] }[] = [
     usernames: [
       'leekwansern', 'limzhixuan', 'tanjiwei', 'eddielee', 'limyongkent', 'shannesslow',
       'fonghaobin', 'yapboonming', 'desmondchang', 'gohzixuan', 'chanqijun', 'danzeltan',
+      'thongguehling',
     ],
   },
   { city: 'Melaka', usernames: ['khookwoktsu', 'chewyingtian', 'kokchewling'] },

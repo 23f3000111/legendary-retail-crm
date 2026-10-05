@@ -19,14 +19,8 @@ import {
   selectSuggestedPoLines,
 } from '../../store/selectors'
 import { locationById, type Location } from '../../data/locations'
-import {
-  lineUnitPrice,
-  orderableSkus,
-  skuById,
-  skuLabel,
-  testerSkus,
-  TIER_LABEL,
-} from '../../data/products'
+import { lineUnitPrice, skuById, skuLabel, TIER_LABEL } from '../../data/products'
+import { OrderableOptions } from '../../components/po/OrderableOptions'
 import { countryByCode, MALAYSIA_SEGMENT_LABEL } from '../../data/countries'
 import { formatDate, formatTimestamp } from '../../lib/dates'
 import { num } from '../../lib/format'
@@ -398,8 +392,11 @@ function ClosingForm({
    * zero and saying "all as expected" would invite a promoter to file a count
    * of nothing for every product. So on the first night the boxes start empty
    * and every one has to be typed.
+   *
+   * The same goes, one product at a time, for anything added to the range
+   * since the store last counted: its box starts empty, marked new.
    */
-  const firstCount = stock.length > 0 && !stock[0].counted
+  const firstCount = stock.length > 0 && stock.every((s) => !s.counted)
 
   const countOnRecord = useMemo(
     () => new Map((onRecord?.stockCount ?? []).map((s) => [s.skuId, s.counted])),
@@ -413,7 +410,11 @@ function ClosingForm({
     return Object.fromEntries(
       stock.map((s) => [
         s.skuId,
-        was.has(s.skuId) ? String(was.get(s.skuId)) : firstCount ? '' : String(expectedOf(s.skuId, s.onHand)),
+        was.has(s.skuId)
+          ? String(was.get(s.skuId))
+          : firstCount || !s.counted || mode !== 'new'
+            ? ''
+            : String(expectedOf(s.skuId, s.onHand)),
       ]),
     )
   })
@@ -461,11 +462,13 @@ function ClosingForm({
   )
 
   const stockCount: StockCount[] = [
-    ...stock.map((s) => ({
-      skuId: s.skuId,
-      opening: s.onHand,
-      counted: Number(counted[s.skuId]) || 0,
-    })),
+    ...stock
+      .filter((s) => mode === 'new' || (counted[s.skuId] ?? '') !== '' || countOnRecord.has(s.skuId))
+      .map((s) => ({
+        skuId: s.skuId,
+        opening: s.onHand,
+        counted: Number(counted[s.skuId]) || 0,
+      })),
     // A count filed for something no longer counted on the shelf is kept as
     // it was, rather than dropped by an edit that never showed it.
     ...(start?.stockCount ?? []).filter((c) => !stock.some((s) => s.skuId === c.skuId)),
@@ -492,6 +495,8 @@ function ClosingForm({
   }
   for (const s of stock) {
     const value = counted[s.skuId]
+    // Changing a day: a product that was not counted then may stay uncounted.
+    if (mode !== 'new' && !countOnRecord.has(s.skuId) && !value) continue
     if (value === undefined || value === '') {
       const blanks = stock.filter((x) => !counted[x.skuId]).length
       problems.push(
@@ -647,11 +652,15 @@ function ClosingForm({
       expected,
       value,
       was,
+      // Never counted at this store, though others have been: new to the range.
+      fresh: !firstCount && !s.counted,
       // Filing: flag a count that differs from what the shelf should hold.
       // Changing: flag a count that differs from what was filed.
       changed:
         value !== '' &&
-        (mode === 'new' ? !firstCount && Number(value) !== expected : was !== undefined && Number(value) !== was),
+        (mode === 'new'
+          ? !firstCount && s.counted && Number(value) !== expected
+          : was !== undefined && Number(value) !== was),
     }
   })
   const changedCounts = shelf.filter((s) => s.changed).length
@@ -916,6 +925,14 @@ function ClosingForm({
                     {s.sold > 0 ? `Sold ${num(s.sold)}${firstCount ? '' : ' · '}` : ''}
                     {firstCount ? (
                       s.sold > 0 || mode !== 'new' ? '' : 'Type what is on the shelf'
+                    ) : s.fresh ? (
+                      mode === 'new' ? (
+                        <span className="font-medium text-primary">New — type what is on the shelf</span>
+                      ) : s.was === undefined ? (
+                        'Not counted that day'
+                      ) : (
+                        ''
+                      )
                     ) : (
                       <>
                         should be <span className="readout font-medium text-ink-2">{num(s.expected)}</span>
@@ -962,14 +979,19 @@ function ClosingForm({
                 {shelf.map((s) => (
                   <tr key={s.skuId} className="border-b border-line/70 last:border-0">
                     <td className="py-2">
-                      <p className="text-[13px] leading-tight text-ink">{s.label}</p>
+                      <p className="text-[13px] leading-tight text-ink">
+                        {s.label}
+                        {s.fresh && mode === 'new' && (
+                          <span className="ml-2 text-[11px] font-medium text-primary">New — count it</span>
+                        )}
+                      </p>
                       <p className="readout text-[10.5px] text-ink-3">{s.code}</p>
                     </td>
                     <td className={`readout py-2 pr-3 text-right text-[13px] ${s.sold > 0 ? 'text-ink' : 'text-ink-3'}`}>
                       {s.sold > 0 ? num(s.sold) : '—'}
                     </td>
                     <td className="readout py-2 pr-3 text-right text-[13px] text-ink-2">
-                      {firstCount ? '' : num(s.expected)}
+                      {firstCount || s.fresh ? '' : num(s.expected)}
                     </td>
                     <td className="readout py-2 pr-3 text-right text-[13px] text-ink-3">
                       {mode === 'new' ? '' : s.was === undefined ? '—' : num(s.was)}
@@ -1005,7 +1027,7 @@ function ClosingForm({
                   ? `${orderLines.length} on the order`
                   : `${orderLines.length} on the order · ${orderRows.length - orderLines.length} still to fill in`
             }
-            meta="Anything low is filled in for you. Add anything else, including testers."
+            meta="Anything low is filled in for you. Add anything else, including vials and testers."
             action={
               <button
                 onClick={() => setRaisePo((v) => !v)}
@@ -1025,22 +1047,7 @@ function ClosingForm({
               <Field label="Add something else" className="min-w-0 flex-1 basis-full sm:basis-auto sm:min-w-[220px]">
                 <Select value={addSku} onChange={(e) => setAddSku(e.target.value)} disabled={!raisePo}>
                   <option value="">Choose a product…</option>
-                  <optgroup label="Bottles and sets">
-                    {orderableSkus
-                      .filter((k) => k.sellable)
-                      .map((k) => (
-                        <option key={k.id} value={k.id}>
-                          {k.label}
-                        </option>
-                      ))}
-                  </optgroup>
-                  <optgroup label="Testers">
-                    {testerSkus.map((k) => (
-                      <option key={k.id} value={k.id}>
-                        {k.label}
-                      </option>
-                    ))}
-                  </optgroup>
+                  <OrderableOptions />
                 </Select>
               </Field>
               <Button
@@ -1081,7 +1088,9 @@ function ClosingForm({
                         ? row.counted
                           ? `${num(row.onHand)} on hand · reorder at ${num(row.reorderPoint)}`
                           : `No count filed yet · reorder at ${num(row.reorderPoint)}`
-                        : 'Tester — not counted on the shelf'}
+                        : sku?.variant === 'vial'
+                          ? 'Vial — not counted on the shelf'
+                          : 'Tester — not counted on the shelf'}
                     </p>
                   </div>
                   {row && row.status !== 'ok' && (
@@ -1090,6 +1099,7 @@ function ClosingForm({
                     </Badge>
                   )}
                   {sku?.variant === 'tester' && <Badge tone="active">Tester</Badge>}
+                  {sku?.variant === 'vial' && <Badge tone="active">Vial</Badge>}
                   <div className="ml-auto flex items-center gap-2">
                     <div className="w-24">
                       <NumberInput

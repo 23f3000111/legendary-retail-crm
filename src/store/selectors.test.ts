@@ -339,3 +339,37 @@ describe('before a store has ever filed', () => {
     expect(selectLocationRows(empty, last30()).length).toBeGreaterThan(0)
   })
 })
+
+// ── A product added to the range after a store started ──────────────────────
+
+describe('a product new to the range', () => {
+  // Pavilion's last closing, counted before Love 50ml was on sale there.
+  const latest = data.closings
+    .filter((c) => c.locationId === 'pavilion-5')
+    .sort((a, b) => (a.period < b.period ? 1 : -1))[0]
+  const before = {
+    ...data,
+    closings: [
+      {
+        ...latest,
+        stockCount: latest.stockCount.filter((s) => s.skuId !== 'love-retail'),
+      },
+    ],
+    purchaseOrders: [],
+  }
+
+  it('is unknown at a store that has not counted it yet, not out of stock', () => {
+    const rows = selectStock(before, 'pavilion-5')
+    const love = rows.find((r) => r.skuId === 'love-retail')!
+    expect(love.counted).toBe(false)
+    expect(love.status).toBe('ok')
+    expect(love.suggested).toBe(0)
+    // Everything that was counted still is.
+    expect(rows.find((r) => r.skuId === 'orchid-retail')!.counted).toBe(true)
+  })
+
+  it('raises no alert for it at that store', () => {
+    const alerts = deriveAlerts(before, new Set())
+    expect(alerts.some((a) => a.locationId === 'pavilion-5' && a.skuId === 'love-retail')).toBe(false)
+  })
+})

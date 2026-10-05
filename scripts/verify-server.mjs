@@ -52,7 +52,7 @@ console.log('')
 await client.query('begin')
 try {
 
-  check('the 39 logins are there', (await one('select count(*)::int n from people')).n === 39)
+  check('the 40 logins are there', (await one('select count(*)::int n from people')).n === 40)
 
   // Nothing without a session.
   check('no session, no data', (await one('select load_state(null) r')).r.ok === false)
@@ -222,7 +222,7 @@ try {
     check('and it really empties the documents', (await one('select count(*)::int n from docs')).n === 1)
     check('leaving the record that it happened',
       (await one(`select count(*)::int n from docs where doc->>'action'='data.cleared'`)).n === 1)
-    check('and every login untouched', (await one('select count(*)::int n from people')).n === 39)
+    check('and every login untouched', (await one('select count(*)::int n from people')).n === 40)
   }
 } finally {
   // Nothing above is kept: not a session, not a sale, not a line in the log.

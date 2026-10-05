@@ -510,7 +510,10 @@ export const useData = create<DataState>()((set, get) => {
       }
       const noQty = lines.find((l) => !Number.isInteger(l.qty) || l.qty < 1)
       if (noQty) return { ok: false, error: `${skuLabel(noQty.skuId)} needs a quantity of at least 1.` }
-      const noPrice = lines.find((l) => l.priceTier === 'other' && !((l.unitPriceMYR ?? 0) > 0))
+      // RM 0 is allowed for "Other" — something given away (fourth revision).
+      const noPrice = lines.find(
+        (l) => l.priceTier === 'other' && !(typeof l.unitPriceMYR === 'number' && l.unitPriceMYR >= 0),
+      )
       if (noPrice) return { ok: false, error: `Type what ${skuLabel(noPrice.skuId)} went for.` }
 
       const first = before[0]

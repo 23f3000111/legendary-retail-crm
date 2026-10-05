@@ -520,9 +520,10 @@ export interface StockRow {
   collection: string
   variant: Variant
   /**
-   * False until the store has filed its first count. Before that nothing is
-   * known about the shelf, and "0 on hand" would raise a low-stock alert on
-   * every product of every store the day the system starts.
+   * False until this product has been counted at this store. Before that
+   * nothing is known about it, and "0 on hand" would raise a low-stock alert
+   * on every product of every store the day the system starts — and on every
+   * product added to the range since, at every store already trading.
    */
   counted: boolean
   onHand: number
@@ -570,11 +571,12 @@ export const selectStock = (data: CrmData, locationId: string, asOf?: DateStr): 
       0,
     )
 
-  // Testers are ordered but never counted on a shelf (Revision 2), so they are
+  // Testers and vials are ordered but never counted on a shelf, so they are
   // not part of stock on hand.
-  const counted = Boolean(latest && latest.stockCount.length > 0)
   return countedSkus.map((s) => {
-    const onHand = latest?.stockCount.find((m) => m.skuId === s.id)?.counted ?? 0
+    const count = latest?.stockCount.find((m) => m.skuId === s.id)
+    const counted = Boolean(count)
+    const onHand = count?.counted ?? 0
     const velocity = soldOf(s.id) / periods
     const daysCover = velocity > 0 ? onHand / velocity : null
     const status: StockRow['status'] = !counted

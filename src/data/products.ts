@@ -14,12 +14,16 @@
  *
  * ── What is sold, what is counted, what is ordered ──────────────────────────
  *
- *   retail / set   sold, counted, ordered
- *   tester         ordered only — not sold, and not part of the nightly count
+ *   retail / set / travel   sold, counted, ordered
+ *   vial                    sold and ordered — not part of the nightly count
+ *   tester                  ordered only — not sold, and not counted
  *
- * Testers and travel sizes came out of the stock count in Revision 2, and the
- * vials Revision 2 added have since been taken out again at the client's
- * request.
+ * Vials were in Revision 2 as counted-but-never-sold, then taken out at the
+ * client's request. The client's fourth revision (October) brings the 3ml vial
+ * back "for sales and PO": it is sold and ordered, and — like testers — kept
+ * out of the nightly count, which is long enough already. The client gave no
+ * price for a vial, so it is rung up at "Other", where the promoter types what
+ * it went for (RM 0 included, for one given away).
  *
  * There is deliberately no cost price anywhere. The client was explicit that
  * only revenue is recorded (Q58, Q65); the one margin figure in the system sits
@@ -28,12 +32,13 @@
 
 export type CollectionId = 'signature' | 'nyonya' | 'three-wishes' | 'spirit'
 
-export type Variant = 'retail' | 'set' | 'travel' | 'tester'
+export type Variant = 'retail' | 'set' | 'travel' | 'vial' | 'tester'
 
 export const VARIANT_LABEL: Record<Variant, string> = {
   retail: 'Bottle',
   set: 'Set',
   travel: 'Travel kit',
+  vial: 'Vial',
   tester: 'Tester',
 }
 
@@ -107,6 +112,8 @@ export const products: Product[] = [
   { id: 'nyonya-aromatic', name: 'Nyonya Aromatic', collection: 'Nyonya', collectionId: 'nyonya', family: 'Spicy Floral', audience: 'Unisex' },
   { id: 'kebaya-blooms', name: 'Kebaya Blooms', collection: 'Nyonya', collectionId: 'nyonya', family: 'Floral', audience: 'For Her' },
   { id: 'ondeh-delights', name: 'Ondeh Delights', collection: 'Nyonya', collectionId: 'nyonya', family: 'Green Gourmand', audience: 'Unisex' },
+  // The collection's travel kit (fourth revision).
+  { id: 'nyonya', name: 'Nyonya', collection: 'Nyonya', collectionId: 'nyonya', family: 'Gift set', audience: 'Unisex' },
 
   // Spirit
   { id: 'life', name: 'Life', collection: 'Spirit', collectionId: 'spirit', family: 'Fresh Citrus', audience: 'Unisex' },
@@ -125,7 +132,7 @@ export const products: Product[] = [
   { id: 'wish-3', name: 'Wish 3', collection: '3 Wishes', collectionId: 'three-wishes', family: 'Musk', audience: 'Unisex' },
 ]
 
-/** The sixteen sellable lines, exactly as the client's price list has them. */
+/** The sellable lines, exactly as the client's price lists have them. */
 interface SellableSeed {
   productId: string
   size: string
@@ -135,13 +142,21 @@ interface SellableSeed {
   offer?: number
   popularity: number
   bestseller?: boolean
+  /** Where the usual `product-variant` id is taken, or must not change. */
+  id?: string
+  /** Where the usual code would clash with another line's. */
+  code?: string
 }
 
 const sellableSeeds: SellableSeed[] = [
   { productId: 'orchid', size: '30ml', variant: 'retail', retail: 238, promotion: 188, popularity: 15, bestseller: true },
   { productId: 'violet', size: '30ml', variant: 'retail', retail: 238, promotion: 188, popularity: 9 },
   { productId: 'mahsuri', size: '30ml', variant: 'retail', retail: 238, promotion: 188, popularity: 13, bestseller: true },
-  { productId: 'spirit-1', size: 'Set', variant: 'set', retail: 238, promotion: 188, popularity: 6 },
+  // Fourth revision: the Spirit 1 set already on sale is the old one, and a
+  // new one comes alongside it. No price was given for the new set, so it is
+  // the old one's until the client says otherwise.
+  { productId: 'spirit-1', size: 'Set (old)', variant: 'set', retail: 238, promotion: 188, popularity: 6 },
+  { productId: 'spirit-1', size: 'Set (new)', variant: 'set', retail: 238, promotion: 188, popularity: 3, id: 'spirit-1-set-new', code: 'LGD-SPI1-SN' },
   { productId: 'spirit-2', size: 'Set', variant: 'set', retail: 238, promotion: 188, popularity: 5 },
   { productId: 'life', size: '50ml', variant: 'retail', retail: 238, promotion: 188, popularity: 7 },
   { productId: 'passion', size: '50ml', variant: 'retail', retail: 238, promotion: 188, popularity: 7 },
@@ -150,23 +165,46 @@ const sellableSeeds: SellableSeed[] = [
   { productId: 'kebaya-blooms', size: '30ml', variant: 'retail', retail: 238, promotion: 188, popularity: 11, bestseller: true },
   { productId: 'ondeh-delights', size: '30ml', variant: 'retail', retail: 238, promotion: 188, popularity: 8 },
   { productId: 'man', size: '50ml', variant: 'retail', retail: 238, promotion: 188, popularity: 12, bestseller: true },
+  // Fourth revision: on sale at last, at the same two prices as the rest.
+  { productId: 'love', size: '50ml', variant: 'retail', retail: 238, promotion: 188, popularity: 4 },
+  { productId: 'hope', size: '50ml', variant: 'retail', retail: 238, promotion: 188, popularity: 4 },
+  { productId: 'confidence', size: '50ml', variant: 'retail', retail: 238, promotion: 188, popularity: 4 },
   { productId: 'three-wishes', size: 'Set', variant: 'set', retail: 238, promotion: 188, popularity: 9, bestseller: true },
   // Added in the client's third revision, with a promotional price only. The
   // retail price is set to the same figure until the client gives one.
   { productId: 'three-wishes', size: 'Travel Kit', variant: 'travel', retail: 68, promotion: 68, popularity: 4 },
-  { productId: 'spirit-2', size: 'Travel Kit', variant: 'travel', retail: 68, promotion: 68, popularity: 3 },
+  // The fourth revision corrects this one: it is Spirit 1's travel kit, not
+  // Spirit 2's. The id stays as it was, because every count, order and sale
+  // since 29 September is filed under it — moving the product is enough to
+  // put all of them under Spirit 1.
+  { productId: 'spirit-1', size: 'Travel Kit', variant: 'travel', retail: 68, promotion: 68, popularity: 3, id: 'spirit-2-travel' },
+  // Fourth revision. No price was given; it is the other two kits' RM 68 until
+  // the client says otherwise.
+  { productId: 'nyonya', size: 'Travel Kit', variant: 'travel', retail: 68, promotion: 68, popularity: 3 },
   { productId: 'wish-1', size: 'Set', variant: 'set', retail: 128, promotion: 88, offer: 10, popularity: 6 },
   { productId: 'wish-2', size: 'Set', variant: 'set', retail: 128, promotion: 88, offer: 10, popularity: 5 },
   { productId: 'wish-3', size: 'Set', variant: 'set', retail: 128, promotion: 88, offer: 10, popularity: 5 },
 ]
 
 /**
+ * The 3ml vial, one per fragrance, exactly as the fourth revision lists them.
+ *
+ * Sold and ordered, not counted on the shelf. With no list price they offer
+ * only "Other" at the counter: the promoter types what it went for.
+ */
+const vialProducts = [
+  'orchid', 'violet', 'mahsuri', 'man',
+  'nyonya-aromatic', 'kebaya-blooms', 'ondeh-delights',
+  'dream', 'passion', 'life', 'love', 'hope', 'confidence',
+  'wish-1', 'wish-2', 'wish-3',
+]
+
+/**
  * The tester list, exactly as Revision 2 gives it.
  *
  * Testers are ordered from HQ and are deliberately **not** part of the nightly
- * stock count. Note that Love, Hope and Confidence appear here and nowhere in
- * the price list — they have testers but nothing sellable, which is worth
- * confirming with the client.
+ * stock count. Love, Hope and Confidence had testers here and nothing on sale
+ * until the fourth revision added their 50ml bottles.
  */
 const testerSeeds: [productId: string, size: string][] = [
   ['orchid', '30ml'],
@@ -202,6 +240,7 @@ const VARIANT_CODE: Record<Variant, string> = {
   retail: 'R',
   set: 'S',
   travel: 'T',
+  vial: 'V',
   tester: 'X',
 }
 
@@ -221,15 +260,11 @@ const codeFor = (productId: string, variant: Variant, size: string) => {
 }
 
 const sellable: Sku[] = sellableSeeds.map((s) => ({
-  id: `${s.productId}-${s.variant}`,
-  code: codeFor(s.productId, s.variant, s.size),
+  id: s.id ?? `${s.productId}-${s.variant}`,
+  code: s.code ?? codeFor(s.productId, s.variant, s.size),
   productId: s.productId,
-  label:
-    s.variant === 'set'
-      ? `${productName(s.productId)} · Set`
-      : s.variant === 'travel'
-        ? `${productName(s.productId)} · Travel Kit`
-        : `${productName(s.productId)} · ${s.size}`,
+  // "Spirit 1 · Set (old)", "Nyonya · Travel Kit", "Orchid · 30ml".
+  label: `${productName(s.productId)} · ${s.size}`,
   variant: s.variant,
   size: s.size,
   retailPriceMYR: s.retail,
@@ -241,6 +276,24 @@ const sellable: Sku[] = sellableSeeds.map((s) => ({
   bestseller: Boolean(s.bestseller),
   sellable: true,
   counted: true,
+}))
+
+const vials: Sku[] = vialProducts.map((productId) => ({
+  id: `${productId}-vial`,
+  code: codeFor(productId, 'vial', '3ml'),
+  productId,
+  label: `${productName(productId)} · 3ml Vial`,
+  variant: 'vial' as const,
+  size: '3ml',
+  // No list price: rung up at "Other".
+  retailPriceMYR: 0,
+  promotionPriceMYR: 0,
+  reorderPoint: 0,
+  caseSize: 12,
+  popularity: 0,
+  bestseller: false,
+  sellable: true,
+  counted: false,
 }))
 
 const testers: Sku[] = testerSeeds.map(([productId, size]) => ({
@@ -261,7 +314,7 @@ const testers: Sku[] = testerSeeds.map(([productId, size]) => ({
   counted: false,
 }))
 
-export const skus: Sku[] = [...sellable, ...testers]
+export const skus: Sku[] = [...sellable, ...vials, ...testers]
 
 export const collections: { id: CollectionId; name: string; slot: 1 | 2 | 3 | 4 }[] = [
   { id: 'signature', name: 'Signature', slot: 1 },
@@ -286,6 +339,18 @@ export const countedSkus = skus.filter((s) => s.counted)
 export const orderableSkus = skus
 
 export const testerSkus = skus.filter((s) => s.variant === 'tester')
+
+export const vialSkus = skus.filter((s) => s.variant === 'vial')
+
+/** An item with no list price — a vial — is only ever rung up at a typed price. */
+export const hasListPrice = (sku: Sku | undefined): boolean =>
+  Boolean(sku && (sku.retailPriceMYR > 0 || sku.promotionPriceMYR > 0))
+
+/**
+ * What the counter calls one variant of a product, next to its name:
+ * "30ml", "Set", "Set (old)", "Travel Kit", "3ml Vial".
+ */
+export const variantName = (sku: Sku): string => (sku.variant === 'vial' ? '3ml Vial' : sku.size)
 
 export const collectionOfSku = (skuId: string): CollectionId | undefined =>
   productById(skuById(skuId)?.productId ?? '')?.collectionId
@@ -324,6 +389,7 @@ export const priceAtTier = (sku: Sku | undefined, tier: PriceTier): number => {
  */
 export const tiersFor = (sku: Sku | undefined, basis: PriceBasis = 'promotion'): PriceTier[] => {
   if (!sku) return []
+  if (!hasListPrice(sku)) return ['other']
   const usual: PriceTier[] = basis === 'retail' ? ['retail', 'promotion'] : ['promotion', 'retail']
   return [...(sku.offerMYR ? [...usual, 'offer' as const] : usual), 'other']
 }

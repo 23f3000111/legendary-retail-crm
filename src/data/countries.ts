@@ -261,6 +261,17 @@ const toCountry = ([code, name, bloc]: Row, rank?: number): Country => ({
 /** The client's twenty, in their order. The counter's keypad starts here. */
 export const topCountries: Country[] = TOP.map((r, i) => toCountry(r, i + 1))
 
+/**
+ * The five one-tap buttons on Record a sale, the same at every outlet.
+ *
+ * Each outlet used to have its own five, guessed from where its customers
+ * were expected to come from — Langkawi's started with the United Kingdom.
+ * The client's fourth revision asks for every outlet to show these, so a
+ * promoter rotated between counters always finds the same button in the same
+ * place. Everything else is one search away.
+ */
+export const QUICK_COUNTRIES = ['CN', 'MY', 'ID', 'SG', 'IN']
+
 /** All 200, in the client's document order: the top twenty, then the rest. */
 export const countries: Country[] = [...topCountries, ...REST.map((r) => toCountry(r))]
 
