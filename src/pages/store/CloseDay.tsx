@@ -1088,9 +1088,7 @@ function ClosingForm({
                         ? row.counted
                           ? `${num(row.onHand)} on hand · reorder at ${num(row.reorderPoint)}`
                           : `No count filed yet · reorder at ${num(row.reorderPoint)}`
-                        : sku?.variant === 'vial'
-                          ? 'Vial — not counted on the shelf'
-                          : 'Tester — not counted on the shelf'}
+                        : 'Tester — not counted on the shelf'}
                     </p>
                   </div>
                   {row && row.status !== 'ok' && (
@@ -1129,7 +1127,10 @@ function ClosingForm({
             })}
 
             {orderRows.length > 0 && (
-              <Field label="Note for Kelly (optional)" hint="Anything she should know before deciding.">
+              <Field
+                label="Note for Kelly (optional)"
+                hint="Anything she should know before deciding. Press Enter for a new line."
+              >
                 <TextArea
                   value={poNotes}
                   onChange={(e) => setPoNotes(e.target.value)}

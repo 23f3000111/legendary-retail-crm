@@ -85,9 +85,16 @@ describe('a sale, changed at the counter', () => {
     expect(lastAction().detail).toBe('Took off 1 × Man · 50ml')
   })
 
+  it('rings a vial up free, and counts it as a unit sold at RM 0', () => {
+    atKlia()
+    const [line] = ringUp([{ skuId: 'orchid-vial', qty: 2, priceTier: 'foc', unitPriceMYR: 0 }])
+    expect(line).toMatchObject({ priceTier: 'foc', unitPriceMYR: 0, qty: 2 })
+    expect(lastAction().summary).toMatch(/free of charge/)
+  })
+
   it('takes RM 0 as an "Other" price — something given away — but not a missing one', () => {
     atKlia()
-    const [line] = ringUp([{ skuId: 'orchid-vial', qty: 1, priceTier: 'other', unitPriceMYR: 0 }])
+    const [line] = ringUp([{ skuId: 'orchid-retail', qty: 1, priceTier: 'other', unitPriceMYR: 0 }])
     expect(line.unitPriceMYR).toBe(0)
 
     const free = useData.getState().updateSale({

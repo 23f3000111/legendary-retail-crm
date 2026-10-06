@@ -80,8 +80,8 @@ export function Catalogue() {
             <p className="readout text-[10.5px] text-ink-3">was {rm(s.retailPriceMYR)}</p>
           </div>
         ) : (
-          // A vial: no list price was given, so the counter types what it went for.
-          <span className="text-[12px] text-ink-3">typed at the counter</span>
+          // A vial: always given free (client, 6 October).
+          <span className="text-[12px] font-semibold text-ink-2">FOC</span>
         ),
     },
     {

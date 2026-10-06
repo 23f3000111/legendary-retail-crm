@@ -191,7 +191,7 @@ export function Closings() {
                       <p className="text-[13px] text-ink">
                         {locationById(c.locationId)?.shortName} · {formatDateShort(c.period)}
                       </p>
-                      <p className="mt-0.5 text-[12px] text-ink-2">“{asked.reason}”</p>
+                      <p className="mt-0.5 whitespace-pre-line text-[12px] text-ink-2">“{asked.reason}”</p>
                       <p className="mt-0.5 text-[11px] text-ink-3">
                         {asked.requestedBy} · {formatTimestamp(asked.requestedAt)} · filed by {c.submittedBy}
                       </p>

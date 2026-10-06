@@ -7,7 +7,6 @@ import { Icon } from './ui/icons'
 import { CountryPicker } from './CountryPicker'
 import { countryByCode, MALAYSIA_SEGMENT_LABEL, type MalaysiaSegment } from '../data/countries'
 import {
-  hasListPrice,
   lineUnitPrice,
   priceAtTier,
   products,
@@ -197,12 +196,12 @@ export function SaleEditor({
                     <Select
                       aria-label="Item"
                       value={r.skuId}
-                      // A different item starts at the store's usual price — or, for
-                      // one with no list price (a vial), at a price to type.
+                      // A different item starts at its first price: the store's
+                      // usual one, or FOC for a vial.
                       onChange={(e) =>
                         update(r.key, {
                           skuId: e.target.value,
-                          tier: hasListPrice(skuById(e.target.value)) ? basis : 'other',
+                          tier: tiersFor(skuById(e.target.value), basis)[0] ?? basis,
                           other: '',
                         })
                       }
@@ -233,7 +232,8 @@ export function SaleEditor({
                 {sku && (
                   <>
                     <div className="mt-2.5 flex flex-wrap gap-1.5">
-                      {tiersFor(sku, basis).map((t) => (
+                      {/* A line rung up at a price the item no longer offers keeps it as a choice. */}
+                      {[...tiersFor(sku, basis), ...(tiersFor(sku, basis).includes(r.tier) ? [] : [r.tier])].map((t) => (
                         <button
                           key={t}
                           onClick={() => update(r.key, { tier: t })}

@@ -78,7 +78,7 @@ export function PoTimeline({ po }: { po: PurchaseOrder }) {
                   </p>
                   {event.note && (
                     <p
-                      className={`mt-1.5 rounded-md border px-2.5 py-1.5 text-[11.5px] leading-relaxed ${
+                      className={`mt-1.5 whitespace-pre-line rounded-md border px-2.5 py-1.5 text-[11.5px] leading-relaxed ${
                         isRejection
                           ? 'border-critical/25 bg-critical/8 text-ink'
                           : 'border-line bg-sunken text-ink-2'

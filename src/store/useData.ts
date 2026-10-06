@@ -455,7 +455,11 @@ export const useData = create<DataState>()((set, get) => {
       const what =
         stamped.length === 1
           ? `${stamped[0].qty} × ${skuLabel(stamped[0].skuId)}${
-              stamped[0].priceTier ? ` at the ${TIER_LABEL[stamped[0].priceTier].toLowerCase()} price` : ''
+              stamped[0].priceTier === 'foc'
+                ? ', free of charge'
+                : stamped[0].priceTier
+                  ? ` at the ${TIER_LABEL[stamped[0].priceTier].toLowerCase()} price`
+                  : ''
             }`
           : `${units} units across ${distinct} ${distinct === 1 ? 'product' : 'products'}`
       get().record({

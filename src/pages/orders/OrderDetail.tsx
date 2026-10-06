@@ -200,7 +200,7 @@ export function OrderDetail() {
               <PanelHeader eyebrow="Note from the store" title="Why they asked" />
               <Rule />
               <PanelBody>
-                <p className="text-[13px] leading-relaxed text-ink-2">{po.notes}</p>
+                <p className="whitespace-pre-line text-[13px] leading-relaxed text-ink-2">{po.notes}</p>
               </PanelBody>
             </Panel>
           )}

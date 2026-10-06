@@ -15,15 +15,14 @@
  * ── What is sold, what is counted, what is ordered ──────────────────────────
  *
  *   retail / set / travel   sold, counted, ordered
- *   vial                    sold and ordered — not part of the nightly count
+ *   vial                    given free (FOC), counted, ordered
  *   tester                  ordered only — not sold, and not counted
  *
  * Vials were in Revision 2 as counted-but-never-sold, then taken out at the
- * client's request. The client's fourth revision (October) brings the 3ml vial
- * back "for sales and PO": it is sold and ordered, and — like testers — kept
- * out of the nightly count, which is long enough already. The client gave no
- * price for a vial, so it is rung up at "Other", where the promoter types what
- * it went for (RM 0 included, for one given away).
+ * client's request. The client's fourth revision (October) brought the 3ml
+ * vial back for sales and orders, and the follow-up of 6 October settled the
+ * rest: every vial goes free of charge — one tap, "FOC", RM 0, nothing to
+ * type — and vials are counted on the shelf every night like everything else.
  *
  * There is deliberately no cost price anywhere. The client was explicit that
  * only revenue is recorded (Q58, Q65); the one margin figure in the system sits
@@ -54,7 +53,7 @@ export type PriceBasis = 'retail' | 'promotion'
  * one was charged is the only way the revenue can be right, and it is also the
  * only way to answer "how much did we sell at full price?"
  */
-export type PriceTier = 'retail' | 'promotion' | 'offer' | 'other'
+export type PriceTier = 'retail' | 'promotion' | 'offer' | 'other' | 'foc'
 
 export const TIER_LABEL: Record<PriceTier, string> = {
   retail: 'Retail',
@@ -63,6 +62,8 @@ export const TIER_LABEL: Record<PriceTier, string> = {
   // "All items add an 'others' section for them to fill up other amount" —
   // the counter types what was actually charged.
   other: 'Other',
+  // Free of charge: the only price a vial has (client, 6 October).
+  foc: 'FOC',
 }
 
 export interface Product {
@@ -189,8 +190,8 @@ const sellableSeeds: SellableSeed[] = [
 /**
  * The 3ml vial, one per fragrance, exactly as the fourth revision lists them.
  *
- * Sold and ordered, not counted on the shelf. With no list price they offer
- * only "Other" at the counter: the promoter types what it went for.
+ * Given free of charge — rung up at "FOC", RM 0, with nothing to type —
+ * counted on the shelf every night, and ordered like anything else.
  */
 const vialProducts = [
   'orchid', 'violet', 'mahsuri', 'man',
@@ -285,15 +286,18 @@ const vials: Sku[] = vialProducts.map((productId) => ({
   label: `${productName(productId)} · 3ml Vial`,
   variant: 'vial' as const,
   size: '3ml',
-  // No list price: rung up at "Other".
+  // Free of charge, always: rung up at "FOC".
   retailPriceMYR: 0,
   promotionPriceMYR: 0,
+  // No reorder level was given. At 0 the store is told only when one runs
+  // out entirely; the client can give a real figure later.
   reorderPoint: 0,
   caseSize: 12,
   popularity: 0,
   bestseller: false,
   sellable: true,
-  counted: false,
+  // On the nightly count since 6 October.
+  counted: true,
 }))
 
 const testers: Sku[] = testerSeeds.map(([productId, size]) => ({
@@ -346,6 +350,9 @@ export const vialSkus = skus.filter((s) => s.variant === 'vial')
 export const hasListPrice = (sku: Sku | undefined): boolean =>
   Boolean(sku && (sku.retailPriceMYR > 0 || sku.promotionPriceMYR > 0))
 
+/** Given away, never sold: every vial (client, 6 October). */
+export const isFoc = (sku: Sku | undefined): boolean => sku?.variant === 'vial'
+
 /**
  * What the counter calls one variant of a product, next to its name:
  * "30ml", "Set", "Set (old)", "Travel Kit", "3ml Vial".
@@ -376,7 +383,7 @@ export const priceAtTier = (sku: Sku | undefined, tier: PriceTier): number => {
   if (!sku) return 0
   if (tier === 'retail') return sku.retailPriceMYR
   if (tier === 'offer') return sku.offerMYR ?? sku.promotionPriceMYR
-  if (tier === 'other') return 0
+  if (tier === 'other' || tier === 'foc') return 0
   return sku.promotionPriceMYR
 }
 
@@ -389,6 +396,8 @@ export const priceAtTier = (sku: Sku | undefined, tier: PriceTier): number => {
  */
 export const tiersFor = (sku: Sku | undefined, basis: PriceBasis = 'promotion'): PriceTier[] => {
   if (!sku) return []
+  // A vial is free: one button, nothing to type.
+  if (isFoc(sku)) return ['foc']
   if (!hasListPrice(sku)) return ['other']
   const usual: PriceTier[] = basis === 'retail' ? ['retail', 'promotion'] : ['promotion', 'retail']
   return [...(sku.offerMYR ? [...usual, 'offer' as const] : usual), 'other']

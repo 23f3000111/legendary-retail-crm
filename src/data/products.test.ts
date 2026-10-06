@@ -12,6 +12,7 @@ import {
   skus,
   testerSkus,
   tiersFor,
+  TIER_LABEL,
   variantName,
   vialSkus,
 } from './products'
@@ -154,13 +155,20 @@ describe('the price the counter chooses', () => {
     expect(sellableSkus.some((s) => s.productId === 'spirit-2' && s.variant === 'travel')).toBe(false)
   })
 
-  it('rings a vial up at a typed price only, RM 0 included', () => {
-    const vial = skuById('orchid-vial')!
-    expect(hasListPrice(vial)).toBe(false)
-    expect(tiersFor(vial, 'promotion')).toEqual(['other'])
-    expect(tiersFor(vial, 'retail')).toEqual(['other'])
-    expect(lineUnitPrice({ skuId: 'orchid-vial', priceTier: 'other', unitPriceMYR: 0 }, 'promotion')).toBe(0)
-    expect(lineUnitPrice({ skuId: 'orchid-vial', priceTier: 'other', unitPriceMYR: 15 }, 'promotion')).toBe(15)
+  it('gives every vial away: one FOC button at RM 0, nothing to type', () => {
+    for (const vial of vialSkus) {
+      expect(hasListPrice(vial), vial.label).toBe(false)
+      expect(tiersFor(vial, 'promotion'), vial.label).toEqual(['foc'])
+      expect(tiersFor(vial, 'retail'), vial.label).toEqual(['foc'])
+      expect(priceAtTier(vial, 'foc'), vial.label).toBe(0)
+    }
+    expect(TIER_LABEL.foc).toBe('FOC')
+    expect(lineUnitPrice({ skuId: 'orchid-vial', priceTier: 'foc', unitPriceMYR: 0 }, 'promotion')).toBe(0)
+    expect(lineUnitPrice({ skuId: 'orchid-vial', priceTier: 'foc' }, 'retail')).toBe(0)
+    // Nothing else is ever free.
+    for (const s of sellableSkus.filter((k) => k.variant !== 'vial')) {
+      expect(tiersFor(s), s.label).not.toContain('foc')
+    }
   })
 
   it('prices each tier off the list', () => {
@@ -205,7 +213,7 @@ describe('what is counted, and what is only ordered', () => {
     expect(testerSkus).toHaveLength(25)
   })
 
-  it('has the 3ml vial for the sixteen fragrances the fourth revision lists, sold and ordered but not counted', () => {
+  it('has the 3ml vial for the sixteen fragrances the fourth revision lists, counted on the shelf', () => {
     expect(vialSkus.map((s) => s.productId)).toEqual([
       'orchid', 'violet', 'mahsuri', 'man',
       'nyonya-aromatic', 'kebaya-blooms', 'ondeh-delights',
@@ -215,14 +223,15 @@ describe('what is counted, and what is only ordered', () => {
     for (const v of vialSkus) {
       expect(v.label, v.id).toMatch(/· 3ml Vial$/)
       expect(v.sellable, v.label).toBe(true)
-      expect(v.counted, v.label).toBe(false)
+      expect(v.counted, v.label).toBe(true)
     }
     expect(skuById('wish-2-vial')?.label).toBe('Wish 2 · 3ml Vial')
   })
 
-  it('counts every priced line on the shelf, travel kits included — not vials or testers', () => {
-    expect(countedSkus).toHaveLength(23)
-    expect(countedSkus.every((s) => s.sellable && hasListPrice(s))).toBe(true)
+  it('counts every sellable line on the shelf — travel kits and vials included, testers not', () => {
+    expect(countedSkus).toHaveLength(39)
+    expect(countedSkus.every((s) => s.sellable)).toBe(true)
+    expect(countedSkus.filter((s) => s.variant === 'vial')).toHaveLength(16)
   })
 
   it('has no travel size or refill left — Revision 2 removed them', () => {

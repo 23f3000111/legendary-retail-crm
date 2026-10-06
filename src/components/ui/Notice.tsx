@@ -23,7 +23,8 @@ export function Notice({
       className={`flex items-start gap-2.5 rounded-xl border px-3.5 py-3 text-[12.5px] leading-relaxed text-ink ${look.box} ${className}`}
     >
       <Icon name={icon} className={`mt-0.5 h-4 w-4 shrink-0 ${look.icon}`} />
-      <div className="min-w-0 flex-1">{children}</div>
+      {/* A reason typed over several lines keeps its lines. */}
+      <div className="min-w-0 flex-1 whitespace-pre-line">{children}</div>
     </div>
   )
 }

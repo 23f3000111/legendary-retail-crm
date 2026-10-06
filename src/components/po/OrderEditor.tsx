@@ -173,7 +173,10 @@ export function OrderEditor({
           {urgent ? 'Marked urgent — tap to make it standard' : 'Standard — tap to mark it urgent'}
         </button>
 
-        <Field label={forApprover ? 'Note (optional)' : 'Note for Kelly (optional)'}>
+        <Field
+          label={forApprover ? 'Note (optional)' : 'Note for Kelly (optional)'}
+          hint="Press Enter for a new line."
+        >
           <TextArea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Tour group booked in on Saturday." />
         </Field>
 
