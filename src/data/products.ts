@@ -182,9 +182,11 @@ const sellableSeeds: SellableSeed[] = [
   // Fourth revision. No price was given; it is the other two kits' RM 68 until
   // the client says otherwise.
   { productId: 'nyonya', size: 'Travel Kit', variant: 'travel', retail: 68, promotion: 68, popularity: 3 },
-  { productId: 'wish-1', size: 'Set', variant: 'set', retail: 128, promotion: 88, offer: 10, popularity: 6 },
-  { productId: 'wish-2', size: 'Set', variant: 'set', retail: 128, promotion: 88, offer: 10, popularity: 5 },
-  { productId: 'wish-3', size: 'Set', variant: 'set', retail: 128, promotion: 88, offer: 10, popularity: 5 },
+  // Single 15ml bottles, not sets (client, 6 October). The ids stay as they
+  // were, so every sale, count and order already filed stays with them.
+  { productId: 'wish-1', size: '15ml', variant: 'retail', retail: 128, promotion: 88, offer: 10, popularity: 6, id: 'wish-1-set' },
+  { productId: 'wish-2', size: '15ml', variant: 'retail', retail: 128, promotion: 88, offer: 10, popularity: 5, id: 'wish-2-set' },
+  { productId: 'wish-3', size: '15ml', variant: 'retail', retail: 128, promotion: 88, offer: 10, popularity: 5, id: 'wish-3-set' },
 ]
 
 /**

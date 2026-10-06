@@ -63,9 +63,9 @@ describe('the price list', () => {
   it('prices the three Wishes at 128 and 88, with the offer', () => {
     const wishes = sellableSkus.filter((s) => s.retailPriceMYR === 128)
     expect(wishes.map((s) => s.label).sort()).toEqual([
-      'Wish 1 · Set',
-      'Wish 2 · Set',
-      'Wish 3 · Set',
+      'Wish 1 · 15ml',
+      'Wish 2 · 15ml',
+      'Wish 3 · 15ml',
     ])
     expect(wishes.every((s) => s.promotionPriceMYR === 88)).toBe(true)
     expect(wishes.every((s) => s.offerMYR === 10)).toBe(true)
@@ -248,6 +248,16 @@ describe('what is counted, and what is only ordered', () => {
 
   it('labels a set as a set and a bottle by its size', () => {
     expect(skuById('orchid-retail')?.label).toBe('Orchid · 30ml')
-    expect(skuById('wish-1-set')?.label).toBe('Wish 1 · Set')
+    expect(skuById('three-wishes-set')?.label).toBe('3 Wishes · Set')
+  })
+
+  it('sells Wish 1, 2 and 3 as single 15ml bottles, keeping the ids they were filed under', () => {
+    for (const n of [1, 2, 3]) {
+      const wish = skuById(`wish-${n}-set`)!
+      expect(wish.label).toBe(`Wish ${n} · 15ml`)
+      expect(wish.variant).toBe('retail')
+      expect(variantName(wish)).toBe('15ml')
+      expect(wish.counted).toBe(true)
+    }
   })
 })
