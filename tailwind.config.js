@@ -67,6 +67,8 @@ export default {
         'grad-cyan': 'linear-gradient(135deg, #0E7490 0%, #06B6D4 55%, #22D3EE 100%)',
         'grad-teal': 'linear-gradient(135deg, #047857 0%, #10B981 55%, #34D399 100%)',
         'grad-command': 'linear-gradient(100deg, #3730A3 0%, #4F46E5 42%, #7C3AED 100%)',
+        // The brand mark: the perfume bottle sits on this (and the tab icons use it).
+        'grad-mark': 'linear-gradient(135deg, #4F46E5 0%, #6366F1 55%, #22D3EE 100%)',
         'grad-rail': 'linear-gradient(180deg, #FFFFFF 0%, #F7F9FD 100%)',
       },
       boxShadow: {

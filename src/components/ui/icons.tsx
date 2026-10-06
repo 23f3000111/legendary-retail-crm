@@ -221,31 +221,3 @@ export function Icon({
     </svg>
   )
 }
-
-/** The house mark: an L on a gradient chip, with a scanning highlight. */
-export function Wordmark({ className = 'h-8 w-8' }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 40 40" className={className} aria-hidden="true">
-      <defs>
-        <linearGradient id="lgd-mark" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#4F46E5" />
-          <stop offset="55%" stopColor="#6366F1" />
-          <stop offset="100%" stopColor="#22D3EE" />
-        </linearGradient>
-      </defs>
-      <rect x="0" y="0" width="40" height="40" rx="11" fill="url(#lgd-mark)" />
-      <path d="M0 26 L40 6 L40 14 L0 34 Z" fill="rgba(255,255,255,0.14)" />
-      <text
-        x="20"
-        y="27"
-        textAnchor="middle"
-        fontFamily="Sora, Inter, sans-serif"
-        fontSize="21"
-        fontWeight="700"
-        fill="#FFFFFF"
-      >
-        L
-      </text>
-    </svg>
-  )
-}

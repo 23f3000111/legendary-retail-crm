@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Icon, Wordmark } from '../ui/icons'
+import { Icon } from '../ui/icons'
+import { BrandLogo, BrandMark } from '../ui/Brand'
 import { Badge, LiveDot } from '../ui/Badge'
 import { NAV } from './nav'
 import { useAuth, useCan, useCurrentUser } from '../../store/useAuth'
@@ -87,12 +88,10 @@ export function AppShell() {
 
           <div className="relative flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 sm:px-6">
             <div className="flex min-w-0 items-center gap-3">
-              <Wordmark className="h-9 w-9 shrink-0" />
+              <BrandMark className="h-9 w-9" />
               <div className="min-w-0 leading-tight">
-                <p className="font-display text-[15px] font-semibold tracking-tight text-white">
-                  Legendary
-                </p>
-                <p className="text-[9.5px] uppercase tracking-luxe text-white/60">Retail CRM</p>
+                <BrandLogo className="w-[118px]" />
+                <p className="mt-1 text-[9.5px] uppercase tracking-luxe text-white/60">Retail CRM</p>
               </div>
             </div>
 
@@ -368,7 +367,10 @@ export function AppShell() {
           costs a line of content on every screen and covers the last row of
           whatever you are reading, so there it simply ends the page. */}
       <footer className="no-print z-30 flex flex-wrap items-center gap-x-4 gap-y-1 bg-grad-command px-4 py-2 text-[11px] text-white/80 sm:sticky sm:bottom-0 sm:px-6">
-        <span className="font-medium text-white">Legendary Retail CRM</span>
+        <span className="inline-flex items-center gap-1.5 font-medium text-white">
+          <BrandLogo className="w-[64px]" />
+          Retail CRM
+        </span>
         {isShared() ? (
           <span className="inline-flex items-center gap-1.5">
             <span

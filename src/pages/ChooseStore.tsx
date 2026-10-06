@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Wordmark, Icon } from '../components/ui/icons'
+import { Icon } from '../components/ui/icons'
+import { BrandMark } from '../components/ui/Brand'
 import { Button } from '../components/ui/Button'
 import { useAuth, useCurrentUser, useStoreChoices } from '../store/useAuth'
 import { locationById } from '../data/locations'
@@ -49,7 +50,7 @@ export function ChooseStore() {
         className="w-full max-w-[440px]"
       >
         <div className="mb-6 flex flex-col items-center text-center">
-          <Wordmark className="h-12 w-12" />
+          <BrandMark className="h-12 w-12" />
           <p className="mt-4 eyebrow">
             {user.name}
             {user.city ? ` · ${user.city}` : ''}

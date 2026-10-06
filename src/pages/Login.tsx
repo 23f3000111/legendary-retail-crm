@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Icon, Wordmark } from '../components/ui/icons'
+import { Icon } from '../components/ui/icons'
+import { BrandLogo, BrandMark } from '../components/ui/Brand'
 import { Button } from '../components/ui/Button'
 import { Field, TextInput } from '../components/ui/Field'
 import { useAuth } from '../store/useAuth'
@@ -156,9 +157,9 @@ export function Login() {
         className="w-full max-w-[400px]"
       >
         <div className="mb-7 flex flex-col items-center text-center">
-          <Wordmark className="h-14 w-14" />
-          <h1 className="mt-4 font-display text-[26px] font-bold leading-none tracking-tight text-ink">
-            Legendary
+          <BrandMark className="h-14 w-14" />
+          <h1 className="mt-4">
+            <BrandLogo tone="theme" className="w-[200px]" />
           </h1>
           <p className="mt-2 text-[10px] font-semibold uppercase tracking-luxe text-primary">
             Retail CRM
