@@ -197,13 +197,13 @@ try {
 
   // Dealers' and consignment partners' months, keyed in at head office
   // (client's fifth revision): Davy, Kelly, Chloe and Finance only.
-  const partnerDoc = (id) => [
+  const partnerDoc = (id, over = {}) => [
     {
       kind: 'partner_sales',
       id: `${id}::2026-09`,
       location_id: id,
       day: '2026-09-01',
-      doc: { locationId: id, month: '2026-09', revenueMYR: 1200.5, enteredBy: 'verify', enteredAt: 'x' },
+      doc: { locationId: id, month: '2026-09', revenueMYR: 1200.5, enteredBy: 'verify', enteredAt: 'x', ...over },
     },
   ]
   const finance = await session('siewfang')
@@ -214,6 +214,20 @@ try {
   const warehouse = await session('xianan')
   const keyedByWarehouse = await put(warehouse, partnerDoc('dlr-zapin'))
   check('nor can the warehouse', keyedByWarehouse.r.ok === false, keyedByWarehouse.r.error)
+  const forMainStore = await put(finance, partnerDoc('pavilion-5'))
+  check('a main store’s sales are never keyed in', forMainStore.r.ok === false, forMainStore.r.error)
+  const below = await put(finance, partnerDoc('dlr-zapin', { revenueMYR: -1 }))
+  check('nor a figure below 0', below.r.ok === false, below.r.error)
+  const claimed = await put(finance, partnerDoc('dlr-zapin', { enteredBy: 'Lim Davy' }))
+  const signed = await one(
+    `select doc->>'enteredBy' as entered_by from docs where kind = 'partner_sales' and id = 'dlr-zapin::2026-09'`,
+  )
+  const { name: financeName } = await one(`select doc->>'name' as name from people where username = 'siewfang'`)
+  check(
+    'a figure is signed by whoever sent it',
+    claimed.r.ok === true && signed?.entered_by === financeName,
+    signed?.entered_by ?? claimed.r.error,
+  )
 
   // Passwords.
   const weak = await one("select set_password($1, 'kim', 'legendary123') r", [imran])

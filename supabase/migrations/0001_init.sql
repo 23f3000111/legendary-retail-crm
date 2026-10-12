@@ -550,6 +550,40 @@ begin
   return null;
 end $$;
 
+-- A dealer's or consignment partner's month, keyed in at head office. Mirrors
+-- `partnerSalesRefusal` in src/lib/partner-sales.ts; keep the two in step.
+--
+-- Who may key in is `_may_write`'s question. This one is about the figure: a
+-- partner rather than a main store, a month that has begun, filed under its own
+-- partner and month, and 0 or more — however it was sent.
+create or replace function _partner_sales_refusal(d jsonb) returns text
+language plpgsql stable as $$
+declare
+  loc text := d->>'location_id';
+  m text := d->'doc'->>'month';
+begin
+  if loc is null or not exists (
+    select 1 from locations where id = loc and channel in ('dealer', 'consignment')
+  ) then
+    return 'Only dealers and consignment partners are keyed in here.';
+  end if;
+  if m is null or m !~ '^[0-9]{4}-(0[1-9]|1[0-2])$' then return 'Choose a month.'; end if;
+  if m > left(_today(), 7) then return 'That month has not started yet.'; end if;
+  if d->>'id' is distinct from loc || '::' || m
+     or d->>'day' is distinct from m || '-01'
+     or d->'doc'->>'locationId' is distinct from loc then
+    return 'That figure does not match its partner and month.';
+  end if;
+  -- Two steps: the cast is only safe once the figure is known to be a number.
+  if jsonb_typeof(d->'doc'->'revenueMYR') is distinct from 'number' then
+    return 'A figure must be 0 or more.';
+  end if;
+  if (d->'doc'->>'revenueMYR')::numeric < 0 then
+    return 'A figure must be 0 or more.';
+  end if;
+  return null;
+end $$;
+
 create or replace function put_docs(p_token text, p_docs jsonb) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
@@ -557,6 +591,7 @@ declare
   d jsonb;
   refused text;
   filed docs;
+  body jsonb;
 begin
   select * into s from _session(p_token);
   if s.person_id is null then return jsonb_build_object('ok', false, 'error', 'Sign in again.'); end if;
@@ -566,6 +601,9 @@ begin
     if refused is null and d->>'kind' = 'closing' then
       select * into filed from docs where kind = 'closing' and id = d->>'id';
       refused := _closing_refusal(s.role, filed, d->'doc');
+    end if;
+    if refused is null and d->>'kind' = 'partner_sales' then
+      refused := _partner_sales_refusal(d);
     end if;
     if refused is not null then
       return jsonb_build_object('ok', false, 'error', refused);
@@ -582,8 +620,13 @@ begin
                 s.person_id)
         on conflict do nothing;
     else
+      body := d->'doc';
+      if d->>'kind' = 'partner_sales' then
+        -- As with the log, who keyed a figure in is the session's to say.
+        body := body || jsonb_build_object('enteredBy', s.name, 'enteredAt', _now_text());
+      end if;
       insert into docs(kind, id, location_id, day, doc, updated_by, updated_at, deleted)
-        values (d->>'kind', d->>'id', d->>'location_id', d->>'day', d->'doc', s.person_id, now(), false)
+        values (d->>'kind', d->>'id', d->>'location_id', d->>'day', body, s.person_id, now(), false)
         on conflict (kind, id) do update
           set doc = excluded.doc, location_id = excluded.location_id, day = excluded.day,
               updated_by = excluded.updated_by, updated_at = now(), deleted = false;

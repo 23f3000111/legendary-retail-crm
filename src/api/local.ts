@@ -31,6 +31,7 @@ import { buildSeed, DEMO_TODAY } from '../data/seed'
 import { todayInMalaysia } from '../lib/dates'
 import { auditId, type AuditEntry } from '../lib/audit'
 import { closingWriteRefusal } from '../lib/editing'
+import { partnerSalesRefusal } from '../lib/partner-sales'
 import { newId } from '../lib/ids'
 import type { CrmData, DateStr } from '../data/types'
 import {
@@ -417,7 +418,9 @@ export class LocalBackend implements Backend {
         this.refuse(s, d.kind, d.locationId ?? undefined) ??
         (d.kind === 'closing'
           ? closingWriteRefusal(s.person.role, this.docs.get(docKey(d.kind, d.id)), d.doc, this.today)
-          : null)
+          : d.kind === 'partner_sales'
+            ? partnerSalesRefusal(d, this.today)
+            : null)
       if (refused) return { ok: false, error: refused }
       if (d.kind === 'audit') {
         // Append-only: a line that exists is never rewritten. And the actor is
@@ -437,6 +440,12 @@ export class LocalBackend implements Backend {
           },
           s.person.id,
         )
+        continue
+      }
+      if (d.kind === 'partner_sales') {
+        // As with the log, who keyed a figure in is the session's to say.
+        const doc = { ...(d.doc as object), enteredBy: s.person.name, enteredAt: new Date().toISOString() }
+        this.write({ ...d, doc }, s.person.id)
         continue
       }
       this.write(d, s.person.id)

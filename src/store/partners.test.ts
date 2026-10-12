@@ -210,6 +210,39 @@ describe('keying in a month', () => {
     expect(save('2026-07', a.id, -1).error).toMatch(/0 or more/)
   })
 
+  it('is checked again on the server, and signed by whoever sent it', () => {
+    const [a] = dealers()
+    const token = lb.openSessionForTests('siew-fang')
+    const send = (over: { id?: string; locationId?: string; day?: string; doc?: Record<string, unknown> }) => {
+      const locationId = over.locationId ?? a.id
+      return lb.putSync(token, [
+        {
+          kind: 'partner_sales',
+          id: over.id ?? `${locationId}::2026-07`,
+          locationId,
+          day: over.day ?? '2026-07-01',
+          doc: { ...keyed(locationId, '2026-07', 500), ...over.doc },
+        },
+      ])
+    }
+
+    // A main store's sales come from its counter, never from a typed figure.
+    expect(send({ locationId: 'pavilion-5' }).error).toMatch(/dealers and consignment/)
+    expect(send({ doc: { month: '2027-01' }, id: `${a.id}::2027-01`, day: '2027-01-01' }).error).toMatch(/not started/)
+    expect(send({ doc: { month: '2026-13' } }).error).toMatch(/Choose a month/)
+    expect(send({ id: `${a.id}::2026-08` }).error).toMatch(/does not match/)
+    expect(send({ day: '2026-07-15' }).error).toMatch(/does not match/)
+    expect(send({ doc: { locationId: dealers()[1].id } }).error).toMatch(/does not match/)
+    expect(send({ doc: { revenueMYR: -1 } }).error).toMatch(/0 or more/)
+    expect(send({ doc: { revenueMYR: '500' } }).error).toMatch(/0 or more/)
+    expect(lb.allDocs().some((d) => d.kind === 'partner_sales')).toBe(false)
+
+    // Whatever name the figure claims, it is filed under the session's.
+    expect(send({ doc: { enteredBy: 'Lim Davy' } }).ok).toBe(true)
+    const filed = lb.allDocs().find((d) => d.kind === 'partner_sales')?.doc as PartnerSales
+    expect(filed).toMatchObject({ revenueMYR: 500, enteredBy: 'Siew Fang' })
+  })
+
   it('is head office’s job — not a promoter’s or the warehouse’s, in the app or on the server', () => {
     const [a] = dealers()
     signInAs(lb, 'teokoknian', 'klia-t2')
