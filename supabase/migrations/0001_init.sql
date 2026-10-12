@@ -216,6 +216,8 @@ language sql immutable as $$
     when 'audit'      then true
     when 'alert_read' then true
     when 'setting'    then r in ('md','it')
+    -- A dealer's or consignment partner's month, keyed in at head office.
+    when 'partner_sales' then r in ('md','ops','pa','finance')
     else false end
 $$;
 

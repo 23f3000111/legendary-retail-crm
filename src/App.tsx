@@ -26,6 +26,7 @@ import { Catalogue } from './pages/hq/Catalogue'
 import { Promotions } from './pages/hq/Promotions'
 import { Targets } from './pages/hq/Targets'
 import { Activity } from './pages/hq/Activity'
+import { PartnerSales } from './pages/hq/PartnerSales'
 import { Users } from './pages/hq/Users'
 import { Orders } from './pages/orders/Orders'
 import { OrderDetail } from './pages/orders/OrderDetail'
@@ -168,6 +169,7 @@ export default function App() {
           <Route path="/promotions" element={<Promotions />} />
           <Route path="/targets" element={<Targets />} />
           <Route path="/activity" element={<Activity />} />
+          <Route path="/partners" element={<PartnerSales />} />
           <Route path="/users" element={<Users />} />
 
           {/* Orders, shared */}

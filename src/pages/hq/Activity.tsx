@@ -38,6 +38,7 @@ const KINDS: AuditKind[] = [
   'closing',
   'order',
   'sale',
+  'partner',
   'correction',
   'password',
   'login',

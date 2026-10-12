@@ -536,6 +536,8 @@ function build(r: () => number, today: DateStr): CrmData {
     audit: deriveAudit(closings, purchaseOrders, today),
     liveLines,
     users: seedPeople,
+    // The sample history files dealers and consignment through closings.
+    partnerSales: [],
   }
 }
 

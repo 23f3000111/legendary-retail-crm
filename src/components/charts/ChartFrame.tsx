@@ -24,6 +24,7 @@ export function ChartFrame({
   table,
   children,
   height = 240,
+  grow = false,
 }: {
   title: string
   meta?: ReactNode
@@ -35,6 +36,12 @@ export function ChartFrame({
   table?: ReactNode
   children: ReactNode
   height?: number
+  /**
+   * Let the chart run taller than `height` when it needs to. A ring keeps its
+   * legend beside it on a wide screen, but on a phone the legend wraps under
+   * it, and a fixed height would push the pair up over the title.
+   */
+  grow?: boolean
 }) {
   const [showTable, setShowTable] = useState(false)
 
@@ -73,7 +80,12 @@ export function ChartFrame({
         {showTable && table ? (
           <div style={{ minHeight: height }}>{table}</div>
         ) : (
-          <div style={{ height }}>{children}</div>
+          <div
+            style={grow ? { minHeight: height } : { height }}
+            className={grow ? 'flex flex-col justify-center' : undefined}
+          >
+            {children}
+          </div>
         )}
       </div>
 

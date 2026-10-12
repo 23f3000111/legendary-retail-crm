@@ -78,6 +78,13 @@ export const monthLabel = (key: string): string => {
 
 export const startOfMonth = (s: DateStr): DateStr => `${s.slice(0, 7)}-01`
 
+/** A month key `n` months on (or back, for negative `n`): "2026-10" → "2026-09". */
+export const shiftMonth = (key: string, n: number): string => {
+  const [y, m] = key.split('-').map(Number)
+  const index = y * 12 + (m - 1) + n
+  return `${Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, '0')}`
+}
+
 /** "3 days ago", "in 2 days", "today" — relative to the demo's fixed today. */
 export const relativeDay = (s: DateStr, today: DateStr): string => {
   const n = daysBetween(s, today)

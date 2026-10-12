@@ -12,7 +12,7 @@ import { num, rm } from './format'
 import type { Closing, ClosingFigures, PurchaseOrder, SaleLine } from '../data/types'
 
 /** Whole ringgit, unless there are sen to show. */
-export const money = (n: number): string => rm(n, { decimals: Math.round(n * 100) % 100 !== 0 })
+export const money = (n: number): string => rm(n)
 
 /** Money is compared to the sen, so adding the same lines in another order is no change. */
 const sameMoney = (a: number, b: number) => Math.abs(a - b) < 0.005

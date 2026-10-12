@@ -243,7 +243,7 @@ export function Sell() {
           <NumberInput
             prefix="RM"
             min={0}
-            step={1}
+            step="any"
             value={otherAmount}
             onChange={(e) => setOtherAmount(e.target.value)}
             onKeyDown={(e) => {

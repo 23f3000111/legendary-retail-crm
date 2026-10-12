@@ -1,9 +1,25 @@
-/** Money is always Malaysian Ringgit here; the brand prices in RM. */
-export const rm = (n: number, opts: { decimals?: boolean } = {}): string =>
-  `RM ${n.toLocaleString('en-MY', {
-    minimumFractionDigits: opts.decimals ? 2 : 0,
-    maximumFractionDigits: opts.decimals ? 2 : 0,
+/**
+ * Money is always Malaysian Ringgit here; the brand prices in RM.
+ *
+ * Whole ringgit unless there are sen to show: RM 188, RM 150.50. Rounding
+ * every figure to the ringgit made a price typed as 150.50 come back as
+ * RM 151, and promoters took it that decimals could not be entered (client,
+ * 12 October). `decimals: true` always shows the sen.
+ */
+export const rm = (n: number, opts: { decimals?: boolean } = {}): string => {
+  const sen = opts.decimals ?? Math.round(n * 100) % 100 !== 0
+  return `RM ${n.toLocaleString('en-MY', {
+    minimumFractionDigits: sen ? 2 : 0,
+    maximumFractionDigits: sen ? 2 : 0,
   })}`
+}
+
+/**
+ * A figure put back into a box to be changed: 150.50 rather than 150.5, and
+ * 188 rather than 188.00 — the same rule as `rm`, without the RM.
+ */
+export const moneyInput = (n: number): string =>
+  Math.round(n * 100) % 100 !== 0 ? n.toFixed(2) : String(Math.round(n))
 
 /** Compact money for tight tiles: RM 1.2k, RM 340k, RM 1.4m. */
 export const rmCompact = (n: number): string => {

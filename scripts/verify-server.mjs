@@ -195,6 +195,26 @@ try {
   const gone = await one('select remove_docs($1, $2, $3::text[]) r', [promoter, 'closing', [todays.id]])
   check('but cannot delete a filed day', gone.r.ok === false, gone.r.error)
 
+  // Dealers' and consignment partners' months, keyed in at head office
+  // (client's fifth revision): Davy, Kelly, Chloe and Finance only.
+  const partnerDoc = (id) => [
+    {
+      kind: 'partner_sales',
+      id: `${id}::2026-09`,
+      location_id: id,
+      day: '2026-09-01',
+      doc: { locationId: id, month: '2026-09', revenueMYR: 1200.5, enteredBy: 'verify', enteredAt: 'x' },
+    },
+  ]
+  const finance = await session('siewfang')
+  const keyedByFinance = await put(finance, partnerDoc('dlr-beauty-scent'))
+  check('Finance can key in a dealer’s month', keyedByFinance.r.ok === true, keyedByFinance.r.error)
+  const keyedByPromoter = await put(promoter, partnerDoc('dlr-zapin'))
+  check('a promoter cannot', keyedByPromoter.r.ok === false, keyedByPromoter.r.error)
+  const warehouse = await session('xianan')
+  const keyedByWarehouse = await put(warehouse, partnerDoc('dlr-zapin'))
+  check('nor can the warehouse', keyedByWarehouse.r.ok === false, keyedByWarehouse.r.error)
+
   // Passwords.
   const weak = await one("select set_password($1, 'kim', 'legendary123') r", [imran])
   check('a weak password is refused', weak.r.ok === false, weak.r.error)

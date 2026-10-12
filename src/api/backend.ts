@@ -30,6 +30,8 @@ export type DocKind =
   | 'audit'
   | 'alert_read'
   | 'setting'
+  /** A dealer's or consignment partner's sales for a month, keyed in at head office. */
+  | 'partner_sales'
 
 export interface Doc {
   kind: DocKind

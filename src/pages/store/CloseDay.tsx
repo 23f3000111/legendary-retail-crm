@@ -23,7 +23,7 @@ import { lineUnitPrice, skuById, skuLabel, TIER_LABEL } from '../../data/product
 import { OrderableOptions } from '../../components/po/OrderableOptions'
 import { countryByCode, MALAYSIA_SEGMENT_LABEL } from '../../data/countries'
 import { formatDate, formatTimestamp } from '../../lib/dates'
-import { num } from '../../lib/format'
+import { moneyInput, num } from '../../lib/format'
 import { newId, newOrderId } from '../../lib/ids'
 import { closingEditMode, CORRECTION_WINDOW_DAYS, type ClosingEditMode } from '../../lib/editing'
 import { clock, describeLineChanges, describeClosingChanges, figuresOf, money, toSen } from '../../lib/changes'
@@ -423,7 +423,7 @@ function ClosingForm({
   // e-wallet box was removed at the client's request; a day filed with an
   // e-wallet figure before then keeps it, so changing the cash never quietly
   // moves that money onto the card.
-  const [cash, setCash] = useState(() => (start?.tender ? String(start.tender.cash) : ''))
+  const [cash, setCash] = useState(() => (start?.tender ? moneyInput(start.tender.cash) : ''))
   const ewallet = start?.tender?.ewallet ?? 0
   const card = cash === '' ? '' : String(Math.max(0, toSen(revenue - Number(cash) - ewallet)))
 
@@ -843,6 +843,7 @@ function ClosingForm({
               <NumberInput
                 prefix="RM"
                 min={0}
+                step="any"
                 value={cash}
                 onChange={(e) => setCash(e.target.value)}
                 placeholder="0.00"

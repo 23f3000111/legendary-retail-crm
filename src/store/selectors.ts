@@ -36,9 +36,9 @@ import {
 } from '../data/products'
 import { countries } from '../data/countries'
 import { linesDiffer } from '../lib/changes'
-import { addDays, dateRange, daysBetween, monthKey } from '../lib/dates'
+import { addDays, dateRange, daysBetween, monthKey, shiftMonth } from '../lib/dates'
 import { effectiveQty, isOpen } from '../lib/po-machine'
-import type { Alert, Closing, CrmData, DateStr, PurchaseOrder } from '../data/types'
+import type { Alert, Closing, CrmData, DateStr, PartnerSales, PurchaseOrder } from '../data/types'
 
 // ── Filter ─────────────────────────────────────────────────────────────────
 
@@ -158,11 +158,22 @@ const lineMatches = (
   return true
 }
 
+/** A filter that narrows by product or by country, which a typed-in total cannot answer. */
+const narrowsByProduct = (f: Filter): boolean =>
+  f.countryCodes.length > 0 || f.skuIds.length > 0 || f.collectionIds.length > 0 || f.variants.length > 0
+
+/** `locationId::YYYY-MM` for every month a partner's figure was keyed in. */
+const keyedMonths = (data: CrmData): Set<string> =>
+  new Set(data.partnerSales.map((p) => `${p.locationId}::${p.month}`))
+
 export const totalsFor = (data: CrmData, f: Filter): Totals => {
   const allowed = skuIdsFor(f)
   const t = emptyTotals()
+  const keyed = keyedMonths(data)
 
   for (const c of filteredClosings(data, f)) {
+    // A month keyed in at head office stands in for anything filed for it.
+    if (keyed.size && keyed.has(`${c.locationId}::${monthKey(c.period)}`)) continue
     for (const line of c.lines) {
       if (!lineMatches(line, allowed, f)) continue
       // Counted on whichever price this location is counted on (Revision 2).
@@ -179,7 +190,17 @@ export const totalsFor = (data: CrmData, f: Filter): Totals => {
     }
   }
 
-  t.revenue = Math.round(t.revenue)
+  // Dealers' and consignment partners' months, keyed in as one figure: they
+  // count on the 1st of their month, like a monthly closing, and only where
+  // nothing narrows the view to products or countries they cannot answer.
+  if (!narrowsByProduct(f)) {
+    for (const p of data.partnerSales) {
+      if (inWindow(`${p.month}-01`, f) && locationMatches(p.locationId, f)) t.revenue += p.revenueMYR
+    }
+  }
+
+  // To the sen: a price typed with decimals must not vanish from the totals.
+  t.revenue = Math.round(t.revenue * 100) / 100
   return t
 }
 
@@ -244,8 +265,10 @@ export interface SeriesPoint {
 export const selectTimeSeries = (data: CrmData, f: Filter, metric: Metric): SeriesPoint[] => {
   const allowed = skuIdsFor(f)
   const byDate = new Map<DateStr, { revenue: number; units: number }>()
+  const keyed = keyedMonths(data)
 
   for (const c of filteredClosings(data, f)) {
+    if (keyed.size && keyed.has(`${c.locationId}::${monthKey(c.period)}`)) continue
     const bucket = byDate.get(c.period) ?? { revenue: 0, units: 0 }
     for (const line of c.lines) {
       if (!lineMatches(line, allowed, f)) continue
@@ -253,6 +276,15 @@ export const selectTimeSeries = (data: CrmData, f: Filter, metric: Metric): Seri
       bucket.units += line.qty
     }
     byDate.set(c.period, bucket)
+  }
+  if (!narrowsByProduct(f)) {
+    for (const p of data.partnerSales) {
+      const day = `${p.month}-01`
+      if (!inWindow(day, f) || !locationMatches(p.locationId, f)) continue
+      const bucket = byDate.get(day) ?? { revenue: 0, units: 0 }
+      bucket.revenue += p.revenueMYR
+      byDate.set(day, bucket)
+    }
   }
 
   // Walk the calendar rather than the data, so a day nobody traded reads as a
@@ -455,13 +487,16 @@ export const selectLocationRows = (
       const t = totalsFor(data, scoped)
       const prev = totalsFor(data, previousWindow(scoped))
 
-      const mtd = data.closings
-        .filter((c) => c.locationId === l.id && monthKey(c.period) === month)
-        .reduce(
-          (a, c) =>
-            a + c.lines.reduce((s, ln) => s + ln.qty * lineUnitPrice(ln, l.priceBasis), 0),
-          0,
-        )
+      const keyedThisMonth = data.partnerSales.find((p) => p.locationId === l.id && p.month === month)
+      const mtd = keyedThisMonth
+        ? keyedThisMonth.revenueMYR
+        : data.closings
+            .filter((c) => c.locationId === l.id && monthKey(c.period) === month)
+            .reduce(
+              (a, c) =>
+                a + c.lines.reduce((s, ln) => s + ln.qty * lineUnitPrice(ln, l.priceBasis), 0),
+              0,
+            )
 
       // The last day actually filed, which is not always yesterday — a store
       // that missed a night should show the night it did file, not a zero.
@@ -882,6 +917,183 @@ export const selectWriteOffs = (data: CrmData, f: Filter) => {
     }
   }
   return { total, byReason: tally }
+}
+
+// ── Today, and the month so far ─────────────────────────────────────────────
+
+export interface SalesFigure {
+  revenue: number
+  units: number
+  /** Baskets: one customer, however much they bought. */
+  customers: number
+}
+
+export interface StoreSales extends SalesFigure {
+  locationId: string
+}
+
+const blank = (): SalesFigure & { baskets: Set<string> } => ({ revenue: 0, units: 0, customers: 0, baskets: new Set() })
+
+const finish = (f: SalesFigure & { baskets: Set<string> }): SalesFigure => ({
+  revenue: Math.round(f.revenue * 100) / 100,
+  units: f.units,
+  customers: f.baskets.size,
+})
+
+/**
+ * Today so far, from every sale recorded at a counter — live, rising through
+ * the day as promoters ring sales up (client's fifth revision: revenue
+ * "change to daily"). Stores best first.
+ */
+export const selectToday = (data: CrmData): SalesFigure & { byStore: StoreSales[] } => {
+  const total = blank()
+  const byStore: StoreSales[] = []
+  for (const [locationId, lines] of Object.entries(data.liveLines)) {
+    const basis = basisOf(locationId)
+    const here = blank()
+    lines.forEach((l, i) => {
+      const value = l.qty * lineUnitPrice(l, basis)
+      const basket = l.saleId ?? l.id ?? `${locationId}#${i}`
+      for (const f of [here, total]) {
+        f.revenue += value
+        f.units += l.qty
+        f.baskets.add(basket)
+      }
+    })
+    byStore.push({ locationId, ...finish(here) })
+  }
+  return { ...finish(total), byStore: byStore.sort((a, b) => b.revenue - a.revenue) }
+}
+
+/**
+ * The month so far: every day filed from the 1st, and today as it stands —
+ * today is read from the counter, not from its closing, so it is never
+ * counted twice. Stores best first.
+ */
+export const selectMonthToDate = (data: CrmData): SalesFigure & { byStore: StoreSales[] } => {
+  const month = monthKey(data.today)
+  const keyed = keyedMonths(data)
+  const stores = new Map<string, ReturnType<typeof blank>>()
+  const total = blank()
+  const add = (locationId: string, value: number, qty: number, basket: string) => {
+    const here = stores.get(locationId) ?? blank()
+    for (const f of [here, total]) {
+      f.revenue += value
+      f.units += qty
+      f.baskets.add(basket)
+    }
+    stores.set(locationId, here)
+  }
+  for (const c of data.closings) {
+    if (monthKey(c.period) !== month || c.period >= data.today) continue
+    if (keyed.has(`${c.locationId}::${month}`)) continue
+    const basis = basisOf(c.locationId)
+    c.lines.forEach((l, i) => add(c.locationId, l.qty * lineUnitPrice(l, basis), l.qty, l.saleId ?? l.id ?? `${c.id}#${i}`))
+  }
+  for (const [locationId, lines] of Object.entries(data.liveLines)) {
+    const basis = basisOf(locationId)
+    lines.forEach((l, i) => add(locationId, l.qty * lineUnitPrice(l, basis), l.qty, l.saleId ?? l.id ?? `${locationId}#${i}`))
+  }
+  const byStore = [...stores.entries()].map(([locationId, f]) => ({ locationId, ...finish(f) }))
+  return { ...finish(total), byStore: byStore.sort((a, b) => b.revenue - a.revenue) }
+}
+
+// ── Dealers and consignment, month by month ─────────────────────────────────
+
+export type PartnerChannel = 'dealer' | 'consignment'
+
+/** The dealers, or the consignment partners, that are trading. */
+export const partnersIn = (channel: PartnerChannel) =>
+  tradingLocations.filter((l) => l.channel === channel)
+
+export interface PartnerMonthRow {
+  locationId: string
+  name: string
+  shortName: string
+  revenue: number
+  /** Whether this partner has a figure for the month at all. */
+  has: boolean
+  /** The figure keyed in at head office, where that is where it came from. */
+  keyed?: PartnerSales
+}
+
+/**
+ * Every partner figure there is, by `locationId::YYYY-MM`: what head office
+ * keyed in, or — where nothing was keyed — the month's filed closings, which
+ * is how the sample history records partners. A keyed figure always stands.
+ */
+const partnerFigures = (data: CrmData): Map<string, { revenue: number; keyed?: PartnerSales }> => {
+  const partners = new Set(
+    tradingLocations.filter((l) => l.channel === 'dealer' || l.channel === 'consignment').map((l) => l.id),
+  )
+  const out = new Map<string, { revenue: number; keyed?: PartnerSales }>()
+  for (const c of data.closings) {
+    if (!partners.has(c.locationId)) continue
+    const key = `${c.locationId}::${monthKey(c.period)}`
+    const basis = basisOf(c.locationId)
+    const figure = out.get(key) ?? { revenue: 0 }
+    figure.revenue += c.lines.reduce((a, l) => a + l.qty * lineUnitPrice(l, basis), 0)
+    out.set(key, figure)
+  }
+  for (const p of data.partnerSales) out.set(`${p.locationId}::${p.month}`, { revenue: p.revenueMYR, keyed: p })
+  return out
+}
+
+/** Each dealer's (or consignment partner's) sales for a month, best first. */
+export const selectPartnerMonth = (
+  data: CrmData,
+  channel: PartnerChannel,
+  month: string,
+  figures = partnerFigures(data),
+): PartnerMonthRow[] =>
+  partnersIn(channel)
+    .map((l) => {
+      const figure = figures.get(`${l.id}::${month}`)
+      return {
+        locationId: l.id,
+        name: l.name,
+        shortName: l.shortName,
+        revenue: Math.round((figure?.revenue ?? 0) * 100) / 100,
+        has: Boolean(figure),
+        keyed: figure?.keyed,
+      }
+    })
+    .sort((a, b) => b.revenue - a.revenue || a.name.localeCompare(b.name))
+
+/**
+ * The month the overview reports a channel for (client's fifth revision):
+ * last month, once every partner's figure is in — "make sure all dealers'
+ * sales data from the previous month is keyed in; if not complete yet, show
+ * the latest completed month instead". This month never counts, being
+ * unfinished. Null until some month is complete.
+ */
+export const latestCompleteMonth = (data: CrmData, channel: PartnerChannel, lookBack = 24): string | null => {
+  const figures = partnerFigures(data)
+  const partners = partnersIn(channel)
+  if (!partners.length) return null
+  let month = shiftMonth(monthKey(data.today), -1)
+  for (let i = 0; i < lookBack; i++, month = shiftMonth(month, -1)) {
+    if (partners.every((l) => figures.has(`${l.id}::${month}`))) return month
+  }
+  return null
+}
+
+/** The latest month, up to this one, in which any partner of the kind has a figure. */
+export const latestMonthWithFigures = (data: CrmData, channel: PartnerChannel): string | null => {
+  const ids = new Set(partnersIn(channel).map((l) => l.id))
+  let latest: string | null = null
+  const consider = (m: string) => {
+    if (m <= monthKey(data.today) && (!latest || m > latest)) latest = m
+  }
+  for (const p of data.partnerSales) if (ids.has(p.locationId)) consider(p.month)
+  for (const c of data.closings) if (ids.has(c.locationId)) consider(monthKey(c.period))
+  return latest
+}
+
+/** How many partners have a figure for a month — "38 of 44 keyed in". */
+export const partnersKeyed = (data: CrmData, channel: PartnerChannel, month: string): number => {
+  const figures = partnerFigures(data)
+  return partnersIn(channel).filter((l) => figures.has(`${l.id}::${month}`)).length
 }
 
 export { collections, locations }

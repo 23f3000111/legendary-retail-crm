@@ -35,7 +35,7 @@ function useCountUp(target: number, duration = 820): number {
     const tick = (now: number) => {
       const t = Math.min(1, (now - start) / duration)
       const eased = 1 - Math.pow(1 - t, 3)
-      setValue(origin + (target - origin) * eased)
+      setValue(t < 1 ? Math.round(origin + (target - origin) * eased) : target)
       if (t < 1) raf = requestAnimationFrame(tick)
       else from.current = target
     }
@@ -64,6 +64,7 @@ export function StatTile({
   icon,
   to,
   onClick,
+  active,
 }: {
   label: string
   value: number
@@ -77,11 +78,15 @@ export function StatTile({
   to?: string
   /** Or what it does — scrolling to the list further down the same page. */
   onClick?: () => void
+  /** A tile used as a filter, showing it is the one chosen. */
+  active?: boolean
 }) {
   const shown = useCountUp(value)
   const toned = tone !== 'plain'
 
   const className = `relative block overflow-hidden rounded-2xl px-4 py-3.5 ${
+    active ? 'ring-[3px] ring-primary/45 ring-offset-2 ring-offset-canvas' : ''
+  } ${
     toned
       ? `${GRADIENT[tone]} text-white shadow-tile`
       : 'border border-line bg-surface/85 shadow-glass backdrop-blur-xl'
@@ -145,7 +150,12 @@ export function StatTile({
   }
   if (onClick) {
     return (
-      <button type="button" onClick={onClick} className={`${className} w-full text-left`}>
+      <button
+        type="button"
+        onClick={onClick}
+        aria-pressed={active}
+        className={`${className} w-full text-left`}
+      >
         {body}
       </button>
     )

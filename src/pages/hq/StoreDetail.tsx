@@ -30,6 +30,7 @@ import { CHANNEL_LABEL, locationById } from '../../data/locations'
 import { addDays, formatDate, monthKey, startOfMonth } from '../../lib/dates'
 import { downloadCsv } from '../../lib/exportCsv'
 import { change, num, rm } from '../../lib/format'
+import { isFoc, priceOf, skuById } from '../../data/products'
 
 type RangeKey = '7' | '30' | '90'
 
@@ -124,6 +125,21 @@ export function StoreDetail() {
     (t) => t.locationId === id && t.month === monthKey(data.today),
   )?.amountMYR
 
+  // The day the store last filed, and what that closing took off the shelf:
+  // the "deducted" column Finance asked for (client's fifth revision). Sold,
+  // and written off — a used-up tester leaves the shelf as surely as a sale.
+  const lastFiled = data.closings
+    .filter((c) => c.locationId === id && c.periodType === 'day')
+    .reduce<(typeof data.closings)[number] | undefined>((a, c) => (!a || c.period > a.period ? c : a), undefined)
+  const deducted = new Map<string, number>()
+  for (const l of [...(lastFiled?.lines ?? []), ...(lastFiled?.writeOffs ?? [])]) {
+    deducted.set(l.skuId, (deducted.get(l.skuId) ?? 0) + l.qty)
+  }
+  const priceLabel = (skuId: string) => {
+    const sku = skuById(skuId)
+    return isFoc(sku) ? 'FOC' : rm(priceOf(sku, location.priceBasis))
+  }
+
   const outOfStock = stock.filter((s) => s.status === 'out').length
   const lowStock = stock.filter((s) => s.status === 'low' || s.status === 'critical').length
 
@@ -137,6 +153,27 @@ export function StoreDetail() {
           <p className="readout text-[11px] text-ink-3">{r.code}</p>
         </div>
       ),
+    },
+    {
+      key: 'price',
+      header: 'Price',
+      align: 'right',
+      width: '90px',
+      render: (r) => <span className="readout text-[12.5px] text-ink-2">{priceLabel(r.skuId)}</span>,
+    },
+    {
+      key: 'deducted',
+      header: 'Deducted',
+      align: 'right',
+      width: '90px',
+      render: (r) => {
+        const n = deducted.get(r.skuId) ?? 0
+        return (
+          <span className={`readout text-[12.5px] ${n ? 'font-semibold text-ink' : 'text-ink-3'}`}>
+            {lastFiled ? (n ? `−${num(n)}` : '0') : '—'}
+          </span>
+        )
+      },
     },
     {
       key: 'onHand',
@@ -293,7 +330,11 @@ export function StoreDetail() {
         <PanelHeader
           eyebrow="Stock"
           title={`${stock.length} products on the shelf`}
-          meta="Tap a product to see what came in and what went out."
+          meta={
+            lastFiled
+              ? `Price is what this store sells at. Deducted is what the ${formatDate(lastFiled.period)} closing took off the shelf — sold, plus any tester, damage or sample. Tap a product to see what came in and what went out.`
+              : 'Tap a product to see what came in and what went out.'
+          }
           action={
             <Button
               size="sm"
@@ -302,10 +343,21 @@ export function StoreDetail() {
               onClick={() =>
                 downloadCsv(
                   `legendary-stock-${location.code}.csv`,
-                  ['Product', 'Code', 'On hand', 'Reorder at', 'Days left', 'Status'],
+                  [
+                    'Product',
+                    'Code',
+                    'Price',
+                    lastFiled ? `Deducted ${lastFiled.period}` : 'Deducted',
+                    'On hand',
+                    'Reorder at',
+                    'Days left',
+                    'Status',
+                  ],
                   stock.map((r) => [
                     r.label,
                     r.code,
+                    isFoc(skuById(r.skuId)) ? 'FOC' : priceOf(skuById(r.skuId), location.priceBasis),
+                    deducted.get(r.skuId) ?? 0,
                     r.onHand,
                     r.reorderPoint,
                     r.daysCover === null ? '' : r.daysCover.toFixed(1),

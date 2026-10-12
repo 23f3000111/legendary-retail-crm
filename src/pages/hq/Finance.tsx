@@ -15,7 +15,9 @@ import { canOpen } from '../../components/layout/nav'
 import {
   emptyFilter,
   filteredClosings,
+  latestMonthWithFigures,
   poValue,
+  selectPartnerMonth,
   selectChannelSplit,
   selectKpis,
   selectTimeSeries,
@@ -57,33 +59,35 @@ export function Finance() {
     value: c.revenue,
   }))
 
-  // Consignment partners report monthly, so their table works off the last
-  // closed month rather than a rolling 30 days.
+  // Consignment partners report monthly, so their table works off the latest
+  // month with a figure in — keyed in at head office (Dealer sales), or, in
+  // the sample history, filed — rather than a rolling 30 days.
   const consignmentRows = useMemo(() => {
-    const partners = locationsInChannel('consignment')
-    const periods = [
-      ...new Set(
-        data.closings.filter((c) => c.periodType === 'month').map((c) => c.period),
-      ),
-    ].sort()
-    const latest = periods[periods.length - 1]
+    const month = latestMonthWithFigures(data, 'consignment')
+    const figures = new Map(
+      (month ? selectPartnerMonth(data, 'consignment', month) : []).map((r) => [r.locationId, r]),
+    )
     return {
-      period: latest,
-      rows: partners.map((p) => {
-        const closing = data.closings.find((c) => c.locationId === p.id && c.period === latest)
-        const revenue = closing?.revenueMYR ?? 0
-        const units = closing?.lines.reduce((a, l) => a + l.qty, 0) ?? 0
+      period: month ? `${month}-01` : undefined,
+      rows: locationsInChannel('consignment').map((p) => {
+        const figure = figures.get(p.id)
+        // A keyed-in month is one figure, with no products behind it.
+        const units = figure?.keyed
+          ? null
+          : data.closings
+              .filter((c) => c.locationId === p.id && month && monthKey(c.period) === month)
+              .reduce((a, c) => a + c.lines.reduce((s, l) => s + l.qty, 0), 0)
         return {
           id: p.id,
           name: p.name,
           marginPct: p.marginPct ?? null,
-          revenue,
+          revenue: figure?.revenue ?? 0,
           units,
-          filed: Boolean(closing),
+          filed: Boolean(figure?.has),
         }
       }),
     }
-  }, [data.closings])
+  }, [data])
 
   const consignmentTotal = consignmentRows.rows.reduce((a, r) => a + r.revenue, 0)
 
@@ -235,7 +239,16 @@ export function Finance() {
               ? `${monthLabel(monthKey(consignmentRows.period))} · ${rm(consignmentTotal)}`
               : 'Consignment partners'
           }
-          meta="These partners report once a month. Margin rates are placeholders until you confirm them."
+          meta="These partners report once a month; their figures are keyed in on Dealer sales. Margin rates are placeholders until you confirm them."
+          action={
+            open('/partners') ? (
+              <Link to="/partners">
+                <Button size="sm" variant="ghost" iconRight="chevronRight">
+                  Key in
+                </Button>
+              </Link>
+            ) : undefined
+          }
         />
         <Rule />
         <PanelBody>
@@ -258,7 +271,7 @@ export function Finance() {
                   <tr key={r.id} className="border-b border-line/70 last:border-0">
                     <td className="py-2.5 text-[13px] text-ink">{r.name}</td>
                     <td className="readout py-2.5 text-right text-[13px] text-ink-2">
-                      {num(r.units)}
+                      {r.units === null ? '—' : num(r.units)}
                     </td>
                     <td className="readout py-2.5 text-right text-[13px] text-ink">
                       {rm(r.revenue)}

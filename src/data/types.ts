@@ -243,6 +243,26 @@ export interface Target {
   amountMYR: number
 }
 
+// ── Dealers and consignment ────────────────────────────────────────────────
+
+/**
+ * What a dealer or consignment partner sold in a month, as one figure keyed
+ * in at head office (client's fifth revision, October).
+ *
+ * Partners have no logins and do not close days; they report to Legendary,
+ * and Kelly or Finance types the month's total in. It is a typed total — it
+ * carries no products and no countries — so it counts in revenue wherever no
+ * product or country filter narrows the view, and nowhere else.
+ */
+export interface PartnerSales {
+  locationId: string
+  /** `YYYY-MM`. */
+  month: string
+  revenueMYR: number
+  enteredBy: string
+  enteredAt: string
+}
+
 // ── Store shape ────────────────────────────────────────────────────────────
 
 export interface CrmData {
@@ -265,4 +285,6 @@ export interface CrmData {
   liveLines: Record<string, SaleLine[]>
   /** Everyone who can sign in. Managed from the Logins screen. */
   users: Person[]
+  /** Dealers' and consignment partners' monthly figures, keyed in at head office. */
+  partnerSales: PartnerSales[]
 }

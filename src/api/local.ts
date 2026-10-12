@@ -75,6 +75,7 @@ const WRITERS: Record<DocKind, Role[]> = {
   audit: ['director', 'md', 'ops', 'pa', 'finance', 'warehouse', 'promoter', 'it'],
   alert_read: ['director', 'md', 'ops', 'pa', 'finance', 'warehouse', 'promoter', 'it'],
   setting: ['md', 'it'],
+  partner_sales: ['md', 'ops', 'pa', 'finance'],
 }
 
 /** Documents a promoter is sent: their own store's, and nothing from the log. */

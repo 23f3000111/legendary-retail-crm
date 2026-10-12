@@ -18,7 +18,16 @@ import { downloadCsv } from '../../lib/exportCsv'
 import { num, rm } from '../../lib/format'
 import type { PurchaseOrder } from '../../data/types'
 
-type View = 'mine' | 'open' | 'closed' | 'all'
+/**
+ * Which orders the list shows. Head office picks "waiting on you" and "in
+ * flight" with the two tiles, and approved, rejected or everything with the
+ * tabs (client's fifth revision). A store has no tiles, so "in flight" is a
+ * tab there.
+ */
+type View = 'mine' | 'open' | 'approved' | 'rejected' | 'all'
+
+/** Approved means Kelly said yes — wherever the order has got to since. */
+const APPROVED: PurchaseOrder['status'][] = ['approved', 'accounts_cleared', 'packed', 'in_transit', 'received']
 
 /**
  * Every order, seen from whichever desk you are sitting at.
@@ -26,6 +35,9 @@ type View = 'mine' | 'open' | 'closed' | 'all'
  * "Waiting on me" is the default for anyone who can act, because the queue that
  * matters is the one holding you up. Kelly approves every order (Q46), so for
  * her this is the working screen of the day.
+ *
+ * The two tiles at the top are filters as well as figures — tap one to list
+ * those orders.
  */
 export function Orders() {
   const navigate = useNavigate()
@@ -65,9 +77,11 @@ export function Orders() {
         ? waitingOnMe
         : view === 'open'
           ? scoped.filter(isOpen)
-          : view === 'closed'
-            ? scoped.filter((p) => !isOpen(p))
-            : scoped
+          : view === 'approved'
+            ? scoped.filter((p) => APPROVED.includes(p.status))
+            : view === 'rejected'
+              ? scoped.filter((p) => p.status === 'rejected')
+              : scoped
     return [...list].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
   }, [view, scoped, waitingOnMe])
 
@@ -211,11 +225,10 @@ export function Orders() {
             value={view}
             onChange={setView}
             options={[
-              ...(isPromoter || !capability.canEdit
-                ? []
-                : [{ value: 'mine' as View, label: `Waiting on me (${waitingOnMe.length})` }]),
-              { value: 'open', label: 'In flight' },
-              { value: 'closed', label: 'Closed' },
+              // Head office reaches these two through the tiles.
+              ...(isPromoter ? [{ value: 'open' as View, label: 'In flight' }] : []),
+              { value: 'approved', label: 'Approved' },
+              { value: 'rejected', label: 'Rejected' },
               { value: 'all', label: 'All' },
             ]}
           />
@@ -226,14 +239,16 @@ export function Orders() {
       </div>
 
       {!isPromoter && (
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2">
           <StatTile
             label="Waiting on you"
             value={waitingOnMe.length}
             format={(n) => num(Math.round(n))}
-            footnote={waitingOnMe.length === 0 ? 'nothing to do' : undefined}
+            footnote={waitingOnMe.length === 0 ? 'nothing to do' : 'tap to list them'}
             tone="violet"
             icon="doc"
+            onClick={() => setView('mine')}
+            active={view === 'mine'}
           />
           <StatTile
             label="In flight"
@@ -242,13 +257,8 @@ export function Orders() {
             footnote={`${rm(openOrders.reduce((a, p) => a + poValue(p), 0))} of stock`}
             tone="blue"
             icon="truck"
-          />
-          <StatTile
-            label="Marked urgent"
-            value={openOrders.filter((p) => p.priority === 'urgent').length}
-            format={(n) => num(Math.round(n))}
-            tone="cyan"
-            icon="alert"
+            onClick={() => setView('open')}
+            active={view === 'open'}
           />
         </div>
       )}
@@ -265,7 +275,15 @@ export function Orders() {
             empty={
               <EmptyState
                 icon="check"
-                title={view === 'mine' ? 'Nothing waiting on you' : 'Nothing here'}
+                title={
+                  view === 'mine'
+                    ? 'Nothing waiting on you'
+                    : view === 'approved'
+                      ? 'Nothing approved yet'
+                      : view === 'rejected'
+                        ? 'Nothing rejected'
+                        : 'Nothing here'
+                }
                 body={
                   view === 'mine'
                     ? 'Orders will appear here as they reach your step.'

@@ -20,10 +20,10 @@ import { backend, localBackend } from '../api'
 import { docKey, type Doc, type DocKind, type PutDoc, type Result, type Snapshot } from '../api/backend'
 import { canClearAccounts, canTransition } from '../lib/po-machine'
 import { can, seedPeople, ROLE_LABEL, type Person, type Role } from '../data/people'
-import { formatDate, todayInMalaysia } from '../lib/dates'
+import { formatDate, monthKey, monthLabel, todayInMalaysia } from '../lib/dates'
 import { skuLabel, TIER_LABEL } from '../data/products'
 import { countryName, MALAYSIA_SEGMENT_LABEL, type MalaysiaSegment } from '../data/countries'
-import { basisOf, locationName } from '../data/locations'
+import { basisOf, locationById, locationName } from '../data/locations'
 import { rm } from '../lib/format'
 import { getSession, getSessionToken } from '../lib/session'
 import { auditId, getAuditActor, newestFirst, type AuditEntry, type AuditKind } from '../lib/audit'
@@ -49,6 +49,7 @@ import type {
   ClosingFigures,
   CrmData,
   DateStr,
+  PartnerSales,
   PoLine,
   PoStatus,
   PurchaseOrder,
@@ -60,6 +61,9 @@ import { DEMO_TODAY } from '../data/seed'
 
 /** Corrections are allowed for three days after the period (Q19). */
 export { CORRECTION_WINDOW_DAYS }
+
+/** Who keys in dealers' and consignment partners' monthly sales. Mirrored on the server. */
+export const PARTNER_KEYERS: Role[] = ['md', 'ops', 'pa', 'finance']
 
 /** How often to ask the server for changes, on top of the change signal. */
 const POLL_MS = 20_000
@@ -219,6 +223,16 @@ export interface DataState extends CrmData {
     actor?: { id: string; name: string; role: Role }
   }) => void
 
+  /**
+   * Keys in dealers' and consignment partners' sales for a month: one figure
+   * each. `null` takes a figure back — keyed against the wrong partner, say.
+   * Davy, Kelly, Chloe and Finance only.
+   */
+  savePartnerSales: (args: {
+    month: string
+    figures: { locationId: string; revenueMYR: number | null }[]
+  }) => Result
+
   markAlertRead: (id: string) => void
   markAllAlertsRead: () => void
   setTarget: (locationId: string, month: string, amountMYR: number) => void
@@ -258,6 +272,7 @@ function rebuild(today: DateStr): CrmData & { users: Person[]; unfiledLines: Dat
   const targets = live<Target>('target')
   const promotions = live<Promotion>('promotion')
   const audit = live<AuditEntry>('audit').sort(newestFirst)
+  const partnerSales = live<PartnerSales>('partner_sales')
   const readIds = new Set(live<{ id: string }>('alert_read').map((r) => r.id))
 
   const liveLines: Record<string, SaleLine[]> = {}
@@ -283,6 +298,7 @@ function rebuild(today: DateStr): CrmData & { users: Person[]; unfiledLines: Dat
     audit,
     liveLines,
     users: people,
+    partnerSales,
   }
   const alerts: Alert[] = deriveAlerts(base, readIds)
   return { ...base, alerts, users: people, unfiledLines }
@@ -316,6 +332,7 @@ const empty = (): CrmData => ({
   audit: [],
   liveLines: {},
   users: seedPeople,
+  partnerSales: [],
 })
 
 export const useData = create<DataState>()((set, get) => {
@@ -980,6 +997,70 @@ export const useData = create<DataState>()((set, get) => {
           : `Edited the promotion “${before.name}”`,
         entityId: id,
       })
+    },
+
+    // ── Dealers and consignment ──────────────────────────────────────
+    savePartnerSales: ({ month, figures }) => {
+      const who = me()
+      if (!who) return { ok: false, error: 'Sign in again.' }
+      if (!PARTNER_KEYERS.includes(who.role)) {
+        return { ok: false, error: 'Only Davy, Kelly, Chloe or Finance can key in dealer and consignment sales.' }
+      }
+      if (!/^\d{4}-\d{2}$/.test(month)) return { ok: false, error: 'Choose a month.' }
+      if (month > monthKey(get().today)) return { ok: false, error: 'That month has not started yet.' }
+
+      const before = new Map(
+        get().partnerSales.filter((p) => p.month === month).map((p) => [p.locationId, p]),
+      )
+      const at = new Date().toISOString()
+      const put: PutDoc[] = []
+      const gone: string[] = []
+      const changes: string[] = []
+      for (const f of figures) {
+        const where = locationById(f.locationId)
+        if (!where || (where.channel !== 'dealer' && where.channel !== 'consignment')) {
+          return { ok: false, error: 'Only dealers and consignment partners are keyed in here.' }
+        }
+        const was = before.get(f.locationId)
+        if (f.revenueMYR === null) {
+          if (was) {
+            gone.push(`${f.locationId}::${month}`)
+            changes.push(`${where.shortName}: ${rm(was.revenueMYR)} → taken off`)
+          }
+          continue
+        }
+        if (!Number.isFinite(f.revenueMYR) || f.revenueMYR < 0) {
+          return { ok: false, error: `${where.shortName} needs a figure of 0 or more.` }
+        }
+        const value = Math.round(f.revenueMYR * 100) / 100
+        if (was && was.revenueMYR === value) continue
+        const doc: PartnerSales = {
+          locationId: f.locationId,
+          month,
+          revenueMYR: value,
+          enteredBy: who.name,
+          enteredAt: at,
+        }
+        put.push({
+          kind: 'partner_sales',
+          id: `${f.locationId}::${month}`,
+          locationId: f.locationId,
+          day: `${month}-01`,
+          doc,
+        })
+        changes.push(`${where.shortName}: ${was ? rm(was.revenueMYR) : 'nothing'} → ${rm(value)}`)
+      }
+      if (changes.length === 0) return { ok: false, error: 'Nothing has been changed.' }
+
+      if (put.length) write(put)
+      if (gone.length) remove('partner_sales', gone)
+      get().record({
+        kind: 'partner',
+        action: 'partner.keyed',
+        summary: `Keyed in ${monthLabel(month)} sales for ${changes.length} ${changes.length === 1 ? 'partner' : 'partners'}`,
+        detail: changes.join(' · '),
+      })
+      return { ok: true }
     },
 
     // ── Alerts & housekeeping ────────────────────────────────────────

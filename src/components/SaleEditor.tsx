@@ -18,6 +18,7 @@ import {
   type PriceTier,
 } from '../data/products'
 import { money, toSen } from '../lib/changes'
+import { moneyInput } from '../lib/format'
 import type { Result } from '../api/backend'
 import type { SaleLine } from '../data/types'
 
@@ -54,7 +55,7 @@ const toRow = (l: SaleLine, basis: PriceBasis, i: number): Row => ({
   skuId: l.skuId,
   tier: l.priceTier ?? basis,
   qty: l.qty,
-  other: l.priceTier === 'other' && typeof l.unitPriceMYR === 'number' ? String(l.unitPriceMYR) : '',
+  other: l.priceTier === 'other' && typeof l.unitPriceMYR === 'number' ? moneyInput(l.unitPriceMYR) : '',
 })
 
 /**
@@ -255,6 +256,7 @@ export function SaleEditor({
                           aria-label={`Price for one ${sku.label}`}
                           prefix="RM"
                           min={0}
+                          step="any"
                           value={r.other}
                           onChange={(e) => update(r.key, { other: e.target.value })}
                           placeholder="Price for one, 0 if free"
