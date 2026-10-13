@@ -72,6 +72,10 @@ export const NAV: Record<Role, NavItem[]> = {
     { to: '/analytics', label: 'Analytics', icon: 'chart' },
     { to: '/catalogue', label: 'Products', icon: 'sparkle' },
     { to: '/promotions', label: 'Promotions', icon: 'trophy' },
+    // Her overview lists the orders in flight and the stores that did not
+    // file, so she can open both. She approves neither (the company chart).
+    { to: '/orders', label: 'Orders', icon: 'doc', secondary: true },
+    { to: '/closings', label: 'Closings', icon: 'clipboard', secondary: true },
     { to: '/partners', label: 'Dealer sales', icon: 'wallet', secondary: true },
     { to: '/users', label: 'Logins', icon: 'users', secondary: true },
     { to: '/activity', label: 'Activity', icon: 'clock', secondary: true },

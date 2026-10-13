@@ -11,7 +11,15 @@ import { useData } from '../../store/useData'
 import { useCan, useCurrentUser } from '../../store/useAuth'
 import { useToasts } from '../../components/ui/Toast'
 import { poUnits, poValue } from '../../store/selectors'
-import { STATUS_LABEL, STATUS_OWNER, availableTransitions, canClearAccounts, chainProgress, isOpen } from '../../lib/po-machine'
+import {
+  STATUS_LABEL,
+  STATUS_OWNER,
+  actsOnOrders,
+  availableTransitions,
+  canClearAccounts,
+  chainProgress,
+  isOpen,
+} from '../../lib/po-machine'
 import { locationById } from '../../data/locations'
 import { relativeDay } from '../../lib/dates'
 import { downloadCsv } from '../../lib/exportCsv'
@@ -49,7 +57,11 @@ export function Orders() {
   const push = useToasts((s) => s.push)
 
   const isPromoter = user?.role === 'promoter'
-  const [view, setView] = useState<View>(isPromoter ? 'open' : 'mine')
+  // Nothing ever waits on Chloe or the founder, so "Waiting on you" would
+  // always be empty for them: they open on what is in flight instead.
+  const [view, setView] = useState<View>(
+    !isPromoter && user && actsOnOrders(user.role) ? 'mine' : 'open',
+  )
 
   const scoped = useMemo(
     () =>

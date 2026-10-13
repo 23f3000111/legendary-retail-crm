@@ -8,6 +8,7 @@ import { DataTable, EmptyState, type Column } from '../../components/ui/DataTabl
 import { Modal } from '../../components/ui/Modal'
 import { SegmentedControl } from '../../components/ui/Field'
 import { Icon } from '../../components/ui/icons'
+import { LinkIf } from '../../components/ui/LinkIf'
 import { StockItemDetail } from '../../components/StockItemDetail'
 import { StorePicker } from '../../components/StorePicker'
 import { ChartFrame } from '../../components/charts/ChartFrame'
@@ -15,7 +16,8 @@ import { TrendChart } from '../../components/charts/TrendChart'
 import { OriginRibbon } from '../../components/charts/OriginRibbon'
 import { SkuBars } from '../../components/charts/SkuBars'
 import { useData } from '../../store/useData'
-import { useCan } from '../../store/useAuth'
+import { useCan, useCurrentUser } from '../../store/useAuth'
+import { canOpen } from '../../components/layout/nav'
 import {
   emptyFilter,
   selectKpis,
@@ -56,6 +58,10 @@ export function StoreDetail() {
   const navigate = useNavigate()
   const data = useData()
   const capability = useCan()
+  const user = useCurrentUser()
+  // Everybody who sees the estate opens this page, but not everybody opens
+  // orders — IT does not — and a link that bounces is worse than no link.
+  const open = (path: string) => (user && canOpen(user.role, path) ? path : undefined)
 
   const [range, setRange] = useState<RangeKey>('30')
   const [item, setItem] = useState<StockRow | null>(null)
@@ -445,7 +451,7 @@ export function StoreDetail() {
             eyebrow="Supply"
             title="Recent orders"
             action={
-              capability.viewAll ? (
+              open('/orders') ? (
                 <Link to="/orders">
                   <Button size="sm" variant="ghost">
                     All orders
@@ -460,17 +466,18 @@ export function StoreDetail() {
               <EmptyState icon="doc" title="No orders" body="This store has not asked for stock." />
             ) : (
               orders.map((p) => (
-                <Link
+                <LinkIf
                   key={p.id}
-                  to={`/orders/${p.id}`}
-                  className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 transition-colors hover:border-primary/40"
+                  to={open(`/orders/${p.id}`)}
+                  className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5"
+                  linkClassName="transition-colors hover:border-primary/40"
                 >
                   <span className="readout text-[12.5px] font-medium text-ink">{p.id}</span>
                   <span className="text-[11.5px] text-ink-3">{p.lines.length} items</span>
                   <span className="ml-auto">
                     <StatusChip status={p.status} />
                   </span>
-                </Link>
+                </LinkIf>
               ))
             )}
           </PanelBody>

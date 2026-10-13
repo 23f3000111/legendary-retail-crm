@@ -7,6 +7,7 @@ import { StatTile } from '../../components/ui/StatTile'
 import { EmptyState } from '../../components/ui/DataTable'
 import { ProgressBar } from '../../components/ui/Progress'
 import { Icon } from '../../components/ui/icons'
+import { LinkIf } from '../../components/ui/LinkIf'
 import { ChartFrame } from '../../components/charts/ChartFrame'
 import { Donut, DonutTable, type DonutSlice } from '../../components/charts/Donut'
 import { OriginRibbon, OriginTable } from '../../components/charts/OriginRibbon'
@@ -79,8 +80,9 @@ const toSlices = (rows: { key: string; label: string; value: number }[], other: 
 export function Overview() {
   const data = useData()
   const user = useCurrentUser()
-  // A tile opens the screen behind its number — but only one this role may
-  // open, since a link that bounces is worse than no link.
+  // Davy, Kelly and Chloe share this page but not their screens, so a link to
+  // another screen is shown only to whoever may open it. The route guard sends
+  // anybody else home, and a link that bounces is worse than no link.
   const open = (path: string) => (user && canOpen(user.role, path) ? path : undefined)
   const capability = useCan()
   const executive = user?.role === 'director'
@@ -149,11 +151,13 @@ export function Overview() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Link to="/analytics">
-            <Button variant="secondary" icon="chart">
-              Analytics
-            </Button>
-          </Link>
+          {open('/analytics') && (
+            <Link to="/analytics">
+              <Button variant="secondary" icon="chart">
+                Analytics
+              </Button>
+            </Link>
+          )}
           <Button variant="primary" icon="printer" onClick={() => window.print()}>
             Print
           </Button>
@@ -449,14 +453,16 @@ export function Overview() {
         <Panel>
           <PanelHeader
             eyebrow="Supply"
-            title={`${openOrders.length} orders in flight`}
+            title={`${openOrders.length} ${openOrders.length === 1 ? 'order' : 'orders'} in flight`}
             meta="Stock on its way back to the stores, and the desk each order is sitting on."
             action={
-              <Link to="/orders">
-                <Button size="sm" variant="ghost" iconRight="chevronRight">
-                  All orders
-                </Button>
-              </Link>
+              open('/orders') ? (
+                <Link to="/orders">
+                  <Button size="sm" variant="ghost" iconRight="chevronRight">
+                    All orders
+                  </Button>
+                </Link>
+              ) : undefined
             }
           />
           <Rule />
@@ -467,9 +473,10 @@ export function Overview() {
               <ul className="space-y-2">
                 {openOrders.slice(0, 6).map((po) => (
                   <li key={po.id}>
-                    <Link
-                      to={`/orders/${po.id}`}
-                      className="flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 transition-colors hover:border-primary/35"
+                    <LinkIf
+                      to={open(`/orders/${po.id}`)}
+                      className="flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5"
+                      linkClassName="transition-colors hover:border-primary/35"
                     >
                       <span className="readout text-[12.5px] font-medium text-ink">{po.id}</span>
                       <span className="text-[11.5px] text-ink-2">{locationById(po.locationId)?.shortName}</span>
@@ -483,8 +490,10 @@ export function Overview() {
                           ? STATUS_LABEL[po.status]
                           : `with ${STATUS_OWNER[po.status]}`}
                       </Badge>
-                      <Icon name="chevronRight" className="h-3.5 w-3.5 shrink-0 text-ink-3" />
-                    </Link>
+                      {open(`/orders/${po.id}`) && (
+                        <Icon name="chevronRight" className="h-3.5 w-3.5 shrink-0 text-ink-3" />
+                      )}
+                    </LinkIf>
                   </li>
                 ))}
               </ul>
@@ -499,9 +508,11 @@ export function Overview() {
           <p className="flex-1 text-[12.5px] leading-relaxed text-ink">
             {notFiled.length} {notFiled.length === 1 ? 'store has' : 'stores have'} not filed for{' '}
             {formatDate(yesterday)}.{' '}
-            <Link to="/closings" className="text-primary underline-offset-2 hover:underline">
-              Open the closings monitor
-            </Link>
+            {open('/closings') && (
+              <Link to="/closings" className="text-primary underline-offset-2 hover:underline">
+                Open the closings monitor
+              </Link>
+            )}
           </p>
         </div>
       )}

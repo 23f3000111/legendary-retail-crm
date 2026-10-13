@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  actsOnOrders,
   availableTransitions,
   awaitingFinance,
   canClearAccounts,
@@ -129,6 +130,17 @@ describe('who may do what', () => {
   it('requires a note only on rejection', () => {
     expect(TRANSITIONS.submitted.find((t) => t.to === 'rejected')?.requiresNote).toBe(true)
     expect(TRANSITIONS.submitted.find((t) => t.to === 'approved')?.requiresNote).toBeUndefined()
+  })
+
+  it('knows who an order can ever wait on — and that nothing waits on Chloe, the founder or IT', () => {
+    // The orders page opens on "Waiting on you" for those it can wait on, and
+    // on what is in flight for everybody else, rather than on an empty list.
+    for (const role of ['promoter', 'ops', 'md', 'finance', 'warehouse'] as Role[]) {
+      expect(actsOnOrders(role), role).toBe(true)
+    }
+    for (const role of ['pa', 'director', 'it'] as Role[]) {
+      expect(actsOnOrders(role), role).toBe(false)
+    }
   })
 })
 

@@ -104,6 +104,13 @@ export const STATUS_TONE: Record<PoStatus, StatusTone> = {
 export const canTransition = (from: PoStatus, to: PoStatus, role: Role): boolean =>
   TRANSITIONS[from].some((t) => t.to === to && t.by.includes(role))
 
+/**
+ * Whether an order can ever wait on this role: a move in the chain, or
+ * Finance's clearance. Nothing ever waits on Chloe, the founder or IT.
+ */
+export const actsOnOrders = (role: Role): boolean =>
+  role === 'finance' || Object.values(TRANSITIONS).some((moves) => moves.some((t) => t.by.includes(role)))
+
 /** The moves this role may make on this order, for rendering action buttons. */
 export const availableTransitions = (po: PurchaseOrder, role: Role): Transition[] =>
   TRANSITIONS[po.status].filter((t) => t.by.includes(role))
