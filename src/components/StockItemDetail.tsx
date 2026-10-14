@@ -1,8 +1,8 @@
 import { useMemo } from 'react'
 import { useData } from '../store/useData'
 import { basisOf } from '../data/locations'
-import { selectSkuMovements, type StockRow } from '../store/selectors'
-import { priceOf, skuById } from '../data/products'
+import { selectPricesAt, selectSkuMovements, type StockRow } from '../store/selectors'
+import { skuById, TIER_LABEL } from '../data/products'
 import { formatDate } from '../lib/dates'
 import { num, rm } from '../lib/format'
 
@@ -29,6 +29,10 @@ export function StockItemDetail({
     () => selectSkuMovements(data, locationId, skuId, 30),
     [data, locationId, skuId],
   )
+
+  // The same price the stock table shows: what it went for, off the sales.
+  const prices = useMemo(() => selectPricesAt(data, locationId)(skuId), [data, locationId, skuId])
+  const basis = basisOf(locationId)
 
   const inTotal = moves.filter((m) => m.change > 0).reduce((a, m) => a + m.change, 0)
   const outTotal = -moves.filter((m) => m.change < 0).reduce((a, m) => a + m.change, 0)
@@ -61,7 +65,14 @@ export function StockItemDetail({
         </span>
         {sku && (
           <span>
-            <span className="readout text-ink-2">{rm(priceOf(sku, basisOf(locationId)))}</span> each
+            {prices.map((p, i) => (
+              <span key={`${p.tier}:${p.unitPrice}`}>
+                {i > 0 && ' or '}
+                <span className="readout text-ink-2">{p.tier === 'foc' ? 'FOC' : rm(p.unitPrice)}</span>
+                {p.tier !== basis && p.tier !== 'foc' && ` (${TIER_LABEL[p.tier].toLowerCase()})`}
+              </span>
+            ))}
+            {prices[0]?.tier !== 'foc' && ' each'}
           </span>
         )}
         {row.suggested > 0 && (

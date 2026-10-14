@@ -21,18 +21,21 @@ import { canOpen } from '../../components/layout/nav'
 import {
   emptyFilter,
   selectKpis,
+  selectLastFiled,
   selectOriginMix,
+  selectPricesAt,
   selectSkuPerformance,
   selectStock,
   selectTimeSeries,
   totalsFor,
+  type SoldAt,
   type StockRow,
 } from '../../store/selectors'
 import { CHANNEL_LABEL, locationById } from '../../data/locations'
 import { addDays, formatDate, monthKey, startOfMonth } from '../../lib/dates'
 import { downloadCsv } from '../../lib/exportCsv'
 import { change, num, rm } from '../../lib/format'
-import { isFoc, priceOf, skuById } from '../../data/products'
+import { TIER_LABEL } from '../../data/products'
 
 type RangeKey = '7' | '30' | '90'
 
@@ -134,17 +137,15 @@ export function StoreDetail() {
   // The day the store last filed, and what that closing took off the shelf:
   // the "deducted" column Finance asked for (client's fifth revision). Sold,
   // and written off — a used-up tester leaves the shelf as surely as a sale.
-  const lastFiled = data.closings
-    .filter((c) => c.locationId === id && c.periodType === 'day')
-    .reduce<(typeof data.closings)[number] | undefined>((a, c) => (!a || c.period > a.period ? c : a), undefined)
+  const lastFiled = selectLastFiled(data, id)
   const deducted = new Map<string, number>()
   for (const l of [...(lastFiled?.lines ?? []), ...(lastFiled?.writeOffs ?? [])]) {
     deducted.set(l.skuId, (deducted.get(l.skuId) ?? 0) + l.qty)
   }
-  const priceLabel = (skuId: string) => {
-    const sku = skuById(skuId)
-    return isFoc(sku) ? 'FOC' : rm(priceOf(sku, location.priceBasis))
-  }
+  // The price each product went for, off the sales themselves, so a Wish
+  // added on at the RM 10 offer reads RM 10 here as it does on the sale.
+  const pricesAt = selectPricesAt(data, id)
+  const several = (prices: SoldAt[]) => prices.length > 1
 
   const outOfStock = stock.filter((s) => s.status === 'out').length
   const lowStock = stock.filter((s) => s.status === 'low' || s.status === 'critical').length
@@ -164,8 +165,22 @@ export function StoreDetail() {
       key: 'price',
       header: 'Price',
       align: 'right',
-      width: '90px',
-      render: (r) => <span className="readout text-[12.5px] text-ink-2">{priceLabel(r.skuId)}</span>,
+      width: '130px',
+      render: (r) => {
+        const prices = pricesAt(r.skuId)
+        return (
+          <span className="inline-flex flex-col items-end gap-1">
+            {prices.map((p) => (
+              <span key={`${p.tier}:${p.unitPrice}`} className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                {/* Labelled the way the sale is, where it is not the store's own price. */}
+                {p.tier !== location.priceBasis && p.tier !== 'foc' && <Badge tone="neutral">{TIER_LABEL[p.tier]}</Badge>}
+                <span className="readout text-[12.5px] text-ink-2">{p.tier === 'foc' ? 'FOC' : rm(p.unitPrice)}</span>
+                {several(prices) && <span className="readout text-[11px] text-ink-3">×{num(p.qty)}</span>}
+              </span>
+            ))}
+          </span>
+        )
+      },
     },
     {
       key: 'deducted',
@@ -338,8 +353,8 @@ export function StoreDetail() {
           title={`${stock.length} products on the shelf`}
           meta={
             lastFiled
-              ? `Price is what this store sells at. Deducted is what the ${formatDate(lastFiled.period)} closing took off the shelf — sold, plus any tester, damage or sample. Tap a product to see what came in and what went out.`
-              : 'Tap a product to see what came in and what went out.'
+              ? `Price is what each product went for on ${formatDate(lastFiled.period)}, as on the sales, or what it usually goes for here if it did not sell that day. Deducted is what that closing took off the shelf: sold, plus any tester, damage or sample. Tap a product to see what came in and what went out.`
+              : 'Price is what each product usually goes for here. Tap a product to see what came in and what went out.'
           }
           action={
             <Button
@@ -362,7 +377,12 @@ export function StoreDetail() {
                   stock.map((r) => [
                     r.label,
                     r.code,
-                    isFoc(skuById(r.skuId)) ? 'FOC' : priceOf(skuById(r.skuId), location.priceBasis),
+                    (() => {
+                      // One figure where there was one price; each, with its count, where there were more.
+                      const prices = pricesAt(r.skuId)
+                      const one = (p: SoldAt) => (p.tier === 'foc' ? 'FOC' : p.unitPrice)
+                      return several(prices) ? prices.map((p) => `${one(p)} x${p.qty}`).join(' / ') : one(prices[0])
+                    })(),
                     deducted.get(r.skuId) ?? 0,
                     r.onHand,
                     r.reorderPoint,

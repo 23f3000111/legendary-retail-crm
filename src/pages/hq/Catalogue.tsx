@@ -68,7 +68,7 @@ export function Catalogue() {
     },
     {
       key: 'price',
-      header: 'Retail · Promotion',
+      header: 'Prices',
       align: 'right',
       width: '170px',
       render: (s) =>
@@ -78,6 +78,10 @@ export function Catalogue() {
           <div>
             <span className="readout text-[13px] text-ink">{rm(s.promotionPriceMYR)}</span>
             <p className="readout text-[10.5px] text-ink-3">was {rm(s.retailPriceMYR)}</p>
+            {/* The Wishes' add-on price: what most of them go for (client, 13 October). */}
+            {s.offerMYR !== undefined && (
+              <p className="readout text-[10.5px] text-ink-3">offer {rm(s.offerMYR)}</p>
+            )}
           </div>
         ) : (
           // A vial: always given free (client, 6 October).

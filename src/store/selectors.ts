@@ -28,17 +28,20 @@ import {
   countedSkus,
   skuById,
   collections,
+  isFoc,
   lineUnitPrice,
+  priceOf,
   priceOfId,
   productById,
   type CollectionId,
+  type PriceTier,
   type Variant,
 } from '../data/products'
 import { countries } from '../data/countries'
 import { linesDiffer } from '../lib/changes'
 import { addDays, dateRange, daysBetween, monthKey, shiftMonth } from '../lib/dates'
 import { effectiveQty, isOpen } from '../lib/po-machine'
-import type { Alert, Closing, CrmData, DateStr, PartnerSales, PurchaseOrder } from '../data/types'
+import type { Alert, Closing, CrmData, DateStr, PartnerSales, PurchaseOrder, SaleLine } from '../data/types'
 
 // ── Filter ─────────────────────────────────────────────────────────────────
 
@@ -729,6 +732,63 @@ export const selectSkuMovements = (
   return out.sort((a, b) =>
     a.date === b.date ? order[a.kind] - order[b.kind] : a.date < b.date ? 1 : -1,
   )
+}
+
+/** The day a store last filed, if it ever has. */
+export const selectLastFiled = (data: CrmData, locationId: string): Closing | undefined =>
+  data.closings
+    .filter((c) => c.locationId === locationId && c.periodType === 'day')
+    .reduce<Closing | undefined>((a, c) => (!a || c.period > a.period ? c : a), undefined)
+
+export interface SoldAt {
+  /** One unit, as charged. */
+  unitPrice: number
+  tier: PriceTier
+  /** Units that went at this price; 0 for a list price nobody has paid yet. */
+  qty: number
+}
+
+/**
+ * The price each item actually went for at one store, read off the sales
+ * themselves. A Wish added on at the RM 10 offer reads RM 10, as it does on
+ * the sale, not its RM 88 list price (client, 13 October: a product's price
+ * should be the same throughout the CRM).
+ *
+ * The day last filed comes first. Those are the sales the stock table's
+ * Deducted column counts, so every price they went at is listed, most units
+ * first. An item that did not sell that day shows the price most of it went
+ * for here over 30 days. One that has not sold here lately shows its list
+ * price at the store's own tier.
+ */
+export const selectPricesAt = (data: CrmData, locationId: string): ((skuId: string) => SoldAt[]) => {
+  const basis = basisOf(locationId)
+  const tally = (lines: SaleLine[]) => {
+    const out = new Map<string, SoldAt[]>()
+    for (const l of lines) {
+      const unitPrice = lineUnitPrice(l, basis)
+      const tier = l.priceTier ?? basis
+      const prices = out.get(l.skuId) ?? []
+      const same = prices.find((p) => p.unitPrice === unitPrice && p.tier === tier)
+      if (same) same.qty += l.qty
+      else prices.push({ unitPrice, tier, qty: l.qty })
+      out.set(l.skuId, prices)
+    }
+    for (const prices of out.values()) prices.sort((a, b) => b.qty - a.qty)
+    return out
+  }
+  const since = addDays(data.today, -30)
+  const onTheDay = tally(selectLastFiled(data, locationId)?.lines ?? [])
+  const lately = tally(
+    data.closings
+      .filter((c) => c.locationId === locationId && c.periodType === 'day' && c.period >= since)
+      .flatMap((c) => c.lines),
+  )
+  return (skuId) => {
+    const sold = onTheDay.get(skuId) ?? lately.get(skuId)?.slice(0, 1)
+    if (sold?.length) return sold
+    const sku = skuById(skuId)
+    return [isFoc(sku) ? { unitPrice: 0, tier: 'foc', qty: 0 } : { unitPrice: priceOf(sku, basis), tier: basis, qty: 0 }]
+  }
 }
 
 /**

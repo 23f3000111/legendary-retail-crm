@@ -3,6 +3,7 @@ import { buildSeed, DEMO_TODAY } from '../data/seed'
 import { basisOf, locationsInChannel, tradingLocations } from '../data/locations'
 import { priceOfId, skuById, skus } from '../data/products'
 import { addDays, dateRange } from '../lib/dates'
+import type { Closing, SaleLine } from '../data/types'
 import {
   deriveAlerts,
   selectNotFiled,
@@ -14,6 +15,7 @@ import {
   selectKpis,
   selectLocationRows,
   selectOriginMix,
+  selectPricesAt,
   selectSkuPerformance,
   selectSkusForCountry,
   selectStock,
@@ -371,5 +373,90 @@ describe('a product new to the range', () => {
   it('raises no alert for it at that store', () => {
     const alerts = deriveAlerts(before, new Set())
     expect(alerts.some((a) => a.locationId === 'pavilion-5' && a.skuId === 'love-retail')).toBe(false)
+  })
+})
+
+describe('the price an item went for, at one store', () => {
+  // Client, 13 October: a Wish added on to a bottle went at the RM 10 offer,
+  // but the store page priced it at its RM 88 list price. A product's price
+  // should be the same throughout the CRM.
+  const sold = (skuId: string, qty: number, priceTier: SaleLine['priceTier'], unitPriceMYR: number): SaleLine => ({
+    skuId,
+    qty,
+    priceTier,
+    unitPriceMYR,
+  })
+  const closing = (locationId: string, period: string, lines: SaleLine[]): Closing => ({
+    id: `${locationId}-${period}`,
+    locationId,
+    channel: 'main',
+    period,
+    periodType: 'day',
+    revenueMYR: lines.reduce((a, l) => a + l.qty * (l.unitPriceMYR ?? 0), 0),
+    lines,
+    staffSales: { qty: 0, revenueMYR: 0 },
+    stockCount: [],
+    writeOffs: [],
+    submittedBy: 'x',
+    submittedAt: 'x',
+  })
+  const at = (closings: Closing[]) =>
+    selectPricesAt({ ...data, today: '2026-10-13', closings }, 'pavilion-5')
+
+  it('reads a Wish sold at the offer as RM 10, the price on the sale', () => {
+    const prices = at([closing('pavilion-5', '2026-10-12', [sold('wish-3-set', 20, 'offer', 10)])])
+    expect(prices('wish-3-set')).toEqual([{ unitPrice: 10, tier: 'offer', qty: 20 }])
+  })
+
+  it('lists every price the day filed went at, most units first', () => {
+    const prices = at([
+      closing('pavilion-5', '2026-10-12', [
+        sold('wish-3-set', 1, 'promotion', 88),
+        sold('wish-3-set', 12, 'offer', 10),
+        sold('wish-3-set', 8, 'offer', 10),
+      ]),
+    ])
+    expect(prices('wish-3-set')).toEqual([
+      { unitPrice: 10, tier: 'offer', qty: 20 },
+      { unitPrice: 88, tier: 'promotion', qty: 1 },
+    ])
+  })
+
+  it('reads the day last filed, not an earlier one', () => {
+    const prices = at([
+      closing('pavilion-5', '2026-10-12', [sold('orchid-retail', 1, 'retail', 238)]),
+      closing('pavilion-5', '2026-10-11', [sold('orchid-retail', 5, 'promotion', 188)]),
+    ])
+    expect(prices('orchid-retail')).toEqual([{ unitPrice: 238, tier: 'retail', qty: 1 }])
+  })
+
+  it('shows what most of it went for over 30 days when it did not sell that day', () => {
+    const prices = at([
+      closing('pavilion-5', '2026-10-12', [sold('orchid-retail', 1, 'promotion', 188)]),
+      closing('pavilion-5', '2026-10-05', [sold('wish-1-set', 3, 'offer', 10), sold('wish-1-set', 1, 'promotion', 88)]),
+      closing('pavilion-5', '2026-10-04', [sold('wish-1-set', 2, 'offer', 10)]),
+    ])
+    expect(prices('wish-1-set')).toEqual([{ unitPrice: 10, tier: 'offer', qty: 5 }])
+  })
+
+  it('falls back to the list price at the store’s own tier when it has not sold lately', () => {
+    const prices = at([
+      closing('pavilion-5', '2026-10-12', [sold('orchid-retail', 1, 'promotion', 188)]),
+      // Older than 30 days, so it does not count.
+      closing('pavilion-5', '2026-08-01', [sold('mahsuri-retail', 5, 'retail', 238)]),
+    ])
+    expect(prices('mahsuri-retail')).toEqual([{ unitPrice: 188, tier: 'promotion', qty: 0 }])
+    expect(selectPricesAt({ ...data, today: '2026-10-13', closings: [] }, 'bsas')('mahsuri-retail')).toEqual([
+      { unitPrice: 238, tier: 'retail', qty: 0 },
+    ])
+  })
+
+  it('keeps a vial free of charge', () => {
+    expect(at([])('wish-3-vial')).toEqual([{ unitPrice: 0, tier: 'foc', qty: 0 }])
+  })
+
+  it('counts only this store', () => {
+    const prices = at([closing('klia-t2', '2026-10-12', [sold('wish-3-set', 4, 'offer', 10)])])
+    expect(prices('wish-3-set')).toEqual([{ unitPrice: 88, tier: 'promotion', qty: 0 }])
   })
 })
