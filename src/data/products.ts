@@ -24,6 +24,11 @@
  * rest: every vial goes free of charge — one tap, "FOC", RM 0, nothing to
  * type — and vials are counted on the shelf every night like everything else.
  *
+ * ── More prices at the counter (15 October) ─────────────────────────────────
+ *
+ * Everything at RM 188 can also go at RM 198, "Promotion 2". The Wishes can be
+ * given free of charge, in place of the RM 10 offer they went at before.
+ *
  * There is deliberately no cost price anywhere. The client was explicit that
  * only revenue is recorded (Q58, Q65); the one margin figure in the system sits
  * on the location, not on the product.
@@ -53,11 +58,14 @@ export type PriceBasis = 'retail' | 'promotion'
  * one was charged is the only way the revenue can be right, and it is also the
  * only way to answer "how much did we sell at full price?"
  */
-export type PriceTier = 'retail' | 'promotion' | 'offer' | 'other' | 'foc'
+export type PriceTier = 'retail' | 'promotion' | 'promotion2' | 'offer' | 'other' | 'foc'
 
 export const TIER_LABEL: Record<PriceTier, string> = {
   retail: 'Retail',
   promotion: 'Promotion',
+  // RM 198 on everything at RM 188 (client, 15 October).
+  promotion2: 'Promotion 2',
+  // The Wishes' RM 10 add-on price, until 15 October. Only older sales carry it.
   offer: 'Offer',
   // "All items add an 'others' section for them to fill up other amount" —
   // the counter types what was actually charged.
@@ -87,8 +95,15 @@ export interface Sku {
   retailPriceMYR: number
   /** The everyday price. What every other location is counted on. */
   promotionPriceMYR: number
-  /** The extra the client's list shows against the Wishes. */
+  /** RM 198, "Promotion 2", on everything at RM 188 (client, 15 October). */
+  promotion2MYR?: number
+  /**
+   * The Wishes' RM 10 offer. Not offered at the counter since 15 October, when
+   * the Wishes went free instead; kept so a sale made at it still reads RM 10.
+   */
   offerMYR?: number
+  /** May be given free of charge as well as sold: the Wishes (client, 15 October). */
+  canGoFree?: boolean
   /** Units at or below which a top-up should be raised. */
   reorderPoint: number
   /** The warehouse ships in multiples of this. */
@@ -141,6 +156,8 @@ interface SellableSeed {
   retail: number
   promotion: number
   offer?: number
+  /** Given free with a bottle, as well as sold. */
+  free?: boolean
   popularity: number
   bestseller?: boolean
   /** Where the usual `product-variant` id is taken, or must not change. */
@@ -184,9 +201,10 @@ const sellableSeeds: SellableSeed[] = [
   { productId: 'nyonya', size: 'Travel Kit', variant: 'travel', retail: 68, promotion: 68, popularity: 3 },
   // Single 15ml bottles, not sets (client, 6 October). The ids stay as they
   // were, so every sale, count and order already filed stays with them.
-  { productId: 'wish-1', size: '15ml', variant: 'retail', retail: 128, promotion: 88, offer: 10, popularity: 6, id: 'wish-1-set' },
-  { productId: 'wish-2', size: '15ml', variant: 'retail', retail: 128, promotion: 88, offer: 10, popularity: 5, id: 'wish-2-set' },
-  { productId: 'wish-3', size: '15ml', variant: 'retail', retail: 128, promotion: 88, offer: 10, popularity: 5, id: 'wish-3-set' },
+  // Given free with a bottle instead of the RM 10 offer (client, 15 October).
+  { productId: 'wish-1', size: '15ml', variant: 'retail', retail: 128, promotion: 88, offer: 10, free: true, popularity: 6, id: 'wish-1-set' },
+  { productId: 'wish-2', size: '15ml', variant: 'retail', retail: 128, promotion: 88, offer: 10, free: true, popularity: 5, id: 'wish-2-set' },
+  { productId: 'wish-3', size: '15ml', variant: 'retail', retail: 128, promotion: 88, offer: 10, free: true, popularity: 5, id: 'wish-3-set' },
 ]
 
 /**
@@ -272,7 +290,9 @@ const sellable: Sku[] = sellableSeeds.map((s) => ({
   size: s.size,
   retailPriceMYR: s.retail,
   promotionPriceMYR: s.promotion,
+  ...(s.promotion === 188 ? { promotion2MYR: 198 } : {}),
   ...(s.offer ? { offerMYR: s.offer } : {}),
+  ...(s.free ? { canGoFree: true } : {}),
   reorderPoint: 24,
   caseSize: 12,
   popularity: s.popularity,
@@ -384,6 +404,7 @@ export const priceOfId = (skuId: string, basis: PriceBasis): number =>
 export const priceAtTier = (sku: Sku | undefined, tier: PriceTier): number => {
   if (!sku) return 0
   if (tier === 'retail') return sku.retailPriceMYR
+  if (tier === 'promotion2') return sku.promotion2MYR ?? sku.promotionPriceMYR
   if (tier === 'offer') return sku.offerMYR ?? sku.promotionPriceMYR
   if (tier === 'other' || tier === 'foc') return 0
   return sku.promotionPriceMYR
@@ -393,16 +414,18 @@ export const priceAtTier = (sku: Sku | undefined, tier: PriceTier): number => {
  * The tiers this item can be sold at, in the order the counter should see them.
  *
  * The store's own basis comes first, since that is the price it charges nine
- * times in ten. Only the three Wishes carry an offer price, so only they get a
- * third button.
+ * times in ten. Everything at RM 188 has Promotion 2 at RM 198 beside its
+ * promotion price, and the Wishes can be given free (both 15 October).
  */
 export const tiersFor = (sku: Sku | undefined, basis: PriceBasis = 'promotion'): PriceTier[] => {
   if (!sku) return []
   // A vial is free: one button, nothing to type.
   if (isFoc(sku)) return ['foc']
   if (!hasListPrice(sku)) return ['other']
-  const usual: PriceTier[] = basis === 'retail' ? ['retail', 'promotion'] : ['promotion', 'retail']
-  return [...(sku.offerMYR ? [...usual, 'offer' as const] : usual), 'other']
+  // Promotion 2 sits next to the promotion price it is a step up from.
+  const promotion: PriceTier[] = sku.promotion2MYR ? ['promotion', 'promotion2'] : ['promotion']
+  const usual: PriceTier[] = basis === 'retail' ? ['retail', ...promotion] : [...promotion, 'retail']
+  return [...usual, ...(sku.canGoFree ? ['foc' as const] : []), 'other']
 }
 
 /**

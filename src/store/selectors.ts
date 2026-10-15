@@ -368,6 +368,31 @@ export const selectOriginMix = (data: CrmData, f: Filter, top = 6): OriginSlice[
   return originSlicesFrom(tally, top)
 }
 
+/**
+ * Where one store's customers came from, from `from` to today — today read
+ * live from the counter, as the promoters ring sales up, and the days before
+ * it from what was filed. The store page's day, week and month-to-date views
+ * (client, 15 October). Today is counted once, from the live sales, whether
+ * or not it has been filed yet.
+ */
+export const selectOriginsSince = (data: CrmData, locationId: string, from: DateStr, top = 6): OriginSlice[] => {
+  const basis = basisOf(locationId)
+  const tally = new Map<string, { units: number; revenue: number }>()
+  const count = (line: SaleLine) => {
+    if (!line.countryCode) return
+    const bucket = tally.get(line.countryCode) ?? { units: 0, revenue: 0 }
+    bucket.units += line.qty
+    bucket.revenue += line.qty * lineUnitPrice(line, basis)
+    tally.set(line.countryCode, bucket)
+  }
+  for (const c of data.closings) {
+    if (c.locationId !== locationId || c.periodType !== 'day' || c.period < from || c.period >= data.today) continue
+    c.lines.forEach(count)
+  }
+  if (from <= data.today) (data.liveLines[locationId] ?? []).forEach(count)
+  return originSlicesFrom(tally, top)
+}
+
 /** What one nationality bought, ranked — the question the airports raise. */
 export const selectSkusForCountry = (data: CrmData, f: Filter, countryCode: string) => {
   const allowed = skuIdsFor(f)

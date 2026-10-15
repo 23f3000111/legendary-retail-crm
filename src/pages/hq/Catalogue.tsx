@@ -78,10 +78,11 @@ export function Catalogue() {
           <div>
             <span className="readout text-[13px] text-ink">{rm(s.promotionPriceMYR)}</span>
             <p className="readout text-[10.5px] text-ink-3">was {rm(s.retailPriceMYR)}</p>
-            {/* The Wishes' add-on price: what most of them go for (client, 13 October). */}
-            {s.offerMYR !== undefined && (
-              <p className="readout text-[10.5px] text-ink-3">offer {rm(s.offerMYR)}</p>
+            {/* Every price the counter offers (client, 15 October). */}
+            {s.promotion2MYR !== undefined && (
+              <p className="readout text-[10.5px] text-ink-3">promotion 2 {rm(s.promotion2MYR)}</p>
             )}
+            {s.canGoFree && <p className="readout text-[10.5px] text-ink-3">or FOC</p>}
           </div>
         ) : (
           // A vial: always given free (client, 6 October).
@@ -113,7 +114,8 @@ export function Catalogue() {
         'Collection',
         'Retail MYR',
         'Promotion MYR',
-        'Offer MYR',
+        'Promotion 2 MYR',
+        'Can go FOC',
         'Reorder at',
         'Case size',
       ],
@@ -125,7 +127,8 @@ export function Catalogue() {
         productById(s.productId)?.collection ?? '',
         hasListPrice(s) ? s.retailPriceMYR : '',
         hasListPrice(s) ? s.promotionPriceMYR : '',
-        s.offerMYR ?? '',
+        s.promotion2MYR ?? '',
+        s.canGoFree ? 'Yes' : '',
         s.reorderPoint,
         s.caseSize,
       ]),

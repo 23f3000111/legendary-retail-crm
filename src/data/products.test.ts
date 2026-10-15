@@ -47,7 +47,7 @@ describe('the price list', () => {
       expect(sku!.size).toBe('50ml')
       expect(sku!.promotionPriceMYR).toBe(188)
       expect(sku!.retailPriceMYR).toBe(238)
-      expect(tiersFor(sku)).toEqual(['promotion', 'retail', 'other'])
+      expect(tiersFor(sku)).toEqual(['promotion', 'promotion2', 'retail', 'other'])
     }
   })
 
@@ -60,7 +60,7 @@ describe('the price list', () => {
     expect(skuById('spirit-2-set')?.label).toBe('Spirit 2 · Set')
   })
 
-  it('prices the three Wishes at 128 and 88, with the offer', () => {
+  it('prices the three Wishes at 128 and 88, and gives them free with a bottle', () => {
     const wishes = sellableSkus.filter((s) => s.retailPriceMYR === 128)
     expect(wishes.map((s) => s.label).sort()).toEqual([
       'Wish 1 · 15ml',
@@ -68,6 +68,8 @@ describe('the price list', () => {
       'Wish 3 · 15ml',
     ])
     expect(wishes.every((s) => s.promotionPriceMYR === 88)).toBe(true)
+    expect(wishes.every((s) => s.canGoFree)).toBe(true)
+    // The RM 10 offer they went at until 15 October, so older sales still price right.
     expect(wishes.every((s) => s.offerMYR === 10)).toBe(true)
   })
 
@@ -125,16 +127,31 @@ describe('the price the counter chooses', () => {
   const wish = skuById('wish-1-set')
 
   it('offers every item at promotion and retail, the store’s own price first, then other', () => {
-    expect(tiersFor(orchid, 'promotion')).toEqual(['promotion', 'retail', 'other'])
-    expect(tiersFor(orchid, 'retail')).toEqual(['retail', 'promotion', 'other'])
+    expect(tiersFor(orchid, 'promotion')).toEqual(['promotion', 'promotion2', 'retail', 'other'])
+    expect(tiersFor(orchid, 'retail')).toEqual(['retail', 'promotion', 'promotion2', 'other'])
     expect(tiersFor(undefined)).toEqual([])
   })
 
-  it('offers the Wishes at the offer price as well, and nothing else', () => {
-    expect(tiersFor(wish, 'promotion')).toEqual(['promotion', 'retail', 'offer', 'other'])
-    for (const s of sellableSkus.filter((k) => !k.productId.startsWith('wish-'))) {
-      expect(tiersFor(s), s.label).not.toContain('offer')
+  it('offers RM 198 as Promotion 2 on everything at RM 188, and on nothing else (client, 15 October)', () => {
+    expect(TIER_LABEL.promotion2).toBe('Promotion 2')
+    const at188 = sellableSkus.filter((s) => s.promotionPriceMYR === 188)
+    expect(at188.length).toBeGreaterThan(10)
+    for (const s of at188) {
+      expect(tiersFor(s), s.label).toContain('promotion2')
+      expect(priceAtTier(s, 'promotion2'), s.label).toBe(198)
     }
+    for (const s of sellableSkus.filter((k) => k.promotionPriceMYR !== 188)) {
+      expect(tiersFor(s), s.label).not.toContain('promotion2')
+      // Asked for anyway, it falls back to the everyday price.
+      expect(priceAtTier(s, 'promotion2'), s.label).toBe(s.promotionPriceMYR)
+    }
+  })
+
+  it('gives the Wishes away instead of the RM 10 offer (client, 15 October)', () => {
+    expect(tiersFor(wish, 'promotion')).toEqual(['promotion', 'retail', 'foc', 'other'])
+    expect(priceAtTier(wish, 'foc')).toBe(0)
+    // Nothing is offered at the old offer price any more.
+    for (const s of sellableSkus) expect(tiersFor(s), s.label).not.toContain('offer')
   })
 
   it('has three travel kits at RM 68, counted and sold', () => {
@@ -165,8 +182,8 @@ describe('the price the counter chooses', () => {
     expect(TIER_LABEL.foc).toBe('FOC')
     expect(lineUnitPrice({ skuId: 'orchid-vial', priceTier: 'foc', unitPriceMYR: 0 }, 'promotion')).toBe(0)
     expect(lineUnitPrice({ skuId: 'orchid-vial', priceTier: 'foc' }, 'retail')).toBe(0)
-    // Nothing else is ever free.
-    for (const s of sellableSkus.filter((k) => k.variant !== 'vial')) {
+    // Nothing else is ever free, apart from the Wishes.
+    for (const s of sellableSkus.filter((k) => k.variant !== 'vial' && !k.productId.startsWith('wish-'))) {
       expect(tiersFor(s), s.label).not.toContain('foc')
     }
   })
@@ -174,6 +191,8 @@ describe('the price the counter chooses', () => {
   it('prices each tier off the list', () => {
     expect(priceAtTier(orchid, 'retail')).toBe(238)
     expect(priceAtTier(orchid, 'promotion')).toBe(188)
+    expect(priceAtTier(orchid, 'promotion2')).toBe(198)
+    // A sale from before 15 October at the offer still reads RM 10.
     expect(priceAtTier(wish, 'offer')).toBe(10)
     expect(priceAtTier(undefined, 'retail')).toBe(0)
   })

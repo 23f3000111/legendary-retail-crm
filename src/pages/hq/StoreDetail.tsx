@@ -23,6 +23,7 @@ import {
   selectKpis,
   selectLastFiled,
   selectOriginMix,
+  selectOriginsSince,
   selectPricesAt,
   selectSkuPerformance,
   selectStock,
@@ -32,12 +33,15 @@ import {
   type StockRow,
 } from '../../store/selectors'
 import { CHANNEL_LABEL, locationById } from '../../data/locations'
-import { addDays, formatDate, monthKey, startOfMonth } from '../../lib/dates'
+import { addDays, formatDate, monthKey, startOfMonth, startOfWeek } from '../../lib/dates'
 import { downloadCsv } from '../../lib/exportCsv'
 import { change, num, rm } from '../../lib/format'
 import { TIER_LABEL } from '../../data/products'
 
 type RangeKey = '7' | '30' | '90'
+
+/** "Where they came from" over the page's range, or today, this week, this month (client, 15 October). */
+type OriginPeriod = 'range' | 'today' | 'week' | 'month'
 
 const RANGES: { value: RangeKey; label: string }[] = [
   { value: '7', label: '7 days' },
@@ -67,6 +71,7 @@ export function StoreDetail() {
   const open = (path: string) => (user && canOpen(user.role, path) ? path : undefined)
 
   const [range, setRange] = useState<RangeKey>('30')
+  const [originPeriod, setOriginPeriod] = useState<OriginPeriod>('range')
   const [item, setItem] = useState<StockRow | null>(null)
 
   const location = locationById(id)
@@ -81,7 +86,24 @@ export function StoreDetail() {
 
   const kpis = useMemo(() => selectKpis(data, filter), [data, filter])
   const series = useMemo(() => selectTimeSeries(data, filter, 'revenue'), [data, filter])
-  const origins = useMemo(() => selectOriginMix(data, filter, 6), [data, filter])
+  // The page's range reads what was filed, like every chart on the page.
+  // Today, this week and the month to date read today's sales live as well.
+  const originFrom =
+    originPeriod === 'today'
+      ? data.today
+      : originPeriod === 'week'
+        ? startOfWeek(data.today)
+        : startOfMonth(data.today)
+  const origins = useMemo(
+    () => (originPeriod === 'range' ? selectOriginMix(data, filter, 6) : selectOriginsSince(data, id, originFrom, 6)),
+    [data, filter, id, originPeriod, originFrom],
+  )
+  const originWhen =
+    originPeriod === 'range'
+      ? `Last ${range} days`
+      : originPeriod === 'today'
+        ? 'Today so far, live'
+        : `${originPeriod === 'week' ? 'This week' : 'Month to date'}: ${formatDate(originFrom)} to today, with today live`
   const skuRows = useMemo(() => selectSkuPerformance(data, filter).slice(0, 8), [data, filter])
   const stock = useMemo(() => (location ? selectStock(data, id) : []), [data, id, location])
 
@@ -324,14 +346,31 @@ export function StoreDetail() {
             title="Where they came from"
             meta={
               location.recordsCountries
-                ? 'Recorded on every sale, never estimated.'
+                ? `${originWhen}. Recorded on every sale, never estimated.`
                 : 'This channel does not record customer countries.'
             }
           />
           <Rule />
-          <PanelBody>
+          <PanelBody className="space-y-4">
             {location.recordsCountries ? (
-              <OriginRibbon slices={origins} height={40} />
+              <>
+                <SegmentedControl<OriginPeriod>
+                  size="sm"
+                  value={originPeriod}
+                  onChange={setOriginPeriod}
+                  options={[
+                    { value: 'today', label: 'Today' },
+                    { value: 'week', label: 'Week' },
+                    { value: 'month', label: 'Month' },
+                    { value: 'range', label: `${range} days` },
+                  ]}
+                />
+                {origins.length ? (
+                  <OriginRibbon slices={origins} height={40} />
+                ) : (
+                  <p className="py-4 text-center text-[12.5px] text-ink-3">No customers recorded yet.</p>
+                )}
+              </>
             ) : (
               <p className="py-6 text-center text-[12.5px] text-ink-3">
                 Only main stores capture nationality (Q29).

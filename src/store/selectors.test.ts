@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { buildSeed, DEMO_TODAY } from '../data/seed'
 import { basisOf, locationsInChannel, tradingLocations } from '../data/locations'
 import { priceOfId, skuById, skus } from '../data/products'
-import { addDays, dateRange } from '../lib/dates'
+import { addDays, dateRange, startOfMonth, startOfWeek } from '../lib/dates'
 import type { Closing, SaleLine } from '../data/types'
 import {
   deriveAlerts,
@@ -15,6 +15,7 @@ import {
   selectKpis,
   selectLocationRows,
   selectOriginMix,
+  selectOriginsSince,
   selectPricesAt,
   selectSkuPerformance,
   selectSkusForCountry,
@@ -458,5 +459,68 @@ describe('the price an item went for, at one store', () => {
   it('counts only this store', () => {
     const prices = at([closing('klia-t2', '2026-10-12', [sold('wish-3-set', 4, 'offer', 10)])])
     expect(prices('wish-3-set')).toEqual([{ unitPrice: 88, tier: 'promotion', qty: 0 }])
+  })
+})
+
+describe('where one store’s customers came from, today, this week, this month', () => {
+  // Client, 15 October: the store page's "Where they came from" by day,
+  // week and month to date, as well as over the page's range.
+  const line = (countryCode: string, qty: number, day: string): SaleLine => ({
+    skuId: 'orchid-retail',
+    qty,
+    priceTier: 'promotion',
+    unitPriceMYR: 188,
+    countryCode,
+    day,
+  })
+  const closing = (locationId: string, period: string, lines: SaleLine[]): Closing => ({
+    id: `${locationId}-${period}`,
+    locationId,
+    channel: 'main',
+    period,
+    periodType: 'day',
+    revenueMYR: 0,
+    lines,
+    staffSales: { qty: 0, revenueMYR: 0 },
+    stockCount: [],
+    writeOffs: [],
+    submittedBy: 'x',
+    submittedAt: 'x',
+  })
+  // Wednesday 14 October 2026.
+  const today = '2026-10-14'
+  const d = {
+    ...data,
+    today,
+    closings: [
+      closing('pavilion-5', '2026-09-30', [line('CN', 50, '2026-09-30')]),
+      closing('pavilion-5', '2026-10-09', [line('ID', 4, '2026-10-09')]), // last Friday
+      closing('pavilion-5', '2026-10-12', [line('CN', 3, '2026-10-12')]), // Monday
+      closing('pavilion-5', '2026-10-13', [line('SG', 2, '2026-10-13')]),
+      // Today filed already: its sales are the live ones, counted once.
+      closing('pavilion-5', today, [line('CN', 1, today)]),
+      closing('klia-t2', '2026-10-13', [line('KR', 9, '2026-10-13')]),
+    ],
+    liveLines: { 'pavilion-5': [line('CN', 1, today), line('MY', 2, today)], 'klia-t2': [line('KR', 5, today)] },
+  }
+  const units = (from: string) =>
+    Object.fromEntries(selectOriginsSince(d, 'pavilion-5', from).map((s) => [s.countryCode, s.units]))
+
+  it('starts the week on Monday', () => {
+    expect(startOfWeek('2026-10-14')).toBe('2026-10-12')
+    expect(startOfWeek('2026-10-12')).toBe('2026-10-12')
+    expect(startOfWeek('2026-10-18')).toBe('2026-10-12') // Sunday
+  })
+
+  it('reads today live, as the promoters ring sales up', () => {
+    expect(units(today)).toEqual({ CN: 1, MY: 2 })
+  })
+
+  it('adds the days filed this week to today', () => {
+    expect(units(startOfWeek(today))).toEqual({ CN: 4, SG: 2, MY: 2 })
+  })
+
+  it('adds the days filed this month', () => {
+    expect(units(startOfMonth(today))).toEqual({ CN: 4, SG: 2, MY: 2, ID: 4 })
   })
 })

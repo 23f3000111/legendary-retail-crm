@@ -78,6 +78,9 @@ export const monthLabel = (key: string): string => {
 
 export const startOfMonth = (s: DateStr): DateStr => `${s.slice(0, 7)}-01`
 
+/** The Monday of the week `s` falls in: a week runs Monday to Sunday. */
+export const startOfWeek = (s: DateStr): DateStr => addDays(s, -((dayOfWeek(s) + 6) % 7))
+
 /** A month key `n` months on (or back, for negative `n`): "2026-10" → "2026-09". */
 export const shiftMonth = (key: string, n: number): string => {
   const [y, m] = key.split('-').map(Number)
