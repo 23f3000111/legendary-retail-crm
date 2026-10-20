@@ -36,6 +36,7 @@ import {
 import { CHANNEL_LABEL, locationById } from '../../data/locations'
 import { addDays, formatDate, monthKey, spanDays, spanLabel, startOfMonth, startOfWeek, type DateSpan } from '../../lib/dates'
 import { DateSpanInput } from '../../components/DateSpanInput'
+import { SalesReport } from '../../components/SalesReport'
 import { downloadCsv } from '../../lib/exportCsv'
 import { change, num, rm } from '../../lib/format'
 import { TIER_LABEL } from '../../data/products'
@@ -413,6 +414,10 @@ export function StoreDetail() {
           </PanelBody>
         </Panel>
       </div>
+
+      {/* ── The sales report, for this store alone (20 October) ───────── */}
+      {/* The rules stay as they are when another store is picked, to compare like with like. */}
+      <SalesReport locationId={id} />
 
       {/* ── What sells ────────────────────────────────────────────────── */}
       <ChartFrame title="Best sellers here" meta={`Units, last ${range} days`} height={300}>

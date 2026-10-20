@@ -32,20 +32,22 @@ const blankRule = (field: ReportRule['field'], yesterday: string): ReportRule =>
       : { id: newId(), field, op: 'equal', countryCodes: [] }
 
 /**
- * Finance's sales report: every store, day by day.
+ * The sales report: every store, day by day — or, on a store's own page, that
+ * store alone (both 20 October).
  *
- * The client's fifth-revision follow-up (20 October) asked for filters like
- * the ones in Zeoniq's reports: a business date, equal to one day or between
- * two; the items; the nationalities; each rule with its own Delete on the
- * right. The report keeps only what every rule allows, one row per store per
- * business date, and the export carries the date on every row.
+ * The client's sixth revision asked for filters like the ones in Zeoniq's
+ * reports: a business date, equal to one day or between two; the items; the
+ * nationalities; each rule with its own Delete on the right. The report keeps
+ * only what every rule allows, one row per store per business date, and the
+ * export carries the date on every row.
  */
-export function SalesReport() {
+export function SalesReport({ locationId }: { locationId?: string } = {}) {
   const data = useData()
   const yesterday = addDays(data.today, -1)
   const [rules, setRules] = useState<ReportRule[]>(() => FIELDS.map((f) => blankRule(f, yesterday)))
+  const store = locationId ? locationById(locationId) : undefined
 
-  const report = useMemo(() => selectSalesReport(data, rules), [data, rules])
+  const report = useMemo(() => selectSalesReport(data, rules, locationId), [data, rules, locationId])
   const missing = FIELDS.filter((f) => !rules.some((r) => r.field === f))
 
   const update = (id: string, next: ReportRule) => setRules((rs) => rs.map((r) => (r.id === id ? next : r)))
@@ -62,19 +64,24 @@ export function SalesReport() {
       width: '140px',
       render: (r) => <span className="readout text-[12.5px] text-ink">{formatDate(r.day)}</span>,
     },
-    {
-      key: 'store',
-      header: 'Store',
-      render: (r) => {
-        const l = locationById(r.locationId)
-        return (
-          <div className="min-w-0">
-            <p className="truncate text-[13px] leading-tight text-ink">{l?.name ?? r.locationId}</p>
-            <p className="readout text-[10.5px] text-ink-3">{l?.code}</p>
-          </div>
-        )
-      },
-    },
+    // On a store's own page every row is that store: no column for it.
+    ...(locationId
+      ? []
+      : [
+          {
+            key: 'store',
+            header: 'Store',
+            render: (r: ReportRow) => {
+              const l = locationById(r.locationId)
+              return (
+                <div className="min-w-0">
+                  <p className="truncate text-[13px] leading-tight text-ink">{l?.name ?? r.locationId}</p>
+                  <p className="readout text-[10.5px] text-ink-3">{l?.code}</p>
+                </div>
+              )
+            },
+          },
+        ]),
     {
       key: 'units',
       header: 'Units',
@@ -98,7 +105,7 @@ export function SalesReport() {
         : `${report.days.from}-to-${report.days.to}`
       : 'all-dates'
     downloadCsv(
-      `legendary-sales-report-${tag}.csv`,
+      `legendary-sales-report-${store ? `${store.code}-` : ''}${tag}.csv`,
       ['Business date', 'Store', 'Store code', 'Units', 'Revenue MYR'],
       [
         ...report.rows.map((r) => [
@@ -117,8 +124,14 @@ export function SalesReport() {
     <Panel>
       <PanelHeader
         eyebrow="Sales report"
-        title="Every store, day by day"
-        meta={`${when}. Days that have ended are as filed; today is as it stands. Dealers and consignment report a month at a time, on Dealer sales.`}
+        title={store ? 'This store, day by day' : 'Every store, day by day'}
+        meta={`${when}. Days that have ended are as filed; today is as it stands.${
+          !store
+            ? ' Dealers and consignment report a month at a time, on Dealer sales.'
+            : store.channel !== 'main'
+              ? ' A dealer or consignment partner reports a monthly total, on Dealer sales, so it may have no days here.'
+              : ''
+        }`}
         action={
           <Button size="sm" variant="secondary" icon="download" onClick={exportReport} disabled={!report.rows.length}>
             Export
@@ -236,7 +249,7 @@ export function SalesReport() {
             <EmptyState
               icon="filter"
               title="Nothing for these rules"
-              body="No store sold anything the rules allow on these dates. Widen the dates, or delete a rule."
+              body={`${store ? 'This store' : 'No store'} sold ${store ? 'nothing' : 'anything'} the rules allow on these dates. Widen the dates, or delete a rule.`}
             />
           }
         />

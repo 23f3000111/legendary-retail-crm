@@ -428,10 +428,14 @@ export interface ReportRow {
  *
  * Only sales rung up at a counter carry items and nationalities, so dealers'
  * and consignment partners' monthly figures are not in it.
+ *
+ * With `locationId`, the same report for one store, on its own page (client,
+ * 20 October).
  */
 export const selectSalesReport = (
   data: CrmData,
   rules: ReportRule[],
+  locationId?: string,
 ): { rows: ReportRow[]; units: number; revenue: number; days: { from: DateStr; to: DateStr } | null } => {
   let days: { from: DateStr; to: DateStr } | null = null
   let items: Extract<ReportRule, { field: 'item' }> | undefined
@@ -458,12 +462,13 @@ export const selectSalesReport = (
     row.revenue += l.qty * lineUnitPrice(l, basisOf(locationId))
     tally.set(key, row)
   }
+  const here = (id: string) => !locationId || id === locationId
   for (const c of data.closings) {
-    if (c.periodType !== 'day' || c.period >= data.today || !inSpan(c.period)) continue
+    if (c.periodType !== 'day' || c.period >= data.today || !inSpan(c.period) || !here(c.locationId)) continue
     for (const l of c.lines) add(c.period, c.locationId, l)
   }
   if (inSpan(data.today)) {
-    for (const [locationId, lines] of Object.entries(data.liveLines)) for (const l of lines) add(data.today, locationId, l)
+    for (const [id, lines] of Object.entries(data.liveLines)) if (here(id)) for (const l of lines) add(data.today, id, l)
   }
   const name = (id: string) => locationById(id)?.shortName ?? id
   const rows = [...tally.values()]

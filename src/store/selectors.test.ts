@@ -633,4 +633,15 @@ describe('Finance’s sales report: every store, day by day', () => {
     expect(rowsOf([date('equal', '2026-10-19'), empty])).toHaveLength(2)
     expect(rowsOf([])).toHaveLength(4)
   })
+
+  // The same report on each store's own page (20 October).
+  it('reads one store alone, day by day, today live', () => {
+    const rows = (locationId: string) =>
+      selectSalesReport(d, [date('between', '2026-10-18', today)], locationId).rows.map(
+        (r) => `${r.day} ${r.locationId} ${r.units} ${r.revenue}`,
+      )
+    expect(rows('pavilion-5')).toEqual(['2026-10-18 pavilion-5 3 376', '2026-10-19 pavilion-5 2 386'])
+    expect(rows('klia-t2')).toEqual(['2026-10-19 klia-t2 3 564', '2026-10-20 klia-t2 1 188'])
+    expect(selectSalesReport(d, [date('between', '2026-10-18', today)], 'klia-t2')).toMatchObject({ units: 4, revenue: 752 })
+  })
 })
