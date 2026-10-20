@@ -21,7 +21,20 @@ import { docKey, type Doc, type DocKind, type PutDoc, type Result, type Snapshot
 import { canClearAccounts, canTransition } from '../lib/po-machine'
 import { can, seedPeople, ROLE_LABEL, type Person, type Role } from '../data/people'
 import { formatDate, monthKey, monthLabel, todayInMalaysia } from '../lib/dates'
-import { skuLabel, TIER_LABEL } from '../data/products'
+import {
+  applyCatalogue,
+  entryOf,
+  newCodeFor,
+  products,
+  skuById,
+  skuLabel,
+  skus,
+  TIER_LABEL,
+  type CatalogueEntry,
+  type CollectionId,
+  type Variant,
+} from '../data/products'
+import { catalogueRefusal } from '../lib/catalogue'
 import { countryName, MALAYSIA_SEGMENT_LABEL, type MalaysiaSegment } from '../data/countries'
 import { basisOf, locationById, locationName } from '../data/locations'
 import { rm } from '../lib/format'
@@ -64,6 +77,39 @@ export { CORRECTION_WINDOW_DAYS }
 
 /** Who keys in dealers' and consignment partners' monthly sales. Mirrored on the server. */
 export const PARTNER_KEYERS: Role[] = ['md', 'ops', 'pa', 'finance']
+
+/** A product as the Products screen sends it: a new one, or a change to one on the range. */
+export interface ProductInput {
+  /** The line being changed. Absent for a new one. */
+  skuId?: string
+  /** A new line of a fragrance already on the range… */
+  productId?: string
+  /** …or of a new fragrance. */
+  newProduct?: { name: string; collectionId: CollectionId }
+  variant?: Variant
+  size?: string
+  retailPriceMYR: number
+  promotionPriceMYR: number
+  /** Promotion 2. Empty for none. */
+  promotion2MYR?: number | null
+  canGoFree?: boolean
+  reorderPoint: number
+  caseSize: number
+}
+
+/** "Jasmine Bloom" → "jasmine-bloom". */
+const slug = (s: string) =>
+  s
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'item'
+
+/** `base`, or `base-2`, `base-3`… whichever nothing else has taken. */
+const unique = (base: string, taken: (id: string) => boolean) => {
+  if (!taken(base)) return base
+  for (let n = 2; ; n++) if (!taken(`${base}-${n}`)) return `${base}-${n}`
+}
 
 /** How often to ask the server for changes, on top of the change signal. */
 const POLL_MS = 20_000
@@ -166,7 +212,10 @@ export interface DataState extends CrmData {
     note?: string
   }) => Result
 
+  /** Sends an order to Kelly — or, with status `draft`, keeps it at the store to send later. */
   createPurchaseOrder: (po: PurchaseOrder) => void
+  /** Throws away a draft the store has not sent. A sent order is never deleted. */
+  deleteDraftOrder: (poId: string) => Result
   transitionPo: (args: {
     poId: string
     to: PoStatus
@@ -233,6 +282,16 @@ export interface DataState extends CrmData {
     figures: { locationId: string; revenueMYR: number | null }[]
   }) => Result
 
+  /**
+   * Adds a product to the range, or changes one's prices and reorder level
+   * (client, 20 October). Davy, Kelly and Chloe only.
+   */
+  saveProduct: (input: ProductInput) => Result
+  /** Takes a product off the counter, the count and ordering. Its history keeps its name. */
+  removeProduct: (skuId: string) => Result
+  /** Puts a product that was taken off back on the range. */
+  restoreProduct: (skuId: string) => Result
+
   markAlertRead: (id: string) => void
   markAllAlertsRead: () => void
   setTarget: (locationId: string, month: string, amountMYR: number) => void
@@ -267,6 +326,8 @@ const live = <T>(kind: DocKind): T[] => {
 
 /** The working set, from the documents. */
 function rebuild(today: DateStr): CrmData & { users: Person[]; unfiledLines: DataState['unfiledLines'] } {
+  // The range first: everything below reads it (20 October).
+  applyCatalogue(live<CatalogueEntry>('product'))
   const closings = live<Closing>('closing').sort((a, b) => (a.period < b.period ? -1 : 1))
   const purchaseOrders = live<PurchaseOrder>('po').sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
   const targets = live<Target>('target')
@@ -749,14 +810,35 @@ export const useData = create<DataState>()((set, get) => {
     createPurchaseOrder: (po) => {
       patchDoc('po', po.id, po, { locationId: po.locationId })
       const units = po.lines.reduce((a, l) => a + l.qtyRequested, 0)
+      const what = `${po.id} for ${locationName(po.locationId)} — ${po.lines.length} items, ${units} units`
       get().record({
         kind: 'order',
-        action: 'order.raised',
-        summary: `Raised ${po.id} for ${locationName(po.locationId)} — ${po.lines.length} items, ${units} units`,
+        action: po.status === 'draft' ? 'order.drafted' : 'order.raised',
+        summary: po.status === 'draft' ? `Saved a draft order ${what}` : `Raised ${what}`,
         entityId: po.id,
         locationId: po.locationId,
         detail: po.priority === 'urgent' ? 'Marked urgent' : undefined,
       })
+    },
+
+    deleteDraftOrder: (poId) => {
+      const po = get().purchaseOrders.find((p) => p.id === poId)
+      if (!po) return { ok: false, error: 'That order no longer exists.' }
+      if (po.status !== 'draft') return { ok: false, error: 'An order that has been sent is not deleted.' }
+      const who = me()
+      if (!who) return { ok: false, error: 'Sign in again.' }
+      if (orderEditMode(who, getSession()?.locationId, po) === 'none') {
+        return { ok: false, error: 'Only the store that saved this draft can delete it.' }
+      }
+      remove('po', [poId])
+      get().record({
+        kind: 'order',
+        action: 'order.draft_deleted',
+        summary: `Deleted the draft order ${poId} for ${locationName(po.locationId)}`,
+        entityId: poId,
+        locationId: po.locationId,
+      })
+      return { ok: true }
     },
 
     transitionPo: ({ poId, to, actor, role, note, approvedQty, packedQty }) => {
@@ -780,8 +862,10 @@ export const useData = create<DataState>()((set, get) => {
         }
         return l
       })
-      const events = [...po.events, { status: to, actor, role, at: new Date().toISOString(), note }]
-      const next: PurchaseOrder = { ...po, status: to, lines, events }
+      const at = new Date().toISOString()
+      const events = [...po.events, { status: to, actor, role, at, note }]
+      // A draft counts as raised when it is sent, not when it was first saved.
+      const next: PurchaseOrder = { ...po, status: to, lines, events, ...(po.status === 'draft' ? { createdAt: at } : {}) }
       patchDoc('po', poId, next, { locationId: po.locationId })
 
       const trimmed =
@@ -1063,6 +1147,153 @@ export const useData = create<DataState>()((set, get) => {
       return { ok: true }
     },
 
+    // ── The range (client, 20 October) ───────────────────────────────
+    saveProduct: (input) => {
+      const who = me()
+      if (!who) return { ok: false, error: 'Sign in again.' }
+      if (!can(who.role).canEdit || !can(who.role).manageCatalogue) {
+        return { ok: false, error: 'Only Davy, Kelly or Chloe can change the products.' }
+      }
+      const existing = input.skuId ? skuById(input.skuId) : undefined
+      if (input.skuId && !existing) return { ok: false, error: 'That product is no longer on the list.' }
+      const promotion2 = input.promotion2MYR && input.promotion2MYR > 0 ? input.promotion2MYR : undefined
+
+      let entry: CatalogueEntry
+      if (existing) {
+        const { promotion2MYR: _p, canGoFree: _f, ...kept } = entryOf(existing)
+        void _p, _f
+        entry = {
+          ...kept,
+          retailPriceMYR: input.retailPriceMYR,
+          promotionPriceMYR: input.promotionPriceMYR,
+          ...(promotion2 ? { promotion2MYR: promotion2 } : {}),
+          ...(input.canGoFree ? { canGoFree: true } : {}),
+          reorderPoint: input.reorderPoint,
+          caseSize: input.caseSize,
+        }
+      } else {
+        const variant = input.variant ?? 'retail'
+        const size = variant === 'vial' ? '3ml' : (input.size ?? '').trim()
+        let productId = input.productId ?? ''
+        let product: CatalogueEntry['product']
+        if (input.newProduct) {
+          const name = input.newProduct.name.trim()
+          if (!name) return { ok: false, error: 'A new fragrance needs a name.' }
+          const same = products.find((p) => p.name.toLowerCase() === name.toLowerCase())
+          if (same) return { ok: false, error: `${same.name} is already on the range — choose it from the list.` }
+          productId = unique(slug(name), (id) => products.some((p) => p.id === id))
+          product = { id: productId, name, collectionId: input.newProduct.collectionId }
+        }
+        if (!productId) return { ok: false, error: 'Choose the fragrance.' }
+        if (!size) return { ok: false, error: 'Give the size, like 30ml or Set.' }
+        const twin = skus.find(
+          (s) => s.productId === productId && s.variant === variant && s.size.toLowerCase() === size.toLowerCase(),
+        )
+        if (twin) {
+          return {
+            ok: false,
+            error: twin.removed
+              ? `${twin.label} was taken off the range — bring it back instead.`
+              : `${twin.label} is already on the range.`,
+          }
+        }
+        // A vial is given free and a tester is never sold: neither has a price.
+        const priced = variant !== 'vial' && variant !== 'tester'
+        entry = {
+          skuId: unique(`${productId}-${variant}-${slug(size)}`, (id) => skus.some((s) => s.id === id)),
+          ...(product ? { product } : {}),
+          productId,
+          variant,
+          size,
+          code: newCodeFor(productId, variant, size),
+          retailPriceMYR: priced ? input.retailPriceMYR : 0,
+          promotionPriceMYR: priced ? input.promotionPriceMYR : 0,
+          ...(priced && promotion2 ? { promotion2MYR: promotion2 } : {}),
+          ...(priced && input.canGoFree ? { canGoFree: true } : {}),
+          reorderPoint: input.reorderPoint,
+          caseSize: input.caseSize,
+        }
+      }
+      const refused = catalogueRefusal({ kind: 'product', id: entry.skuId, doc: entry })
+      if (refused) return { ok: false, error: refused }
+
+      const changes: string[] = []
+      if (existing) {
+        const was = (label: string, a: number | undefined, b: number | undefined) => {
+          if ((a ?? 0) !== (b ?? 0)) changes.push(`${label} ${a ? rm(a) : 'none'} → ${b ? rm(b) : 'none'}`)
+        }
+        was('Retail', existing.retailPriceMYR, entry.retailPriceMYR)
+        was('Promotion', existing.promotionPriceMYR, entry.promotionPriceMYR)
+        was('Promotion 2', existing.promotion2MYR, entry.promotion2MYR)
+        if (Boolean(existing.canGoFree) !== Boolean(entry.canGoFree)) {
+          changes.push(entry.canGoFree ? 'Can be given free' : 'No longer given free')
+        }
+        if (existing.reorderPoint !== entry.reorderPoint) changes.push(`Reorder at ${existing.reorderPoint} → ${entry.reorderPoint}`)
+        if (existing.caseSize !== entry.caseSize) changes.push(`Case size ${existing.caseSize} → ${entry.caseSize}`)
+        if (changes.length === 0) return { ok: false, error: 'Nothing has been changed.' }
+      }
+
+      write([{ kind: 'product', id: entry.skuId, doc: entry }])
+      const label = skuLabel(entry.skuId)
+      get().record({
+        kind: 'product',
+        action: existing ? 'product.changed' : 'product.added',
+        summary: existing ? `Changed ${label}` : `Added ${label} to the range`,
+        entityId: entry.skuId,
+        detail: existing
+          ? changes.join(' · ')
+          : entry.variant === 'vial'
+            ? 'Given free, counted every night'
+            : entry.variant === 'tester'
+              ? 'A tester: ordered, never sold or counted'
+              : `Retail ${rm(entry.retailPriceMYR)} · Promotion ${rm(entry.promotionPriceMYR)}${
+                  entry.promotion2MYR ? ` · Promotion 2 ${rm(entry.promotion2MYR)}` : ''
+                }`,
+      })
+      return { ok: true }
+    },
+
+    removeProduct: (skuId) => {
+      const who = me()
+      if (!who) return { ok: false, error: 'Sign in again.' }
+      if (!can(who.role).canEdit || !can(who.role).manageCatalogue) {
+        return { ok: false, error: 'Only Davy, Kelly or Chloe can change the products.' }
+      }
+      const sku = skuById(skuId)
+      if (!sku) return { ok: false, error: 'That product is no longer on the list.' }
+      if (sku.removed) return { ok: false, error: `${sku.label} is already off the range.` }
+      write([{ kind: 'product', id: skuId, doc: { ...entryOf(sku), removed: true } }])
+      get().record({
+        kind: 'product',
+        action: 'product.removed',
+        summary: `Took ${sku.label} off the range`,
+        entityId: skuId,
+        detail: 'No longer sold, counted or ordered. Every sale, count and order already made keeps it.',
+      })
+      return { ok: true }
+    },
+
+    restoreProduct: (skuId) => {
+      const who = me()
+      if (!who) return { ok: false, error: 'Sign in again.' }
+      if (!can(who.role).canEdit || !can(who.role).manageCatalogue) {
+        return { ok: false, error: 'Only Davy, Kelly or Chloe can change the products.' }
+      }
+      const sku = skuById(skuId)
+      if (!sku) return { ok: false, error: 'That product is no longer on the list.' }
+      if (!sku.removed) return { ok: false, error: `${sku.label} is on the range already.` }
+      const { removed: _r, ...back } = entryOf(sku)
+      void _r
+      write([{ kind: 'product', id: skuId, doc: back }])
+      get().record({
+        kind: 'product',
+        action: 'product.restored',
+        summary: `Put ${sku.label} back on the range`,
+        entityId: skuId,
+      })
+      return { ok: true }
+    },
+
     // ── Alerts & housekeeping ────────────────────────────────────────
     markAlertRead: (id) => {
       const alert = get().alerts.find((a) => a.id === id)
@@ -1175,6 +1406,7 @@ export const useData = create<DataState>()((set, get) => {
 
     clearSession: () => {
       docs.clear()
+      applyCatalogue([])
       since = undefined
       set({ ...empty(), unfiledLines: {}, syncStatus: 'idle', lastSyncAt: null })
     },

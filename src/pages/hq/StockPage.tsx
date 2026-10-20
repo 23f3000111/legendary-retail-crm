@@ -144,9 +144,10 @@ export function StockPage() {
 
   const exportMatrix = () =>
     downloadCsv(
-      'legendary-stock.csv',
-      ['Product', ...mainStores.map((l) => l.name)],
+      `legendary-stock-${data.today}.csv`,
+      ['As at', 'Product', ...mainStores.map((l) => l.name)],
       skus.map((s) => [
+        data.today,
         s.label,
         ...mainStores.map((l) => matrix.get(l.id)?.find((r) => r.skuId === s.id)?.onHand ?? 0),
       ]),

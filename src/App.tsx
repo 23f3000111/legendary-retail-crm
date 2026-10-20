@@ -30,6 +30,7 @@ import { PartnerSales } from './pages/hq/PartnerSales'
 import { Users } from './pages/hq/Users'
 import { Orders } from './pages/orders/Orders'
 import { OrderDetail } from './pages/orders/OrderDetail'
+import { NewOrder } from './pages/orders/NewOrder'
 import { Today } from './pages/store/Today'
 import { Sell } from './pages/store/Sell'
 import { CloseDay } from './pages/store/CloseDay'
@@ -174,6 +175,7 @@ export default function App() {
 
           {/* Orders, shared */}
           <Route path="/orders" element={<Orders />} />
+          <Route path="/orders/new" element={<NewOrder />} />
           <Route path="/orders/:id" element={<OrderDetail />} />
 
           {/* The counter */}

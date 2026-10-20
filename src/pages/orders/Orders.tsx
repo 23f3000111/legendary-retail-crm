@@ -19,6 +19,7 @@ import {
   canClearAccounts,
   chainProgress,
   isOpen,
+  seenBy,
 } from '../../lib/po-machine'
 import { locationById } from '../../data/locations'
 import { relativeDay } from '../../lib/dates'
@@ -32,7 +33,7 @@ import type { PurchaseOrder } from '../../data/types'
  * tabs (client's fifth revision). A store has no tiles, so "in flight" is a
  * tab there.
  */
-type View = 'mine' | 'open' | 'approved' | 'rejected' | 'all'
+type View = 'mine' | 'open' | 'drafts' | 'approved' | 'rejected' | 'all'
 
 /** Approved means Kelly said yes — wherever the order has got to since. */
 const APPROVED: PurchaseOrder['status'][] = ['approved', 'accounts_cleared', 'packed', 'in_transit', 'received']
@@ -63,13 +64,16 @@ export function Orders() {
     !isPromoter && user && actsOnOrders(user.role) ? 'mine' : 'open',
   )
 
+  // A store sees its own orders, drafts included; head office sees every
+  // order once it has been sent (20 October).
   const scoped = useMemo(
     () =>
       data.purchaseOrders.filter((p) =>
-        isPromoter ? p.locationId === user?.locationId : true,
+        isPromoter ? p.locationId === user?.locationId : Boolean(user && seenBy(p, user.role)),
       ),
-    [data.purchaseOrders, isPromoter, user?.locationId],
+    [data.purchaseOrders, isPromoter, user],
   )
+  const drafts = useMemo(() => scoped.filter((p) => p.status === 'draft'), [scoped])
 
   const waitingOnMe = useMemo(
     () =>
@@ -89,13 +93,15 @@ export function Orders() {
         ? waitingOnMe
         : view === 'open'
           ? scoped.filter(isOpen)
-          : view === 'approved'
+          : view === 'drafts'
+            ? drafts
+            : view === 'approved'
             ? scoped.filter((p) => APPROVED.includes(p.status))
             : view === 'rejected'
               ? scoped.filter((p) => p.status === 'rejected')
               : scoped
     return [...list].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
-  }, [view, scoped, waitingOnMe])
+  }, [view, scoped, waitingOnMe, drafts])
 
   const act = (p: PurchaseOrder, to: string, label: string) => {
     if (!user) return
@@ -238,7 +244,12 @@ export function Orders() {
             onChange={setView}
             options={[
               // Head office reaches these two through the tiles.
-              ...(isPromoter ? [{ value: 'open' as View, label: 'In flight' }] : []),
+              ...(isPromoter
+                ? [
+                    { value: 'open' as View, label: 'In flight' },
+                    { value: 'drafts' as View, label: drafts.length ? `Drafts · ${drafts.length}` : 'Drafts' },
+                  ]
+                : []),
               { value: 'approved', label: 'Approved' },
               { value: 'rejected', label: 'Rejected' },
               { value: 'all', label: 'All' },
@@ -247,6 +258,12 @@ export function Orders() {
           <Button variant="secondary" icon="download" onClick={exportRows}>
             Export
           </Button>
+          {/* An order whenever it is needed, not only at closing (20 October). */}
+          {isPromoter && capability.canEdit && (
+            <Button variant="primary" icon="plus" onClick={() => navigate('/orders/new')}>
+              New order
+            </Button>
+          )}
         </div>
       </div>
 
@@ -290,7 +307,9 @@ export function Orders() {
                 title={
                   view === 'mine'
                     ? 'Nothing waiting on you'
-                    : view === 'approved'
+                    : view === 'drafts'
+                      ? 'No drafts'
+                      : view === 'approved'
                       ? 'Nothing approved yet'
                       : view === 'rejected'
                         ? 'Nothing rejected'
@@ -299,7 +318,9 @@ export function Orders() {
                 body={
                   view === 'mine'
                     ? 'Orders will appear here as they reach your step.'
-                    : 'No orders match this view.'
+                    : view === 'drafts'
+                      ? 'An order saved as a draft waits here until you send it.'
+                      : 'No orders match this view.'
                 }
               />
             }

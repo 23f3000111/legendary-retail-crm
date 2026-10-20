@@ -78,6 +78,27 @@ export const monthLabel = (key: string): string => {
 
 export const startOfMonth = (s: DateStr): DateStr => `${s.slice(0, 7)}-01`
 
+/**
+ * One business date, or two and every day between — the client's "equal /
+ * between" (20 October). Either date may be empty while it is being typed.
+ */
+export interface DateSpan {
+  op: 'equal' | 'between'
+  from: DateStr
+  to: DateStr
+}
+
+/** The first and last day a span covers, whichever way round its dates were typed. Null until it has its dates. */
+export const spanDays = (s: DateSpan): { from: DateStr; to: DateStr } | null => {
+  if (!s.from || (s.op === 'between' && !s.to)) return null
+  if (s.op === 'equal') return { from: s.from, to: s.from }
+  return s.from <= s.to ? { from: s.from, to: s.to } : { from: s.to, to: s.from }
+}
+
+/** "16 Oct 2026", or "1 Oct 2026 to 16 Oct 2026". */
+export const spanLabel = (days: { from: DateStr; to: DateStr }): string =>
+  days.from === days.to ? formatDate(days.from) : `${formatDate(days.from)} to ${formatDate(days.to)}`
+
 /** The Monday of the week `s` falls in: a week runs Monday to Sunday. */
 export const startOfWeek = (s: DateStr): DateStr => addDays(s, -((dayOfWeek(s) + 6) % 7))
 

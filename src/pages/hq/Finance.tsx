@@ -7,6 +7,7 @@ import { StatTile } from '../../components/ui/StatTile'
 import { EmptyState } from '../../components/ui/DataTable'
 import { Icon } from '../../components/ui/icons'
 import { ChartFrame } from '../../components/charts/ChartFrame'
+import { SalesReport } from '../../components/SalesReport'
 import { TrendChart } from '../../components/charts/TrendChart'
 import { Donut, DonutTable, type DonutSlice } from '../../components/charts/Donut'
 import { useData } from '../../store/useData'
@@ -99,11 +100,12 @@ export function Finance() {
     }
   }, [data, filter])
 
+  // The dates go in the file, and on every row (client, 20 October).
   const exportRevenue = () =>
     downloadCsv(
-      'legendary-revenue-by-channel.csv',
-      ['Channel', 'Revenue MYR', 'Units'],
-      channels.map((c) => [CHANNEL_PLURAL[c.channel], c.revenue, c.units]),
+      `legendary-revenue-by-channel-${filter.from}-to-${filter.to}.csv`,
+      ['From', 'To', 'Channel', 'Revenue MYR', 'Units'],
+      channels.map((c) => [filter.from, filter.to, CHANNEL_PLURAL[c.channel], c.revenue, c.units]),
     )
 
   return (
@@ -203,6 +205,8 @@ export function Finance() {
           </PanelBody>
         </Panel>
       )}
+
+      <SalesReport />
 
       <div className="grid gap-5 lg:grid-cols-[1.5fr_1fr]">
         <ChartFrame

@@ -51,6 +51,8 @@ export function OrderDetail() {
   const [qty, setQty] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
   const [changing, setChanging] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const deleteDraftOrder = useData((s) => s.deleteDraftOrder)
 
   if (!po || !user) {
     return (
@@ -135,15 +137,25 @@ export function OrderDetail() {
             Urgent
           </Badge>
         )}
-        {po.status !== 'received' && po.status !== 'rejected' && (
-          <span className="text-[12px] text-ink-3">
-            Waiting on <span className="text-ink-2">{STATUS_OWNER[po.status]}</span>
-          </span>
+        {po.status === 'draft' ? (
+          <span className="text-[12px] text-ink-3">Not sent yet — only your store can see it</span>
+        ) : (
+          po.status !== 'received' &&
+          po.status !== 'rejected' && (
+            <span className="text-[12px] text-ink-3">
+              Waiting on <span className="text-ink-2">{STATUS_OWNER[po.status]}</span>
+            </span>
+          )
         )}
         <div className="ml-auto flex flex-wrap gap-2">
           {editMode === 'edit' && (
             <Button variant="secondary" size="sm" icon="pencil" onClick={() => setChanging(true)}>
-              Change order
+              {po.status === 'draft' ? 'Change draft' : 'Change order'}
+            </Button>
+          )}
+          {po.status === 'draft' && editMode === 'edit' && (
+            <Button variant="danger" size="sm" icon="x" onClick={() => setDeleting(true)}>
+              Delete draft
             </Button>
           )}
           {editMode === 'resend' && (
@@ -238,6 +250,7 @@ export function OrderDetail() {
         onClose={() => setChanging(false)}
         po={po}
         resend={editMode === 'resend'}
+        draft={po.status === 'draft'}
         forApprover={capability.approvePurchaseOrders}
         onSave={(changes) => {
           const result = editPurchaseOrder({ poId: po.id, ...changes })
@@ -245,6 +258,39 @@ export function OrderDetail() {
           return result
         }}
       />
+
+      <Modal
+        open={deleting}
+        onClose={() => setDeleting(false)}
+        title={`Delete the draft ${po.id}?`}
+        subtitle="It has not been sent, so nobody else has seen it. This cannot be undone."
+        footer={
+          <>
+            <Button variant="ghost" size="sm" onClick={() => setDeleting(false)}>
+              Keep it
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              icon="x"
+              onClick={() => {
+                const result = deleteDraftOrder(po.id)
+                setDeleting(false)
+                if (!result.ok) return push(result.error ?? 'That draft could not be deleted.', 'critical')
+                push(`Draft ${po.id} deleted`, 'info')
+                navigate('/orders')
+              }}
+            >
+              Delete draft
+            </Button>
+          </>
+        }
+      >
+        <p className="text-[13px] text-ink-2">
+          {po.lines.length} {po.lines.length === 1 ? 'item' : 'items'} on it. To keep it, close this and send it when you
+          are ready.
+        </p>
+      </Modal>
 
       <Modal
         open={pending !== null}

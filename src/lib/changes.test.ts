@@ -145,4 +145,15 @@ describe('an order changed', () => {
   it('says nothing when nothing changed', () => {
     expect(describeOrderChanges(po([['orchid-retail', 12]]), po([['orchid-retail', 12]]))).toEqual([])
   })
+
+  it('says so when only the order of the lines changed — they can be dragged (20 October)', () => {
+    const before = po([['orchid-retail', 12], ['violet-retail', 12], ['man-retail', 12]])
+    expect(describeOrderChanges(before, po([['man-retail', 12], ['orchid-retail', 12], ['violet-retail', 12]]))).toEqual([
+      'Changed the order of the items',
+    ])
+    // Taking one off is not a change of order as well.
+    expect(describeOrderChanges(before, po([['orchid-retail', 12], ['man-retail', 12]]))).toEqual([
+      'Took off Violet · 30ml (12)',
+    ])
+  })
 })

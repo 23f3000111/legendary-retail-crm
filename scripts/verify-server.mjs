@@ -229,6 +229,54 @@ try {
     signed?.entered_by ?? claimed.r.error,
   )
 
+  // Products, kept by Davy, Kelly and Chloe (client, 20 October).
+  const productDoc = (over = {}) => [
+    {
+      kind: 'product',
+      id: 'verify-orchid-retail-75ml',
+      doc: {
+        skuId: 'verify-orchid-retail-75ml',
+        productId: 'orchid',
+        variant: 'retail',
+        size: '75ml',
+        code: 'LGD-ORC-R75',
+        retailPriceMYR: 288,
+        promotionPriceMYR: 238,
+        reorderPoint: 12,
+        caseSize: 6,
+        changedBy: 'Somebody Else',
+        ...over,
+      },
+    },
+  ]
+  const added = await put(kelly, productDoc())
+  check('Kelly can add a product', added.r.ok === true, added.r.error)
+  const productSigned = await one(
+    `select doc->>'changedBy' as changed_by from docs where kind = 'product' and id = 'verify-orchid-retail-75ml'`,
+  )
+  const { name: kellyName } = await one(`select doc->>'name' as name from people where username = 'kellytew'`)
+  check('and the product is signed by whoever sent it', productSigned?.changed_by === kellyName, productSigned?.changed_by)
+  const byFinance = await put(finance, productDoc())
+  check('Finance cannot', byFinance.r.ok === false, byFinance.r.error)
+  const byStore = await put(solo, productDoc())
+  check('nor can a promoter', byStore.r.ok === false, byStore.r.error)
+  const badPrice = await put(kelly, productDoc({ promotionPriceMYR: -5 }))
+  check('a product with a price below 0 is refused', badPrice.r.ok === false, badPrice.r.error)
+  const goneProduct = await one('select remove_docs($1, $2, $3::text[]) r', [kelly, 'product', ['verify-orchid-retail-75ml']])
+  check('a product is taken off, never deleted', goneProduct.r.ok === false, goneProduct.r.error)
+
+  // An order saved as a draft, without closing the day (20 October): the
+  // store may delete its draft, and nobody may delete an order once sent.
+  const order = (id, status) => [
+    { kind: 'po', id, location_id: 'melaka', doc: { id, locationId: 'melaka', status, lines: [], events: [] } },
+  ]
+  await put(solo, order('PO-VERIFY-DRAFT', 'draft'))
+  await put(solo, order('PO-VERIFY-SENT', 'submitted'))
+  const draftGone = await one('select remove_docs($1, $2, $3::text[]) r', [solo, 'po', ['PO-VERIFY-DRAFT']])
+  check('a store can delete its own draft order', draftGone.r.ok === true, draftGone.r.error)
+  const sentKept = await one('select remove_docs($1, $2, $3::text[]) r', [solo, 'po', ['PO-VERIFY-SENT']])
+  check('but not an order it has sent', sentKept.r.ok === false, sentKept.r.error)
+
   // Passwords.
   const weak = await one("select set_password($1, 'kim', 'legendary123') r", [imran])
   check('a weak password is refused', weak.r.ok === false, weak.r.error)

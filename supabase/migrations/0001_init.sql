@@ -218,6 +218,8 @@ language sql immutable as $$
     when 'setting'    then r in ('md','it')
     -- A dealer's or consignment partner's month, keyed in at head office.
     when 'partner_sales' then r in ('md','ops','pa','finance')
+    -- A line of the range, added, changed or taken off by Davy, Kelly or Chloe.
+    when 'product'    then r in ('md','ops','pa')
     else false end
 $$;
 
@@ -550,6 +552,66 @@ begin
   return null;
 end $$;
 
+-- A line of the range as head office keyed it (20 October). Mirrors
+-- `catalogueRefusal` in src/lib/catalogue.ts; keep the two in step.
+--
+-- Who may key one in is `_may_write`'s question. This one is about the line:
+-- its own record, a kind of product the range has, a fragrance, a size and a
+-- code, sensible prices, and a reorder level and case size — however it was
+-- sent. Every check that casts comes after the check that it is a number.
+create or replace function _catalogue_refusal(d jsonb) returns text
+language plpgsql immutable as $$
+declare
+  e jsonb := d->'doc';
+  sold boolean := (d->'doc'->>'variant') not in ('vial', 'tester');
+begin
+  if coalesce(d->>'id', '') !~ '^[a-z0-9][a-z0-9-]{0,80}$' or e->>'skuId' is distinct from d->>'id' then
+    return 'That product does not match its record.';
+  end if;
+  if d->>'location_id' is not null then return 'A product belongs to the whole range, not to one store.'; end if;
+  if coalesce(e->>'variant', '') not in ('retail', 'set', 'travel', 'vial', 'tester') then
+    return 'Choose what kind of product it is.';
+  end if;
+  if coalesce(btrim(e->>'productId'), '') = '' then return 'Choose the fragrance.'; end if;
+  if jsonb_typeof(e->'product') = 'object' then
+    if e->'product'->>'id' is distinct from e->>'productId' then return 'That product does not match its record.'; end if;
+    if coalesce(btrim(e->'product'->>'name'), '') = '' or length(e->'product'->>'name') > 60 then
+      return 'A new fragrance needs a name.';
+    end if;
+    if coalesce(e->'product'->>'collectionId', '') not in ('signature', 'nyonya', 'three-wishes', 'spirit') then
+      return 'Choose the collection.';
+    end if;
+  end if;
+  if coalesce(btrim(e->>'size'), '') = '' or length(e->>'size') > 40 then return 'Give the size, like 30ml or Set.'; end if;
+  if coalesce(btrim(e->>'code'), '') = '' or length(e->>'code') > 40 then return 'That product needs a shelf code.'; end if;
+  if jsonb_typeof(e->'retailPriceMYR') is distinct from 'number' or jsonb_typeof(e->'promotionPriceMYR') is distinct from 'number' then
+    return 'A price must be 0 or more.';
+  end if;
+  if (e->>'retailPriceMYR')::numeric < 0 or (e->>'promotionPriceMYR')::numeric < 0 then
+    return 'A price must be 0 or more.';
+  end if;
+  if sold and ((e->>'retailPriceMYR')::numeric <= 0 or (e->>'promotionPriceMYR')::numeric <= 0) then
+    return 'A product that is sold needs a retail and a promotion price.';
+  end if;
+  if e ? 'promotion2MYR' and jsonb_typeof(e->'promotion2MYR') <> 'null' then
+    if jsonb_typeof(e->'promotion2MYR') is distinct from 'number' then return 'A Promotion 2 price must be more than 0.'; end if;
+    if (e->>'promotion2MYR')::numeric <= 0 then return 'A Promotion 2 price must be more than 0.'; end if;
+  end if;
+  if jsonb_typeof(e->'reorderPoint') is distinct from 'number' then
+    return 'The reorder level must be a whole number, 0 or more.';
+  end if;
+  if (e->>'reorderPoint')::numeric < 0 or (e->>'reorderPoint')::numeric <> trunc((e->>'reorderPoint')::numeric) then
+    return 'The reorder level must be a whole number, 0 or more.';
+  end if;
+  if jsonb_typeof(e->'caseSize') is distinct from 'number' then
+    return 'The case size must be a whole number, 1 or more.';
+  end if;
+  if (e->>'caseSize')::numeric < 1 or (e->>'caseSize')::numeric <> trunc((e->>'caseSize')::numeric) then
+    return 'The case size must be a whole number, 1 or more.';
+  end if;
+  return null;
+end $$;
+
 -- A dealer's or consignment partner's month, keyed in at head office. Mirrors
 -- `partnerSalesRefusal` in src/lib/partner-sales.ts; keep the two in step.
 --
@@ -605,6 +667,9 @@ begin
     if refused is null and d->>'kind' = 'partner_sales' then
       refused := _partner_sales_refusal(d);
     end if;
+    if refused is null and d->>'kind' = 'product' then
+      refused := _catalogue_refusal(d);
+    end if;
     if refused is not null then
       return jsonb_build_object('ok', false, 'error', refused);
     end if;
@@ -624,6 +689,10 @@ begin
       if d->>'kind' = 'partner_sales' then
         -- As with the log, who keyed a figure in is the session's to say.
         body := body || jsonb_build_object('enteredBy', s.name, 'enteredAt', _now_text());
+      end if;
+      if d->>'kind' = 'product' then
+        -- And who changed a product.
+        body := body || jsonb_build_object('changedBy', s.name, 'changedAt', _now_text());
       end if;
       insert into docs(kind, id, location_id, day, doc, updated_by, updated_at, deleted)
         values (d->>'kind', d->>'id', d->>'location_id', d->>'day', body, s.person_id, now(), false)
@@ -651,12 +720,21 @@ begin
   if p_kind = 'closing' and s.role not in ('md', 'ops') then
     return jsonb_build_object('ok', false, 'error', 'A filed day cannot be deleted. Change it instead.');
   end if;
+  -- Sales, counts and orders name their products, so a product is taken off
+  -- the range, never deleted (20 October). Mirrors removeSync in local.ts.
+  if p_kind = 'product' then
+    return jsonb_build_object('ok', false, 'error', 'A product is taken off the range, never deleted.');
+  end if;
 
   foreach one_id in array p_ids loop
     select * into existing from docs where kind = p_kind and id = one_id;
     if existing.id is null then continue; end if;
     refused := _refusal(s.role, s.location_id, p_kind, existing.location_id);
     if refused is not null then return jsonb_build_object('ok', false, 'error', refused); end if;
+    -- Only a draft order is ever deleted (20 October). Mirrors removeSync in local.ts.
+    if p_kind = 'po' and existing.doc->>'status' is distinct from 'draft' then
+      return jsonb_build_object('ok', false, 'error', 'An order that has been sent is not deleted.');
+    end if;
     update docs set deleted = true, updated_at = now(), updated_by = s.person_id
       where kind = p_kind and id = one_id;
   end loop;

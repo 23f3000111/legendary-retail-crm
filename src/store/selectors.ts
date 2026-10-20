@@ -39,7 +39,7 @@ import {
 } from '../data/products'
 import { countries } from '../data/countries'
 import { linesDiffer } from '../lib/changes'
-import { addDays, dateRange, daysBetween, monthKey, shiftMonth } from '../lib/dates'
+import { addDays, dateRange, daysBetween, monthKey, shiftMonth, spanDays, type DateSpan } from '../lib/dates'
 import { effectiveQty, isOpen } from '../lib/po-machine'
 import type { Alert, Closing, CrmData, DateStr, PartnerSales, PurchaseOrder, SaleLine } from '../data/types'
 
@@ -369,13 +369,19 @@ export const selectOriginMix = (data: CrmData, f: Filter, top = 6): OriginSlice[
 }
 
 /**
- * Where one store's customers came from, from `from` to today — today read
- * live from the counter, as the promoters ring sales up, and the days before
- * it from what was filed. The store page's day, week and month-to-date views
- * (client, 15 October). Today is counted once, from the live sales, whether
- * or not it has been filed yet.
+ * Where one store's customers came from, from `from` to `to`. Days that have
+ * ended read what was filed for them; today, if the span takes it in, reads
+ * the counter live, as the promoters ring sales up, and is counted once
+ * whether or not it has been filed. The store page's yesterday, week, month
+ * and chosen dates (client, 15 and 20 October).
  */
-export const selectOriginsSince = (data: CrmData, locationId: string, from: DateStr, top = 6): OriginSlice[] => {
+export const selectOriginsBetween = (
+  data: CrmData,
+  locationId: string,
+  from: DateStr,
+  to: DateStr,
+  top = 6,
+): OriginSlice[] => {
   const basis = basisOf(locationId)
   const tally = new Map<string, { units: number; revenue: number }>()
   const count = (line: SaleLine) => {
@@ -386,11 +392,90 @@ export const selectOriginsSince = (data: CrmData, locationId: string, from: Date
     tally.set(line.countryCode, bucket)
   }
   for (const c of data.closings) {
-    if (c.locationId !== locationId || c.periodType !== 'day' || c.period < from || c.period >= data.today) continue
+    if (c.locationId !== locationId || c.periodType !== 'day') continue
+    if (c.period < from || c.period > to || c.period >= data.today) continue
     c.lines.forEach(count)
   }
-  if (from <= data.today) (data.liveLines[locationId] ?? []).forEach(count)
+  if (from <= data.today && data.today <= to) (data.liveLines[locationId] ?? []).forEach(count)
   return originSlicesFrom(tally, top)
+}
+
+// ── Finance's sales report ────────────────────────────────────────────────
+
+/**
+ * One rule of Finance's sales report, after the rules Zeoniq's reports are
+ * built from (client, 20 October): a business date, equal to one day or
+ * between two; the items; the nationalities. Each rule has its own delete,
+ * and the report keeps only what every rule allows.
+ */
+export type ReportRule =
+  | { id: string; field: 'date'; span: DateSpan }
+  | { id: string; field: 'item'; op: 'equal' | 'not_equal'; skuIds: string[] }
+  | { id: string; field: 'nationality'; op: 'equal' | 'not_equal'; countryCodes: string[] }
+
+export interface ReportRow {
+  day: DateStr
+  locationId: string
+  units: number
+  revenue: number
+}
+
+/**
+ * Every store, day by day: one row per store per business date, with the
+ * units and revenue the rules allow. Days that have ended read what was
+ * filed; today reads the counter live. A rule with nothing chosen yet narrows
+ * nothing, and with no date rule every day is in.
+ *
+ * Only sales rung up at a counter carry items and nationalities, so dealers'
+ * and consignment partners' monthly figures are not in it.
+ */
+export const selectSalesReport = (
+  data: CrmData,
+  rules: ReportRule[],
+): { rows: ReportRow[]; units: number; revenue: number; days: { from: DateStr; to: DateStr } | null } => {
+  let days: { from: DateStr; to: DateStr } | null = null
+  let items: Extract<ReportRule, { field: 'item' }> | undefined
+  let nations: Extract<ReportRule, { field: 'nationality' }> | undefined
+  for (const r of rules) {
+    if (r.field === 'date') days = spanDays(r.span)
+    else if (r.field === 'item' && r.skuIds.length) items = r
+    else if (r.field === 'nationality' && r.countryCodes.length) nations = r
+  }
+  const inSpan = (day: DateStr) => !days || (day >= days.from && day <= days.to)
+  const keep = (l: SaleLine) => {
+    if (items && items.skuIds.includes(l.skuId) !== (items.op === 'equal')) return false
+    if (nations && Boolean(l.countryCode && nations.countryCodes.includes(l.countryCode)) !== (nations.op === 'equal')) {
+      return false
+    }
+    return true
+  }
+  const tally = new Map<string, ReportRow>()
+  const add = (day: DateStr, locationId: string, l: SaleLine) => {
+    if (!keep(l)) return
+    const key = `${day}::${locationId}`
+    const row = tally.get(key) ?? { day, locationId, units: 0, revenue: 0 }
+    row.units += l.qty
+    row.revenue += l.qty * lineUnitPrice(l, basisOf(locationId))
+    tally.set(key, row)
+  }
+  for (const c of data.closings) {
+    if (c.periodType !== 'day' || c.period >= data.today || !inSpan(c.period)) continue
+    for (const l of c.lines) add(c.period, c.locationId, l)
+  }
+  if (inSpan(data.today)) {
+    for (const [locationId, lines] of Object.entries(data.liveLines)) for (const l of lines) add(data.today, locationId, l)
+  }
+  const name = (id: string) => locationById(id)?.shortName ?? id
+  const rows = [...tally.values()]
+    .filter((r) => r.units > 0)
+    .map((r) => ({ ...r, revenue: Math.round(r.revenue * 100) / 100 }))
+    .sort((a, b) => (a.day === b.day ? name(a.locationId).localeCompare(name(b.locationId)) : a.day < b.day ? -1 : 1))
+  return {
+    rows,
+    units: rows.reduce((a, r) => a + r.units, 0),
+    revenue: Math.round(rows.reduce((a, r) => a + r.revenue, 0) * 100) / 100,
+    days,
+  }
 }
 
 /** What one nationality bought, ranked — the question the airports raise. */

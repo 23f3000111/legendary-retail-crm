@@ -62,6 +62,8 @@ export function orderEditMode(
 ): OrderEditMode {
   if (!can(person.role).canEdit) return 'none'
   const ownStore = person.role === 'promoter' && sessionLocationId === po.locationId
+  // A draft is the store's to change until it sends it (20 October).
+  if (po.status === 'draft') return ownStore ? 'edit' : 'none'
   if (po.status === 'submitted') {
     return ownStore || can(person.role).approvePurchaseOrders ? 'edit' : 'none'
   }

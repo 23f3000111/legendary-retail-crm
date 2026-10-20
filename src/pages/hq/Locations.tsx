@@ -158,8 +158,9 @@ export function Locations() {
 
   const exportRows = () =>
     downloadCsv(
-      'legendary-stores.csv',
+      `legendary-stores-${data.today}.csv`,
       [
+        'As at',
         'Store',
         'Code',
         'Channel',
@@ -172,6 +173,7 @@ export function Locations() {
         'Units 30d',
       ],
       rows.map((r) => [
+        data.today,
         r.name,
         r.code,
         r.channel,

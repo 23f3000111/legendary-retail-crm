@@ -115,8 +115,17 @@ export const actsOnOrders = (role: Role): boolean =>
 export const availableTransitions = (po: PurchaseOrder, role: Role): Transition[] =>
   TRANSITIONS[po.status].filter((t) => t.by.includes(role))
 
-export const isOpen = (po: PurchaseOrder): boolean =>
-  po.status !== 'received' && po.status !== 'rejected'
+/** On its way: sent, and not yet received or turned down. A draft has not been sent. */
+export const isOpen = (po: Pick<PurchaseOrder, 'status'>): boolean =>
+  po.status !== 'received' && po.status !== 'rejected' && po.status !== 'draft'
+
+/**
+ * Whether an order shows on someone's lists. A draft is the store's own until
+ * it is sent (client, 20 October): head office sees an order once it reaches
+ * Kelly.
+ */
+export const seenBy = (po: Pick<PurchaseOrder, 'status'>, role: Role): boolean =>
+  po.status !== 'draft' || role === 'promoter'
 
 /** How far along the chain, 0–1, for progress rails. Rejected orders stop dead. */
 export const chainProgress = (status: PoStatus): number => {

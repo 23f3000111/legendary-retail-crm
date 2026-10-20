@@ -32,6 +32,8 @@ export type DocKind =
   | 'setting'
   /** A dealer's or consignment partner's sales for a month, keyed in at head office. */
   | 'partner_sales'
+  /** A line of the range as head office keyed it: added, changed or taken off (20 October). */
+  | 'product'
 
 export interface Doc {
   kind: DocKind

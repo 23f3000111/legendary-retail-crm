@@ -34,3 +34,9 @@ describe('where a link may take you', () => {
     expect(canOpen('ops', '/analytics')).toBe(false)
   })
 })
+
+describe('who keeps the product list (20 October)', () => {
+  it('lets Davy, Kelly and Chloe open Products', () => {
+    for (const role of ['md', 'ops', 'pa'] as const) expect(canOpen(role, '/catalogue'), role).toBe(true)
+  })
+})

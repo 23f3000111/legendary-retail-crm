@@ -15,8 +15,10 @@ import {
   selectKpis,
   selectLocationRows,
   selectOriginMix,
-  selectOriginsSince,
+  selectOriginsBetween,
   selectPricesAt,
+  selectSalesReport,
+  type ReportRule,
   selectSkuPerformance,
   selectSkusForCountry,
   selectStock,
@@ -503,8 +505,8 @@ describe('where one store’s customers came from, today, this week, this month'
     ],
     liveLines: { 'pavilion-5': [line('CN', 1, today), line('MY', 2, today)], 'klia-t2': [line('KR', 5, today)] },
   }
-  const units = (from: string) =>
-    Object.fromEntries(selectOriginsSince(d, 'pavilion-5', from).map((s) => [s.countryCode, s.units]))
+  const units = (from: string, to = today) =>
+    Object.fromEntries(selectOriginsBetween(d, 'pavilion-5', from, to).map((s) => [s.countryCode, s.units]))
 
   it('starts the week on Monday', () => {
     expect(startOfWeek('2026-10-14')).toBe('2026-10-12')
@@ -522,5 +524,113 @@ describe('where one store’s customers came from, today, this week, this month'
 
   it('adds the days filed this month', () => {
     expect(units(startOfMonth(today))).toEqual({ CN: 4, SG: 2, MY: 2, ID: 4 })
+  })
+
+  // Client, 20 October: "Today" becomes "Yesterday", plus any date, or any
+  // two dates and the days between.
+  it('reads yesterday from what was filed for it', () => {
+    expect(units('2026-10-13', '2026-10-13')).toEqual({ SG: 2 })
+  })
+
+  it('reads any day, or any span of days, that has ended from what was filed', () => {
+    expect(units('2026-10-09', '2026-10-09')).toEqual({ ID: 4 })
+    expect(units('2026-10-09', '2026-10-12')).toEqual({ ID: 4, CN: 3 })
+    expect(units('2026-09-01', '2026-09-30')).toEqual({ CN: 50 })
+    // Nothing filed on the day: nothing to show.
+    expect(units('2026-10-10', '2026-10-11')).toEqual({})
+  })
+
+  it('reaches today live only when the span takes it in', () => {
+    expect(units('2026-10-13', today)).toEqual({ SG: 2, CN: 1, MY: 2 })
+    expect(units('2026-10-12', '2026-10-13')).toEqual({ CN: 3, SG: 2 })
+  })
+})
+
+describe('Finance’s sales report: every store, day by day', () => {
+  // Client, 20 October, after Zeoniq: rules for business date (equal or
+  // between), item and nationality, each with its own delete.
+  const line = (skuId: string, qty: number, unitPriceMYR: number, countryCode?: string): SaleLine => ({
+    skuId,
+    qty,
+    priceTier: 'promotion',
+    unitPriceMYR,
+    ...(countryCode ? { countryCode } : {}),
+  })
+  const closing = (locationId: string, period: string, lines: SaleLine[]): Closing => ({
+    id: `${locationId}-${period}`,
+    locationId,
+    channel: 'main',
+    period,
+    periodType: 'day',
+    revenueMYR: 0,
+    lines,
+    staffSales: { qty: 0, revenueMYR: 0 },
+    stockCount: [],
+    writeOffs: [],
+    submittedBy: 'x',
+    submittedAt: 'x',
+  })
+  const today = '2026-10-20'
+  const d = {
+    ...data,
+    today,
+    closings: [
+      closing('pavilion-5', '2026-10-18', [line('orchid-retail', 2, 188, 'CN'), line('wish-1-set', 1, 0, 'CN')]),
+      closing('pavilion-5', '2026-10-19', [line('orchid-retail', 1, 198, 'MY'), line('violet-retail', 1, 188, 'CN')]),
+      closing('klia-t2', '2026-10-19', [line('orchid-retail', 3, 188, 'ID')]),
+      // Today's closing is not read: today comes live from the counter.
+      closing('klia-t2', today, [line('orchid-retail', 99, 188, 'ID')]),
+    ],
+    liveLines: { 'klia-t2': [line('violet-retail', 1, 188, 'CN')] },
+  }
+  const date = (op: 'equal' | 'between', from: string, to = from): ReportRule => ({ id: 'd', field: 'date', span: { op, from, to } })
+  const rowsOf = (rules: ReportRule[]) =>
+    selectSalesReport(d, rules).rows.map((r) => `${r.day} ${r.locationId} ${r.units} ${r.revenue}`)
+
+  it('gives one row per store per business date', () => {
+    expect(rowsOf([date('equal', '2026-10-19')])).toEqual([
+      '2026-10-19 klia-t2 3 564',
+      '2026-10-19 pavilion-5 2 386',
+    ])
+  })
+
+  it('takes every day between two dates, oldest first, and today live', () => {
+    expect(rowsOf([date('between', '2026-10-18', today)])).toEqual([
+      '2026-10-18 pavilion-5 3 376',
+      '2026-10-19 klia-t2 3 564',
+      '2026-10-19 pavilion-5 2 386',
+      '2026-10-20 klia-t2 1 188',
+    ])
+    const all = selectSalesReport(d, [date('between', '2026-10-18', today)])
+    expect(all).toMatchObject({ units: 9, revenue: 1514 })
+  })
+
+  it('narrows to the items chosen, or leaves them out', () => {
+    const orchid: ReportRule = { id: 'i', field: 'item', op: 'equal', skuIds: ['orchid-retail'] }
+    expect(rowsOf([date('equal', '2026-10-19'), orchid])).toEqual([
+      '2026-10-19 klia-t2 3 564',
+      '2026-10-19 pavilion-5 1 198',
+    ])
+    expect(rowsOf([date('equal', '2026-10-19'), { ...orchid, op: 'not_equal' }])).toEqual([
+      '2026-10-19 pavilion-5 1 188',
+    ])
+  })
+
+  it('narrows to the nationalities chosen, or leaves them out', () => {
+    const china: ReportRule = { id: 'n', field: 'nationality', op: 'equal', countryCodes: ['CN'] }
+    expect(rowsOf([date('between', '2026-10-18', '2026-10-19'), china])).toEqual([
+      '2026-10-18 pavilion-5 3 376',
+      '2026-10-19 pavilion-5 1 188',
+    ])
+    expect(rowsOf([date('equal', '2026-10-19'), { ...china, op: 'not_equal' }])).toEqual([
+      '2026-10-19 klia-t2 3 564',
+      '2026-10-19 pavilion-5 1 198',
+    ])
+  })
+
+  it('treats a rule with nothing chosen yet as no rule, and no date rule as every day', () => {
+    const empty: ReportRule = { id: 'i', field: 'item', op: 'equal', skuIds: [] }
+    expect(rowsOf([date('equal', '2026-10-19'), empty])).toHaveLength(2)
+    expect(rowsOf([])).toHaveLength(4)
   })
 })

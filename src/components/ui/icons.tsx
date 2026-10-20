@@ -37,6 +37,7 @@ export type IconName =
   | 'eye'
   | 'eyeOff'
   | 'pencil'
+  | 'grip'
 
 const paths: Record<IconName, JSX.Element> = {
   grid: (
@@ -185,6 +186,17 @@ const paths: Record<IconName, JSX.Element> = {
       <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" />
       <path d="m3.5 3.5 17 17" />
     </>
+  ),
+  // A drag handle: two columns of three dots.
+  grip: (
+    <g fill="currentColor" stroke="none">
+      <circle cx="9" cy="6" r="1.3" />
+      <circle cx="15" cy="6" r="1.3" />
+      <circle cx="9" cy="12" r="1.3" />
+      <circle cx="15" cy="12" r="1.3" />
+      <circle cx="9" cy="18" r="1.3" />
+      <circle cx="15" cy="18" r="1.3" />
+    </g>
   ),
   pencil: (
     <>

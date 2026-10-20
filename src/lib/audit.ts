@@ -34,6 +34,7 @@ export type AuditKind =
   | 'target'
   | 'alert'
   | 'partner'
+  | 'product'
 
 export const AUDIT_KIND_LABEL: Record<AuditKind, string> = {
   session: 'Sign in',
@@ -47,6 +48,7 @@ export const AUDIT_KIND_LABEL: Record<AuditKind, string> = {
   target: 'Targets',
   alert: 'Alerts',
   partner: 'Dealer sales',
+  product: 'Products',
 }
 
 /**
@@ -68,6 +70,8 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   'correction.approved': 'Correction approved',
   'correction.rejected': 'Correction rejected',
   'order.raised': 'Order raised',
+  'order.drafted': 'Draft order saved',
+  'order.draft_deleted': 'Draft order deleted',
   'order.edited': 'Order changed',
   'order.resubmitted': 'Order changed and sent again',
   'order.submitted': 'Order sent to HQ',
@@ -88,6 +92,10 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   'promotion.updated': 'Promotion edited',
   'promotion.it_informed': 'IT told about a promotion',
   'partner.keyed': 'Dealer or consignment sales keyed in',
+  'product.added': 'Product added',
+  'product.changed': 'Product changed',
+  'product.removed': 'Product taken off',
+  'product.restored': 'Product put back',
   'target.set': 'Target set',
   'target.changed': 'Target changed',
   'alert.read': 'Alert read',
@@ -119,6 +127,7 @@ const KIND_PREFIX: Record<AuditKind, string> = {
   target: 'target',
   alert: 'alert',
   partner: 'partner',
+  product: 'product',
 }
 
 export type AuditTone = 'neutral' | 'active' | 'good' | 'warn' | 'critical'
@@ -140,6 +149,7 @@ export const AUDIT_KIND_TONE: Record<AuditKind, AuditTone> = {
   target: 'good',
   alert: 'neutral',
   partner: 'good',
+  product: 'active',
 }
 
 export interface AuditEntry {

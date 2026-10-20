@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
+  applyCatalogue,
   countedSkus,
   hasListPrice,
+  newCodeFor,
+  orderableSkus,
+  type CatalogueEntry,
   lineUnitPrice,
   priceAtTier,
   priceOf,
@@ -278,5 +282,107 @@ describe('what is counted, and what is only ordered', () => {
       expect(variantName(wish)).toBe('15ml')
       expect(wish.counted).toBe(true)
     }
+  })
+})
+
+describe('the range, as head office keeps it (20 October)', () => {
+  afterEach(() => applyCatalogue([]))
+
+  const entry = (over: Partial<CatalogueEntry> = {}): CatalogueEntry => ({
+    skuId: 'orchid-retail-50ml',
+    productId: 'orchid',
+    variant: 'retail',
+    size: '50ml',
+    code: 'LGD-ORC-R50',
+    retailPriceMYR: 288,
+    promotionPriceMYR: 238,
+    reorderPoint: 12,
+    caseSize: 6,
+    ...over,
+  })
+
+  it('starts from the client’s own list', () => {
+    const before = skus.length
+    applyCatalogue([])
+    expect(skus).toHaveLength(before)
+    expect(sellableSkus.every((s) => !s.removed)).toBe(true)
+  })
+
+  it('adds a line to a fragrance already on the range', () => {
+    const before = sellableSkus.length
+    applyCatalogue([entry()])
+    const added = skuById('orchid-retail-50ml')!
+    expect(added).toMatchObject({ label: 'Orchid · 50ml', added: true, sellable: true, counted: true })
+    expect(sellableSkus).toHaveLength(before + 1)
+    expect(countedSkus.some((s) => s.id === added.id)).toBe(true)
+    expect(tiersFor(added, 'promotion')).toEqual(['promotion', 'retail', 'other'])
+    expect(priceOf(added, 'retail')).toBe(288)
+  })
+
+  it('adds a new fragrance with its first line, at the end of its collection', () => {
+    applyCatalogue([
+      entry({
+        skuId: 'jasmine-retail',
+        productId: 'jasmine',
+        product: { id: 'jasmine', name: 'Jasmine', collectionId: 'signature' },
+        size: '30ml',
+        code: 'LGD-JAS-R30',
+        retailPriceMYR: 238,
+        promotionPriceMYR: 188,
+        promotion2MYR: 198,
+      }),
+    ])
+    expect(skuById('jasmine-retail')?.label).toBe('Jasmine · 30ml')
+    expect(tiersFor(skuById('jasmine-retail'), 'promotion')).toEqual(['promotion', 'promotion2', 'retail', 'other'])
+    const order = products.map((p) => p.id)
+    expect(order.indexOf('jasmine')).toBe(order.indexOf('man') + 1)
+    expect(products.find((p) => p.id === 'jasmine')?.collection).toBe('Signature')
+  })
+
+  it('changes the prices and reorder level of one of the client’s own lines', () => {
+    applyCatalogue([
+      entry({
+        skuId: 'nyonya-travel',
+        productId: 'nyonya',
+        variant: 'travel',
+        size: 'Travel Kit',
+        code: skuById('nyonya-travel')!.code,
+        retailPriceMYR: 88,
+        promotionPriceMYR: 78,
+        reorderPoint: 10,
+        caseSize: 12,
+      }),
+    ])
+    const kit = skuById('nyonya-travel')!
+    expect(kit).toMatchObject({ label: 'Nyonya · Travel Kit', promotionPriceMYR: 78, retailPriceMYR: 88, reorderPoint: 10 })
+    expect(kit.added).toBeUndefined()
+  })
+
+  it('takes a line off the counter, the count and the order list, and keeps it on record', () => {
+    applyCatalogue([
+      entry({
+        skuId: 'violet-retail',
+        productId: 'violet',
+        size: '30ml',
+        code: skuById('violet-retail')!.code,
+        retailPriceMYR: 238,
+        promotionPriceMYR: 188,
+        promotion2MYR: 198,
+        reorderPoint: 24,
+        caseSize: 12,
+        removed: true,
+      }),
+    ])
+    expect(sellableSkus.some((s) => s.id === 'violet-retail')).toBe(false)
+    expect(countedSkus.some((s) => s.id === 'violet-retail')).toBe(false)
+    expect(orderableSkus.some((s) => s.id === 'violet-retail')).toBe(false)
+    // Past sales still read its name and price.
+    expect(skuById('violet-retail')).toMatchObject({ label: 'Violet · 30ml', removed: true })
+    expect(priceOfId('violet-retail', 'promotion')).toBe(188)
+  })
+
+  it('gives a new line a shelf code no other line has', () => {
+    expect(newCodeFor('orchid', 'retail', '30ml')).toBe('LGD-ORC-R30-2')
+    expect(newCodeFor('orchid', 'retail', '75ml')).toBe('LGD-ORC-R75')
   })
 })

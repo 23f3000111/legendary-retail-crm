@@ -77,11 +77,14 @@ export function Analytics() {
 
   const empty = kpis.current.revenue === 0 && kpis.current.units === 0
 
+  // The period goes in the file, and on every row (client, 20 October).
   const exportSummary = () =>
     downloadCsv(
-      'legendary-analytics.csv',
-      ['Store', 'Channel', 'Region', 'Revenue MYR', 'Units', 'Month to date', 'Monthly target'],
+      `legendary-analytics-${filter.from}-to-${filter.to}.csv`,
+      ['From', 'To', 'Store', 'Channel', 'Region', 'Revenue MYR', 'Units', 'Month to date', 'Monthly target'],
       rows.map((r) => [
+        filter.from,
+        filter.to,
         r.name,
         r.channel,
         r.region,

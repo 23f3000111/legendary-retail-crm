@@ -163,6 +163,9 @@ export function describeOrderChanges(before: OrderShape, after: OrderShape): str
   for (const [skuId, n] of now) {
     if (!was.has(skuId)) out.push(`Added ${num(n)} × ${skuLabel(skuId)}`)
   }
+  // The lines can be dragged into a new order (client, 20 October).
+  const kept = (o: OrderShape) => o.lines.map((l) => l.skuId).filter((id) => was.has(id) && now.has(id))
+  if (kept(before).join() !== kept(after).join()) out.push('Changed the order of the items')
   if (before.priority !== after.priority) {
     out.push(after.priority === 'urgent' ? 'Marked urgent' : 'No longer urgent')
   }

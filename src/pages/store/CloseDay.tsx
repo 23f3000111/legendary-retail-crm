@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Panel, PanelBody, PanelHeader, Rule } from '../../components/ui/Panel'
-import { Button, IconButton } from '../../components/ui/Button'
+import { Button } from '../../components/ui/Button'
 import { Badge } from '../../components/ui/Badge'
 import { EmptyState } from '../../components/ui/DataTable'
-import { Field, NumberInput, Select, TextArea } from '../../components/ui/Field'
+import { Field, NumberInput, TextArea } from '../../components/ui/Field'
 import { Flag } from '../../components/ui/Flag'
 import { Icon } from '../../components/ui/icons'
 import { ChangeList, Notice } from '../../components/ui/Notice'
@@ -20,7 +20,7 @@ import {
 } from '../../store/selectors'
 import { locationById, type Location } from '../../data/locations'
 import { lineUnitPrice, skuById, skuLabel, TIER_LABEL } from '../../data/products'
-import { OrderableOptions } from '../../components/po/OrderableOptions'
+import { OrderLines, linesToSend, type OrderRow } from '../../components/po/OrderLines'
 import { countryByCode, MALAYSIA_SEGMENT_LABEL } from '../../data/countries'
 import { formatDate, formatTimestamp } from '../../lib/dates'
 import { moneyInput, num } from '../../lib/format'
@@ -429,18 +429,17 @@ function ClosingForm({
 
   // Kept as the text in the box, not a number: clearing the box to type a new
   // figure must not make the line vanish, which is what parsing '' as 0 and
-  // dropping zeroes did. A line only leaves the order by its own cross.
-  const [poQty, setPoQty] = useState<Record<string, string>>(() =>
+  // dropping zeroes did. A line only leaves the order by its own cross. Kept
+  // in a list, in the order the store drags the lines into (20 October).
+  const [poRows, setPoRows] = useState<OrderRow[]>(() =>
     mode === 'new'
-      ? Object.fromEntries(
-          selectSuggestedPoLines(data, locationId).map((l) => [l.skuId, String(l.qtyRequested)]),
-        )
-      : {},
+      ? selectSuggestedPoLines(data, locationId).map((l) => ({ skuId: l.skuId, qty: String(l.qtyRequested) }))
+      : [],
   )
   const [poNotes, setPoNotes] = useState('')
-  /** The line being added by hand from the picker. */
-  const [addSku, setAddSku] = useState('')
   const [raisePo, setRaisePo] = useState(mode === 'new')
+  /** Orders the store saved as drafts and has not sent (20 October). */
+  const drafts = data.purchaseOrders.filter((p) => p.locationId === locationId && p.status === 'draft')
 
   const [reason, setReason] = useState(pendingMine?.reason ?? '')
   const [tried, setTried] = useState(false)
@@ -450,16 +449,10 @@ function ClosingForm({
   const [editingSale, setEditingSale] = useState<string | null>(null)
 
   /** Every line on the order, whether the app suggested it or the promoter added it. */
-  const orderRows = useMemo(() => Object.keys(poQty), [poQty])
+  const orderRows = useMemo(() => poRows.map((r) => r.skuId), [poRows])
 
-  /** The ones that will actually be sent: those with a quantity against them. */
-  const orderLines = useMemo(
-    () =>
-      Object.entries(poQty)
-        .map(([skuId, qty]) => ({ skuId, qty: Math.max(0, Math.floor(Number(qty)) || 0) }))
-        .filter((l) => l.qty > 0),
-    [poQty],
-  )
+  /** The ones that will actually be sent, in the store's order: those with a quantity against them. */
+  const orderLines = useMemo(() => linesToSend(poRows), [poRows])
 
   const stockCount: StockCount[] = [
     ...stock
@@ -1044,88 +1037,17 @@ function ClosingForm({
           />
           <Rule />
           <PanelBody className="space-y-4">
-            <div className="flex flex-wrap items-end gap-2">
-              <Field label="Add something else" className="min-w-0 flex-1 basis-full sm:basis-auto sm:min-w-[220px]">
-                <Select value={addSku} onChange={(e) => setAddSku(e.target.value)} disabled={!raisePo}>
-                  <option value="">Choose a product…</option>
-                  <OrderableOptions />
-                </Select>
-              </Field>
-              <Button
-                variant="secondary"
-                icon="plus"
-                className="w-full sm:w-auto"
-                disabled={!raisePo || !addSku}
-                onClick={() => {
-                  if (!addSku) return
-                  const caseSize = skuById(addSku)?.caseSize ?? 12
-                  setPoQty((q) => ({
-                    ...q,
-                    [addSku]: String((Number(q[addSku]) || 0) + caseSize),
-                  }))
-                  setAddSku('')
-                }}
-              >
-                Add
-              </Button>
-            </div>
-
-            {orderRows.map((skuId) => {
-              const sku = skuById(skuId)
-              const qty = poQty[skuId] ?? ''
-              const row = stock.find((x) => x.skuId === skuId)
-              const blank = !(Number(qty) > 0)
-              return (
-                <div
-                  key={skuId}
-                  className={`flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border px-3.5 py-3 ${
-                    blank && raisePo ? 'border-warn/50 bg-warn/5' : 'border-line bg-surface-2'
-                  }`}
-                >
-                  <div className="min-w-0 flex-1 basis-full sm:basis-0 sm:min-w-[160px]">
-                    <p className="text-[13px] text-ink">{sku?.label ?? skuId}</p>
-                    <p className="text-[11px] text-ink-3">
-                      {row
-                        ? row.counted
-                          ? `${num(row.onHand)} on hand · reorder at ${num(row.reorderPoint)}`
-                          : `No count filed yet · reorder at ${num(row.reorderPoint)}`
-                        : 'Tester — not counted on the shelf'}
-                    </p>
-                  </div>
-                  {row && row.status !== 'ok' && (
-                    <Badge tone={row.status === 'low' ? 'warn' : 'critical'} icon="alert">
-                      {row.status === 'out' ? 'Out of stock' : row.status === 'critical' ? 'Very low' : 'Low'}
-                    </Badge>
-                  )}
-                  {sku?.variant === 'tester' && <Badge tone="active">Tester</Badge>}
-                  {sku?.variant === 'vial' && <Badge tone="active">Vial</Badge>}
-                  <div className="ml-auto flex items-center gap-2">
-                    <div className="w-24">
-                      <NumberInput
-                        aria-label={`Units of ${sku?.label ?? skuId} to order`}
-                        min={0}
-                        step={sku?.caseSize ?? 12}
-                        value={qty}
-                        placeholder="0"
-                        onChange={(e) => setPoQty((q) => ({ ...q, [skuId]: e.target.value }))}
-                        disabled={!raisePo}
-                      />
-                    </div>
-                    <IconButton
-                      name="x"
-                      label={`Take ${sku?.label ?? 'this'} off the order`}
-                      onClick={() =>
-                        setPoQty((q) => {
-                          const next = { ...q }
-                          delete next[skuId]
-                          return next
-                        })
-                      }
-                    />
-                  </div>
-                </div>
-              )
-            })}
+            {drafts.length > 0 && (
+              <Notice tone="warn" icon="doc">
+                {drafts.length === 1 ? `${drafts[0].id} is` : `${drafts.length} orders are`} saved as a draft and not sent
+                yet. Send {drafts.length === 1 ? 'it' : 'them'} from{' '}
+                <Link to="/orders" className="text-primary hover:underline">
+                  My orders
+                </Link>
+                , or put what you need on tonight's order instead.
+              </Notice>
+            )}
+            <OrderLines rows={poRows} onChange={setPoRows} stock={stock} disabled={!raisePo} />
 
             {orderRows.length > 0 && (
               <Field

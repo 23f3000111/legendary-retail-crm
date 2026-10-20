@@ -29,6 +29,14 @@
  * Everything at RM 188 can also go at RM 198, "Promotion 2". The Wishes can be
  * given free of charge, in place of the RM 10 offer they went at before.
  *
+ * ── Head office keeps the list (20 October) ──────────────────────────────────
+ *
+ * Davy, Kelly and Chloe add products, change a product's prices and reorder
+ * level, and take products off. What they key in is held on the server as one
+ * record per line, laid over the list below by `applyCatalogue`. A product
+ * taken off leaves the counter, the nightly count and ordering, and stays
+ * on record, so every sale, count and order already made keeps its name.
+ *
  * There is deliberately no cost price anywhere. The client was explicit that
  * only revenue is recorded (Q58, Q65); the one margin figure in the system sits
  * on the location, not on the product.
@@ -115,9 +123,13 @@ export interface Sku {
   sellable: boolean
   /** Testers are ordered but never counted on the shelf (Revision 2). */
   counted: boolean
+  /** Taken off by head office: no longer sold, counted or ordered, but kept for the record. */
+  removed?: boolean
+  /** Added by head office in the app, rather than one of the client's original lists. */
+  added?: boolean
 }
 
-export const products: Product[] = [
+const BUILT_IN_PRODUCTS: Product[] = [
   // Signature
   { id: 'orchid', name: 'Orchid', collection: 'Signature', collectionId: 'signature', family: 'Floral Fruity', audience: 'For Her' },
   { id: 'mahsuri', name: 'Mahsuri', collection: 'Signature', collectionId: 'signature', family: 'Fruity Floral', audience: 'For Her' },
@@ -255,6 +267,9 @@ const testerSeeds: [productId: string, size: string][] = [
   ['wish-3', '50ml'],
 ]
 
+/** Every fragrance, the ones head office has added included. Rebuilt by `applyCatalogue`. */
+export let products: Product[] = BUILT_IN_PRODUCTS
+
 const productName = (id: string) => products.find((p) => p.id === id)?.name ?? id
 
 const VARIANT_CODE: Record<Variant, string> = {
@@ -340,7 +355,16 @@ const testers: Sku[] = testerSeeds.map(([productId, size]) => ({
   counted: false,
 }))
 
-export const skus: Sku[] = [...sellable, ...vials, ...testers]
+/** The range as the client's own lists give it. */
+const BUILT_IN_SKUS: Sku[] = [...sellable, ...vials, ...testers]
+
+/**
+ * Every line there has ever been, the ones taken off included, so a sale from
+ * last month still reads its name. Rebuilt by `applyCatalogue` whenever head
+ * office adds, changes or takes off a product; every import sees the current
+ * list.
+ */
+export let skus: Sku[] = BUILT_IN_SKUS
 
 export const collections: { id: CollectionId; name: string; slot: 1 | 2 | 3 | 4 }[] = [
   { id: 'signature', name: 'Signature', slot: 1 },
@@ -356,17 +380,167 @@ export const skuLabel = (id: string) => skuById(id)?.label ?? id
 export const productById = (id: string) => products.find((p) => p.id === id)
 
 /** Everything a shop can actually sell. */
-export const sellableSkus = skus.filter((s) => s.sellable)
+export let sellableSkus: Sku[] = []
 
 /** Everything counted on the shelf at night — no testers, per Revision 2. */
-export const countedSkus = skus.filter((s) => s.counted)
+export let countedSkus: Sku[] = []
 
 /** Everything a shop can ask HQ for, which is everything including testers. */
-export const orderableSkus = skus
+export let orderableSkus: Sku[] = []
 
-export const testerSkus = skus.filter((s) => s.variant === 'tester')
+export let testerSkus: Sku[] = []
 
-export const vialSkus = skus.filter((s) => s.variant === 'vial')
+export let vialSkus: Sku[] = []
+
+/** The working lists: what is on the range now, nothing that has been taken off. */
+const derive = () => {
+  const onRange = skus.filter((s) => !s.removed)
+  sellableSkus = onRange.filter((s) => s.sellable)
+  countedSkus = onRange.filter((s) => s.counted)
+  orderableSkus = onRange
+  testerSkus = onRange.filter((s) => s.variant === 'tester')
+  vialSkus = onRange.filter((s) => s.variant === 'vial')
+}
+derive()
+
+// ── What head office keys in (20 October) ─────────────────────────────────
+
+/**
+ * One line of the range as head office keyed it: a new one, or one of the
+ * client's own with its prices or reorder level changed, or taken off.
+ */
+export interface CatalogueEntry {
+  /** The line: one already on the range, or a new one's own id. */
+  skuId: string
+  /** A new fragrance, added with its first line. */
+  product?: { id: string; name: string; collectionId: CollectionId }
+  productId: string
+  variant: Variant
+  /** "30ml", "Set (new)", "Travel Kit". A vial's is "3ml". */
+  size: string
+  code: string
+  retailPriceMYR: number
+  promotionPriceMYR: number
+  /** "Promotion 2": RM 198 on everything at RM 188, unless head office says otherwise. */
+  promotion2MYR?: number
+  /** May be given free of charge as well as sold, like the Wishes. */
+  canGoFree?: boolean
+  reorderPoint: number
+  caseSize: number
+  removed?: boolean
+  /** Stamped by the server: whoever was signed in, and when. */
+  changedBy?: string
+  changedAt?: string
+}
+
+/** What a line is called on the shelf: "Orchid · 30ml", "Orchid · 3ml Vial", "Orchid · Tester 30ml". */
+const labelFor = (productId: string, variant: Variant, size: string) =>
+  `${productName(productId)} · ${variant === 'vial' ? '3ml Vial' : variant === 'tester' ? `Tester ${size}` : size}`
+
+/** The prices and levels head office can set, over whatever the line had before. */
+const withEntry = (sku: Sku, e: CatalogueEntry): Sku => {
+  const next: Sku = {
+    ...sku,
+    retailPriceMYR: e.retailPriceMYR,
+    promotionPriceMYR: e.promotionPriceMYR,
+    reorderPoint: e.reorderPoint,
+    caseSize: e.caseSize,
+    removed: Boolean(e.removed),
+  }
+  delete next.promotion2MYR
+  delete next.canGoFree
+  if (e.promotion2MYR) next.promotion2MYR = e.promotion2MYR
+  if (e.canGoFree) next.canGoFree = true
+  return next
+}
+
+/**
+ * Lays what head office has keyed in over the client's own list. Called with
+ * the records each time they change, and with none to go back to the list as
+ * built in.
+ */
+export function applyCatalogue(entries: CatalogueEntry[]): void {
+  const added = new Map<string, Product>()
+  for (const e of entries) {
+    if (!e.product || BUILT_IN_PRODUCTS.some((p) => p.id === e.product!.id)) continue
+    added.set(e.product.id, {
+      id: e.product.id,
+      name: e.product.name,
+      collection: collections.find((c) => c.id === e.product!.collectionId)?.name ?? '',
+      collectionId: e.product.collectionId,
+      family: '',
+      audience: 'Unisex',
+    })
+  }
+  // A new fragrance sits at the end of its own collection.
+  const list = [...BUILT_IN_PRODUCTS]
+  for (const p of added.values()) {
+    const last = list.map((x) => x.collectionId).lastIndexOf(p.collectionId)
+    list.splice(last < 0 ? list.length : last + 1, 0, p)
+  }
+  products = list
+
+  const byId = new Map(entries.map((e) => [e.skuId, e]))
+  const builtIn = BUILT_IN_SKUS.map((s) => (byId.has(s.id) ? withEntry(s, byId.get(s.id)!) : s))
+  const fresh = entries
+    .filter((e) => !BUILT_IN_SKUS.some((s) => s.id === e.skuId))
+    .map((e) =>
+      withEntry(
+        {
+          id: e.skuId,
+          code: e.code,
+          productId: e.productId,
+          label: labelFor(e.productId, e.variant, e.size),
+          variant: e.variant,
+          size: e.size,
+          retailPriceMYR: 0,
+          promotionPriceMYR: 0,
+          reorderPoint: 0,
+          caseSize: 12,
+          popularity: 0,
+          bestseller: false,
+          // Testers are ordered, never sold or counted (Revision 2).
+          sellable: e.variant !== 'tester',
+          counted: e.variant !== 'tester',
+          added: true,
+        },
+        e,
+      ),
+    )
+  skus = [...builtIn, ...fresh]
+  derive()
+}
+
+/** A fragrance head office added, rather than one of the client's own. */
+export const isAddedProduct = (id: string): boolean => !BUILT_IN_PRODUCTS.some((p) => p.id === id)
+
+/** A line as a record head office can change: everything it carries now. */
+export const entryOf = (sku: Sku): CatalogueEntry => {
+  const product = isAddedProduct(sku.productId) ? productById(sku.productId) : undefined
+  return {
+    skuId: sku.id,
+    // A fragrance head office added travels with each of its lines.
+    ...(product ? { product: { id: product.id, name: product.name, collectionId: product.collectionId } } : {}),
+    productId: sku.productId,
+    variant: sku.variant,
+    size: sku.size,
+    code: sku.code,
+    retailPriceMYR: sku.retailPriceMYR,
+    promotionPriceMYR: sku.promotionPriceMYR,
+    ...(sku.promotion2MYR ? { promotion2MYR: sku.promotion2MYR } : {}),
+    ...(sku.canGoFree ? { canGoFree: true } : {}),
+    reorderPoint: sku.reorderPoint,
+    caseSize: sku.caseSize,
+    ...(sku.removed ? { removed: true } : {}),
+  }
+}
+
+/** The shelf code a new line is given, made unique against every code there is. */
+export const newCodeFor = (productId: string, variant: Variant, size: string): string => {
+  const base = codeFor(productId, variant, size)
+  if (!skus.some((s) => s.code === base)) return base
+  for (let n = 2; ; n++) if (!skus.some((s) => s.code === `${base}-${n}`)) return `${base}-${n}`
+}
 
 /** An item with no list price — a vial — is only ever rung up at a typed price. */
 export const hasListPrice = (sku: Sku | undefined): boolean =>

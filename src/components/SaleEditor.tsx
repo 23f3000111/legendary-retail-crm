@@ -208,6 +208,10 @@ export function SaleEditor({
                       }
                     >
                       <option value="">Choose an item…</option>
+                      {/* A product since taken off the range stays what this line was sold as (20 October). */}
+                      {r.skuId && skuById(r.skuId)?.removed && (
+                        <option value={r.skuId}>{skuById(r.skuId)?.label} (taken off the range)</option>
+                      )}
                       {products.map((p) => {
                         const variants = sellableSkus.filter((s) => s.productId === p.id)
                         if (!variants.length) return null

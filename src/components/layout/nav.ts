@@ -45,6 +45,8 @@ export const NAV: Record<Role, NavItem[]> = {
     { to: '/stock', label: 'Stock', icon: 'box' },
     { to: '/alerts', label: 'Alerts', icon: 'bell' },
     { to: '/partners', label: 'Dealer sales', icon: 'wallet', secondary: true },
+    // Davy, Kelly and Chloe keep the product list (client, 20 October).
+    { to: '/catalogue', label: 'Products', icon: 'sparkle', secondary: true },
     { to: '/promotions', label: 'Promotions', icon: 'sparkle', secondary: true },
     { to: '/targets', label: 'Targets', icon: 'trophy', secondary: true },
     { to: '/users', label: 'Logins', icon: 'users', secondary: true },
@@ -62,6 +64,7 @@ export const NAV: Record<Role, NavItem[]> = {
     { to: '/overview', label: 'Overview', icon: 'chart', secondary: true },
     { to: '/locations', label: 'Stores', icon: 'globe', secondary: true },
     { to: '/partners', label: 'Dealer sales', icon: 'wallet', secondary: true },
+    { to: '/catalogue', label: 'Products', icon: 'sparkle', secondary: true },
     { to: '/promotions', label: 'Promotions', icon: 'sparkle', secondary: true },
     { to: '/users', label: 'Logins', icon: 'users', secondary: true },
     { to: '/activity', label: 'Activity', icon: 'clock', secondary: true },

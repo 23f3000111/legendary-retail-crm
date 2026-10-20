@@ -46,7 +46,11 @@ export function Today() {
   const missed = Object.entries(data.unfiledLines[locationId] ?? {}).sort((a, b) => (a[0] < b[0] ? 1 : -1))
   const stock = selectStock(data, locationId)
   const low = stock.filter((s) => s.status !== 'ok')
-  const openOrders = selectOpenPos(data, locationId)
+  // Drafts first: they wait on the store itself (20 October).
+  const drafts = data.purchaseOrders
+    .filter((p) => p.locationId === locationId && p.status === 'draft')
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+  const openOrders = [...drafts, ...selectOpenPos(data, locationId)]
 
   const window30 = useMemo(
     () => ({ ...emptyFilter(addDays(data.today, -29), data.today), locationIds: [locationId] }),
@@ -279,13 +283,20 @@ export function Today() {
         <Panel>
           <PanelHeader
             eyebrow="Purchase orders"
-            title="In flight"
+            title={drafts.length ? `In flight · ${drafts.length} ${drafts.length === 1 ? 'draft' : 'drafts'} to send` : 'In flight'}
             action={
-              <Link to="/orders">
-                <Button size="sm" variant="ghost" iconRight="chevronRight">
-                  All orders
-                </Button>
-              </Link>
+              <div className="flex flex-wrap gap-1">
+                <Link to="/orders/new">
+                  <Button size="sm" variant="secondary" icon="plus">
+                    New order
+                  </Button>
+                </Link>
+                <Link to="/orders">
+                  <Button size="sm" variant="ghost" iconRight="chevronRight">
+                    All orders
+                  </Button>
+                </Link>
+              </div>
             }
           />
           <Rule />
@@ -294,7 +305,7 @@ export function Today() {
               <EmptyState
                 icon="doc"
                 title="Nothing on its way"
-                body="When something drops below its reorder level, the closing will offer to raise an order."
+                body="When something drops below its reorder level, the closing offers to raise an order. Or make one now with New order."
               />
             ) : (
               openOrders.slice(0, 4).map((po) => (
@@ -306,7 +317,7 @@ export function Today() {
                   <div className="min-w-0 flex-1">
                     <p className="readout text-[12.5px] text-ink">{po.id}</p>
                     <p className="text-[11px] text-ink-3">
-                      {po.lines.length} products · raised{' '}
+                      {po.lines.length} products · {po.status === 'draft' ? 'saved' : 'raised'}{' '}
                       {relativeDay(po.createdAt.slice(0, 10), data.today)}
                     </p>
                   </div>

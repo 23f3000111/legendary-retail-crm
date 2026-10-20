@@ -32,6 +32,7 @@ import { todayInMalaysia } from '../lib/dates'
 import { auditId, type AuditEntry } from '../lib/audit'
 import { closingWriteRefusal } from '../lib/editing'
 import { partnerSalesRefusal } from '../lib/partner-sales'
+import { catalogueRefusal } from '../lib/catalogue'
 import { newId } from '../lib/ids'
 import type { CrmData, DateStr } from '../data/types'
 import {
@@ -77,6 +78,7 @@ const WRITERS: Record<DocKind, Role[]> = {
   alert_read: ['director', 'md', 'ops', 'pa', 'finance', 'warehouse', 'promoter', 'it'],
   setting: ['md', 'it'],
   partner_sales: ['md', 'ops', 'pa', 'finance'],
+  product: ['md', 'ops', 'pa'],
 }
 
 /** Documents a promoter is sent: their own store's, and nothing from the log. */
@@ -420,7 +422,9 @@ export class LocalBackend implements Backend {
           ? closingWriteRefusal(s.person.role, this.docs.get(docKey(d.kind, d.id)), d.doc, this.today)
           : d.kind === 'partner_sales'
             ? partnerSalesRefusal(d, this.today)
-            : null)
+            : d.kind === 'product'
+              ? catalogueRefusal(d)
+              : null)
       if (refused) return { ok: false, error: refused }
       if (d.kind === 'audit') {
         // Append-only: a line that exists is never rewritten. And the actor is
@@ -445,6 +449,12 @@ export class LocalBackend implements Backend {
       if (d.kind === 'partner_sales') {
         // As with the log, who keyed a figure in is the session's to say.
         const doc = { ...(d.doc as object), enteredBy: s.person.name, enteredAt: new Date().toISOString() }
+        this.write({ ...d, doc }, s.person.id)
+        continue
+      }
+      if (d.kind === 'product') {
+        // And who changed a product.
+        const doc = { ...(d.doc as object), changedBy: s.person.name, changedAt: new Date().toISOString() }
         this.write({ ...d, doc }, s.person.id)
         continue
       }
@@ -481,11 +491,18 @@ export class LocalBackend implements Backend {
     if (kind === 'closing' && s.person.role !== 'md' && s.person.role !== 'ops') {
       return { ok: false, error: 'A filed day cannot be deleted. Change it instead.' }
     }
+    // Sales, counts and orders name their products, so a product is never
+    // deleted: it is taken off the range. Mirrored in remove_docs.
+    if (kind === 'product') return { ok: false, error: 'A product is taken off the range, never deleted.' }
     for (const id of ids) {
       const existing = this.docs.get(docKey(kind, id))
       if (!existing) continue
       const refused = this.refuse(s, kind, existing.locationId ?? undefined)
       if (refused) return { ok: false, error: refused }
+      // Only a draft order is ever deleted (20 October). Mirrored in remove_docs.
+      if (kind === 'po' && (existing.doc as { status?: string } | null)?.status !== 'draft') {
+        return { ok: false, error: 'An order that has been sent is not deleted.' }
+      }
       this.docs.set(docKey(kind, id), {
         ...existing,
         deleted: true,

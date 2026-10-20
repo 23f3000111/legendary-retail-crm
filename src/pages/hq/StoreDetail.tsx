@@ -18,12 +18,13 @@ import { SkuBars } from '../../components/charts/SkuBars'
 import { useData } from '../../store/useData'
 import { useCan, useCurrentUser } from '../../store/useAuth'
 import { canOpen } from '../../components/layout/nav'
+import { seenBy } from '../../lib/po-machine'
 import {
   emptyFilter,
   selectKpis,
   selectLastFiled,
   selectOriginMix,
-  selectOriginsSince,
+  selectOriginsBetween,
   selectPricesAt,
   selectSkuPerformance,
   selectStock,
@@ -33,15 +34,20 @@ import {
   type StockRow,
 } from '../../store/selectors'
 import { CHANNEL_LABEL, locationById } from '../../data/locations'
-import { addDays, formatDate, monthKey, startOfMonth, startOfWeek } from '../../lib/dates'
+import { addDays, formatDate, monthKey, spanDays, spanLabel, startOfMonth, startOfWeek, type DateSpan } from '../../lib/dates'
+import { DateSpanInput } from '../../components/DateSpanInput'
 import { downloadCsv } from '../../lib/exportCsv'
 import { change, num, rm } from '../../lib/format'
 import { TIER_LABEL } from '../../data/products'
 
 type RangeKey = '7' | '30' | '90'
 
-/** "Where they came from" over the page's range, or today, this week, this month (client, 15 October). */
-type OriginPeriod = 'range' | 'today' | 'week' | 'month'
+/**
+ * "Where they came from" over the page's range, or yesterday, this week, this
+ * month, or chosen dates (client, 15 October; "Today" became "Yesterday" and
+ * the dates were added on 20 October).
+ */
+type OriginPeriod = 'range' | 'yesterday' | 'week' | 'month' | 'dates'
 
 const RANGES: { value: RangeKey; label: string }[] = [
   { value: '7', label: '7 days' },
@@ -72,6 +78,10 @@ export function StoreDetail() {
 
   const [range, setRange] = useState<RangeKey>('30')
   const [originPeriod, setOriginPeriod] = useState<OriginPeriod>('range')
+  const [originDates, setOriginDates] = useState<DateSpan>(() => {
+    const yesterday = addDays(data.today, -1)
+    return { op: 'equal', from: yesterday, to: yesterday }
+  })
   const [item, setItem] = useState<StockRow | null>(null)
 
   const location = locationById(id)
@@ -87,23 +97,42 @@ export function StoreDetail() {
   const kpis = useMemo(() => selectKpis(data, filter), [data, filter])
   const series = useMemo(() => selectTimeSeries(data, filter, 'revenue'), [data, filter])
   // The page's range reads what was filed, like every chart on the page.
-  // Today, this week and the month to date read today's sales live as well.
-  const originFrom =
-    originPeriod === 'today'
-      ? data.today
+  // This week and the month to date read today's sales live as well, and so
+  // do chosen dates that take in today.
+  const yesterday = addDays(data.today, -1)
+  const originDays: { from: string; to: string } | null =
+    originPeriod === 'yesterday'
+      ? { from: yesterday, to: yesterday }
       : originPeriod === 'week'
-        ? startOfWeek(data.today)
-        : startOfMonth(data.today)
+        ? { from: startOfWeek(data.today), to: data.today }
+        : originPeriod === 'month'
+          ? { from: startOfMonth(data.today), to: data.today }
+          : originPeriod === 'dates'
+            ? spanDays(originDates)
+            : null
   const origins = useMemo(
-    () => (originPeriod === 'range' ? selectOriginMix(data, filter, 6) : selectOriginsSince(data, id, originFrom, 6)),
-    [data, filter, id, originPeriod, originFrom],
+    () =>
+      originPeriod === 'range'
+        ? selectOriginMix(data, filter, 6)
+        : originDays
+          ? selectOriginsBetween(data, id, originDays.from, originDays.to, 6)
+          : [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data, filter, id, originPeriod, originDays?.from, originDays?.to],
+  )
+  const filedYesterday = data.closings.some(
+    (c) => c.locationId === id && c.periodType === 'day' && c.period === yesterday,
   )
   const originWhen =
     originPeriod === 'range'
       ? `Last ${range} days`
-      : originPeriod === 'today'
-        ? 'Today so far, live'
-        : `${originPeriod === 'week' ? 'This week' : 'Month to date'}: ${formatDate(originFrom)} to today, with today live`
+      : originPeriod === 'yesterday'
+        ? `Yesterday, ${formatDate(yesterday)}${filedYesterday ? '' : ' — not filed yet'}`
+        : originPeriod === 'week' || originPeriod === 'month'
+          ? `${originPeriod === 'week' ? 'This week' : 'Month to date'}: ${formatDate(originDays!.from)} to today, with today live`
+          : originDays
+            ? spanLabel(originDays)
+            : 'Choose the dates'
   const skuRows = useMemo(() => selectSkuPerformance(data, filter).slice(0, 8), [data, filter])
   const stock = useMemo(() => (location ? selectStock(data, id) : []), [data, id, location])
 
@@ -126,13 +155,14 @@ export function StoreDetail() {
     [data.closings, id],
   )
 
+  // A store's drafts are its own until they are sent (20 October).
   const orders = useMemo(
     () =>
       data.purchaseOrders
-        .filter((p) => p.locationId === id)
+        .filter((p) => p.locationId === id && Boolean(user && seenBy(p, user.role)))
         .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
         .slice(0, 6),
-    [data.purchaseOrders, id],
+    [data.purchaseOrders, id, user],
   )
 
   if (!location) {
@@ -359,12 +389,16 @@ export function StoreDetail() {
                   value={originPeriod}
                   onChange={setOriginPeriod}
                   options={[
-                    { value: 'today', label: 'Today' },
+                    { value: 'yesterday', label: 'Yesterday' },
                     { value: 'week', label: 'Week' },
                     { value: 'month', label: 'Month' },
                     { value: 'range', label: `${range} days` },
+                    { value: 'dates', label: 'Dates' },
                   ]}
                 />
+                {originPeriod === 'dates' && (
+                  <DateSpanInput value={originDates} onChange={setOriginDates} max={data.today} />
+                )}
                 {origins.length ? (
                   <OriginRibbon slices={origins} height={40} />
                 ) : (
