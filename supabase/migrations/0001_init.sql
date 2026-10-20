@@ -552,6 +552,39 @@ begin
   return null;
 end $$;
 
+-- An order being written over one already there, or a new one. Mirrors
+-- `poWriteRefusal` in src/lib/po-machine.ts; keep the two in step.
+--
+-- The app moves an order along the chain; the server holds every write to the
+-- same chain (20 October), so an order cannot be approved by its own store, or
+-- turned back into a draft and deleted, by any other route. A new order starts
+-- as a draft or is sent; a write that keeps the status goes through; a store
+-- sends an order again after Kelly has turned it down.
+create or replace function _po_refusal(p_role text, p_old docs, p_new jsonb) returns text
+language plpgsql immutable as $$
+declare
+  was text := p_old.doc->>'status';
+  now_status text := p_new->>'status';
+begin
+  if p_old.id is null or p_old.deleted then
+    if coalesce(now_status, '') in ('draft', 'submitted') then return null; end if;
+    return 'A new order starts as a draft, or is sent to Kelly.';
+  end if;
+  if now_status is not distinct from was then return null; end if;
+  if p_role = 'promoter' and (was, now_status) in (('draft', 'submitted'), ('rejected', 'submitted')) then
+    return null;
+  end if;
+  if p_role in ('ops', 'md') and (was, now_status) in (('submitted', 'approved'), ('submitted', 'rejected')) then
+    return null;
+  end if;
+  if p_role = 'warehouse'
+     and (was, now_status) in (('approved', 'packed'), ('accounts_cleared', 'packed'), ('packed', 'in_transit')) then
+    return null;
+  end if;
+  if p_role in ('promoter', 'ops') and (was, now_status) = ('in_transit', 'received') then return null; end if;
+  return 'That order cannot move from ' || coalesce(was, 'nothing') || ' to ' || coalesce(now_status, 'nothing') || '.';
+end $$;
+
 -- A line of the range as head office keyed it (20 October). Mirrors
 -- `catalogueRefusal` in src/lib/catalogue.ts; keep the two in step.
 --
@@ -669,6 +702,10 @@ begin
     end if;
     if refused is null and d->>'kind' = 'product' then
       refused := _catalogue_refusal(d);
+    end if;
+    if refused is null and d->>'kind' = 'po' then
+      select * into filed from docs where kind = 'po' and id = d->>'id';
+      refused := _po_refusal(s.role, filed, d->'doc');
     end if;
     if refused is not null then
       return jsonb_build_object('ok', false, 'error', refused);

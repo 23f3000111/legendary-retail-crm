@@ -276,6 +276,13 @@ try {
   check('a store can delete its own draft order', draftGone.r.ok === true, draftGone.r.error)
   const sentKept = await one('select remove_docs($1, $2, $3::text[]) r', [solo, 'po', ['PO-VERIFY-SENT']])
   check('but not an order it has sent', sentKept.r.ok === false, sentKept.r.error)
+  // Every write is held to the order's chain: no way round that.
+  const backToDraft = await put(solo, order('PO-VERIFY-SENT', 'draft'))
+  check('nor turn a sent order back into a draft', backToDraft.r.ok === false, backToDraft.r.error)
+  const ownApproval = await put(solo, order('PO-VERIFY-SENT', 'approved'))
+  check('nor approve its own order', ownApproval.r.ok === false, ownApproval.r.error)
+  const kellyApproves = await put(kelly, order('PO-VERIFY-SENT', 'approved'))
+  check('Kelly approves it', kellyApproves.r.ok === true, kellyApproves.r.error)
 
   // Passwords.
   const weak = await one("select set_password($1, 'kim', 'legendary123') r", [imran])

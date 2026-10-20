@@ -33,8 +33,9 @@ import { auditId, type AuditEntry } from '../lib/audit'
 import { closingWriteRefusal } from '../lib/editing'
 import { partnerSalesRefusal } from '../lib/partner-sales'
 import { catalogueRefusal } from '../lib/catalogue'
+import { poWriteRefusal } from '../lib/po-machine'
 import { newId } from '../lib/ids'
-import type { CrmData, DateStr } from '../data/types'
+import type { CrmData, DateStr, PurchaseOrder } from '../data/types'
 import {
   docKey,
   publicPerson,
@@ -424,7 +425,16 @@ export class LocalBackend implements Backend {
             ? partnerSalesRefusal(d, this.today)
             : d.kind === 'product'
               ? catalogueRefusal(d)
-              : null)
+              : d.kind === 'po'
+                ? (() => {
+                    const was = this.docs.get(docKey(d.kind, d.id))
+                    return poWriteRefusal(
+                      s.person.role,
+                      was && !was.deleted ? (was.doc as PurchaseOrder) : undefined,
+                      d.doc as PurchaseOrder,
+                    )
+                  })()
+                : null)
       if (refused) return { ok: false, error: refused }
       if (d.kind === 'audit') {
         // Append-only: a line that exists is never rewritten. And the actor is

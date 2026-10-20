@@ -111,6 +111,35 @@ export const canTransition = (from: PoStatus, to: PoStatus, role: Role): boolean
 export const actsOnOrders = (role: Role): boolean =>
   role === 'finance' || Object.values(TRANSITIONS).some((moves) => moves.some((t) => t.by.includes(role)))
 
+/**
+ * Whether an order may be written as `after`, over `before`. The local
+ * backend's twin of `_po_refusal` in `0001_init.sql`; keep the two in step.
+ *
+ * The app only ever moves an order along the chain above. The server holds
+ * every write to the same chain, so an order cannot be approved by its own
+ * store, or turned back into a draft and deleted, by any other route. A new
+ * order starts as a draft or is sent straight away; a write that keeps the
+ * status — a change while it waits, Finance's clearance — goes through; and
+ * a store sends an order again after Kelly has turned it down.
+ */
+export const poWriteRefusal = (
+  role: Role,
+  before: Pick<PurchaseOrder, 'status'> | undefined,
+  after: Pick<PurchaseOrder, 'status'>,
+): string | null => {
+  if (!before) {
+    return after.status === 'draft' || after.status === 'submitted'
+      ? null
+      : 'A new order starts as a draft, or is sent to Kelly.'
+  }
+  if (after.status === before.status) return null
+  if (canTransition(before.status, after.status, role)) return null
+  if (before.status === 'rejected' && after.status === 'submitted' && role === 'promoter') return null
+  return `That order cannot move from ${STATUS_LABEL[before.status] ?? before.status} to ${
+    STATUS_LABEL[after.status] ?? after.status
+  }.`
+}
+
 /** The moves this role may make on this order, for rendering action buttons. */
 export const availableTransitions = (po: PurchaseOrder, role: Role): Transition[] =>
   TRANSITIONS[po.status].filter((t) => t.by.includes(role))

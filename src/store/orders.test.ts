@@ -116,5 +116,11 @@ describe('a draft order', () => {
     const kept = lb.removeSync(token, 'po', ['PO-TEST-B'])
     expect(kept.ok).toBe(false)
     expect(kept.error).toMatch(/sent/)
+
+    // Nor can a sent order be turned back into a draft to get round that —
+    // or approved by the store that asked for it.
+    expect(put({ ...draft('PO-TEST-B'), status: 'draft' }).error).toMatch(/cannot move/)
+    expect(put({ ...draft('PO-TEST-B'), status: 'approved' }).error).toMatch(/cannot move/)
+    expect(lb.removeSync(token, 'po', ['PO-TEST-B']).ok).toBe(false)
   })
 })

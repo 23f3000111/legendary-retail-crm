@@ -9,6 +9,7 @@ import {
   effectiveQty,
   isOpen,
   isPartial,
+  poWriteRefusal,
   STATUS_CHAIN,
   TRANSITIONS,
 } from './po-machine'
@@ -180,5 +181,47 @@ describe('derived state', () => {
         order({ lines: [{ skuId: 'orchid-retail', qtyRequested: 24, qtyApproved: 12, qtyShipped: null }] }),
       ),
     ).toBe(true)
+  })
+})
+
+describe('what the server lets an order become (20 October)', () => {
+  // The app moves an order along the chain; the server holds it to the same
+  // chain, so an order cannot be approved by its own store, or turned back
+  // into a draft and deleted, by any other route.
+  const was = (status: PurchaseOrder['status']) => ({ status })
+
+  it('lets a new order start as a draft, or be sent straight away', () => {
+    expect(poWriteRefusal('promoter', undefined, was('draft'))).toBeNull()
+    expect(poWriteRefusal('promoter', undefined, was('submitted'))).toBeNull()
+    expect(poWriteRefusal('promoter', undefined, was('approved'))).toMatch(/starts/)
+  })
+
+  it('lets each desk make its own move, and nobody else’s', () => {
+    expect(poWriteRefusal('promoter', was('draft'), was('submitted'))).toBeNull()
+    expect(poWriteRefusal('ops', was('submitted'), was('approved'))).toBeNull()
+    expect(poWriteRefusal('md', was('submitted'), was('rejected'))).toBeNull()
+    expect(poWriteRefusal('warehouse', was('approved'), was('packed'))).toBeNull()
+    expect(poWriteRefusal('warehouse', was('packed'), was('in_transit'))).toBeNull()
+    expect(poWriteRefusal('promoter', was('in_transit'), was('received'))).toBeNull()
+    expect(poWriteRefusal('ops', was('in_transit'), was('received'))).toBeNull()
+    // Changed after a no, and sent again.
+    expect(poWriteRefusal('promoter', was('rejected'), was('submitted'))).toBeNull()
+
+    expect(poWriteRefusal('promoter', was('submitted'), was('approved'))).toMatch(/cannot move/)
+    expect(poWriteRefusal('finance', was('approved'), was('packed'))).toMatch(/cannot move/)
+    expect(poWriteRefusal('warehouse', was('submitted'), was('approved'))).toMatch(/cannot move/)
+  })
+
+  it('never turns an order that has been sent back into a draft', () => {
+    for (const status of ['submitted', 'approved', 'rejected', 'packed', 'in_transit', 'received'] as const) {
+      for (const role of ['promoter', 'ops', 'md', 'warehouse', 'finance'] as Role[]) {
+        expect(poWriteRefusal(role, was(status), was('draft')), `${role} ${status}`).toMatch(/cannot move/)
+      }
+    }
+  })
+
+  it('lets a change that keeps the status through: an edit, or Finance’s clearance', () => {
+    expect(poWriteRefusal('promoter', was('submitted'), was('submitted'))).toBeNull()
+    expect(poWriteRefusal('finance', was('approved'), was('approved'))).toBeNull()
   })
 })
