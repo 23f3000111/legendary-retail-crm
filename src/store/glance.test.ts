@@ -8,6 +8,7 @@ import {
   selectOriginsBetween,
   selectSalesPeriods,
   selectSalesReport,
+  selectSkuSales,
   selectStoreSales,
   type ReportRule,
 } from './selectors'
@@ -188,5 +189,42 @@ describe('the sales report, by store', () => {
     expect(rows([date])).toEqual(['klia-t2', 'pavilion-5'])
     expect(rows([date, { id: 's', field: 'store', op: 'equal', locationIds: ['klia-t2'] }])).toEqual(['klia-t2'])
     expect(rows([date, { id: 's', field: 'store', op: 'not_equal', locationIds: ['klia-t2'] }])).toEqual(['pavilion-5'])
+  })
+})
+
+describe('product performance, by the four boxes', () => {
+  it('gives each product its today, yesterday, month so far, last month and the chosen dates', () => {
+    const rows = selectSkuSales(data, {}, emptyFilter('2026-10-31', '2026-11-02'))
+    expect(rows.map((r) => r.skuId)).toEqual(['orchid-retail', 'violet-retail', 'wish-3-set'])
+    expect(rows[0]).toMatchObject({
+      // Today from the counter: Pavilion's one, KLIA T2's one — never today's closing.
+      today: { units: 2, revenue: 376 },
+      yesterday: { units: 2, revenue: 376 },
+      monthToDate: { units: 5, revenue: 950 },
+      lastMonth: { units: 3, revenue: 564 },
+      chosen: { units: 4, revenue: 762 },
+    })
+    expect(rows[2]).toMatchObject({ yesterday: { units: 1, revenue: 0 }, today: { units: 0, revenue: 0 } })
+  })
+
+  it('adds up to the boxes, less the keyed-in months that have no products', () => {
+    const rows = selectSkuSales(data, {}, emptyFilter(today, today))
+    const sum = (k: 'today' | 'monthToDate' | 'lastMonth') => rows.reduce((a, r) => a + r[k].revenue, 0)
+    const boxes = selectSalesPeriods(data)
+    expect(sum('today')).toBe(boxes.today.revenue)
+    expect(sum('monthToDate')).toBe(boxes.monthToDate.revenue)
+    expect(sum('lastMonth')).toBe(boxes.lastMonth.revenue - 1000)
+  })
+
+  it('narrows to a store or a nationality, as the boxes do', () => {
+    const rows = selectSkuSales(data, { countryCodes: ['KR'] }, emptyFilter(today, today))
+    expect(rows.map((r) => [r.skuId, r.today.units, r.monthToDate.units])).toEqual([
+      ['orchid-retail', 1, 1],
+      ['violet-retail', 1, 1],
+    ])
+    expect(selectSkuSales(data, { locationIds: ['klia-t2'] }, emptyFilter(today, today))[0].yesterday).toEqual({
+      units: 1,
+      revenue: 188,
+    })
   })
 })

@@ -7,8 +7,8 @@ import { EmptyState } from '../../components/ui/DataTable'
 import { ProgressBar } from '../../components/ui/Progress'
 import { Icon } from '../../components/ui/icons'
 import { LinkIf } from '../../components/ui/LinkIf'
+import { PAGE, usePaged } from '../../components/ui/LoadMore'
 import { SalesBoxes } from '../../components/SalesBoxes'
-import { SalesReport } from '../../components/SalesReport'
 import { SalesCalendar } from '../../components/SalesCalendar'
 import { CountryDetailModal } from '../../components/CountryDetail'
 import { ChartFrame } from '../../components/charts/ChartFrame'
@@ -135,6 +135,8 @@ export function Overview() {
       .sort((a, b) => b.value - a.value)
   }, [monthToDate])
   const mainMtdTotal = mainMtd.reduce((a, r) => a + r.value, 0)
+  /** Every store named on this page opens its own (asked on 1 November). */
+  const storePage = (id: string) => `/stores/${id}`
 
   return (
     <div className="space-y-5">
@@ -260,6 +262,8 @@ export function Overview() {
                   slices={dealerRows.map((r) => ({ key: r.locationId, label: r.shortName, value: r.revenue }))}
                   format={rm}
                   unitHeader="Revenue"
+                  href={storePage}
+                  page={PAGE}
                 />
               ) : undefined
             }
@@ -272,6 +276,7 @@ export function Overview() {
                   centreValue={rmCompact(dealerTotal)}
                   format={rm}
                   size={186}
+                  href={storePage}
                 />
               </div>
             ) : (
@@ -281,10 +286,10 @@ export function Overview() {
 
           <ChartFrame
             title="Main stores · month to date"
-            meta={`${formatDate(startOfMonth(data.today))} to today, with today's sales as they stand.`}
+            meta={`${formatDate(startOfMonth(data.today))} to today, with today's sales as they stand. Tap a store to open it.`}
             height={230}
             grow
-            table={<DonutTable slices={mainMtd} format={rm} unitHeader="Revenue" />}
+            table={<DonutTable slices={mainMtd} format={rm} unitHeader="Revenue" href={storePage} page={PAGE} />}
           >
             <div className="flex h-full items-center justify-center">
               <Donut
@@ -293,6 +298,7 @@ export function Overview() {
                 centreValue={rmCompact(mainMtdTotal)}
                 format={rm}
                 size={186}
+                href={storePage}
               />
             </div>
           </ChartFrame>
@@ -432,9 +438,9 @@ export function Overview() {
         </Panel>
       )}
 
-      {/* ── The counter, and the calendar (client, 1 November) ─────────── */}
-      {/* The founder's too: "the owner wants to export as he likes". */}
-      <SalesReport />
+      {/* ── The calendar (client, 1 November) ───────────────────────────── */}
+      {/* The sales report came off this page (asked on 1 November, after
+          Revision 9). It is on Stores and Analytics, which the founder opens too. */}
       <SalesCalendar />
 
       {/* ── Supply ────────────────────────────────────────────────────── */}
@@ -589,7 +595,7 @@ function PartnerRanking({ data, channel, canKey }: { data: CrmData; channel: Par
   )
 }
 
-/** A top-nine league: rank, name, figure. Each card opens the outlet. */
+/** A league: rank, name, figure, ten at a time. Each card opens the outlet. */
 function Ranking({
   title,
   rows,
@@ -607,15 +613,16 @@ function Ranking({
     tiebreak?: number
   }[]
 }) {
-  const top = [...rows].sort((a, b) => b.revenue - a.revenue || (b.tiebreak ?? 0) - (a.tiebreak ?? 0)).slice(0, 9)
+  const ranked = [...rows].sort((a, b) => b.revenue - a.revenue || (b.tiebreak ?? 0) - (a.tiebreak ?? 0))
+  const { visible, more } = usePaged(ranked, { page: PAGE })
   return (
     <div>
       <p className="eyebrow mb-2">{title}</p>
       <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {top.map((r, i) => (
+        {visible.map((r, i) => (
           <li key={r.locationId}>
             {/* A card from sm up; on a phone, one row with the figure on the
-                right, so three leagues of nine are not a scroll of 27 cards. */}
+                right, so three leagues of ten are not a scroll of 30 cards. */}
             <Link
               to={`/stores/${r.locationId}`}
               className="group flex flex-wrap items-start gap-x-3 rounded-xl border border-line bg-surface-2 px-3.5 py-3 transition-all duration-200 hover:border-primary/45 hover:shadow-glass sm:block"
@@ -648,6 +655,7 @@ function Ranking({
           </li>
         ))}
       </ul>
+      {more}
     </div>
   )
 }

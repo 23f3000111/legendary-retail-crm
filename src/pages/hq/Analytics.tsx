@@ -5,6 +5,7 @@ import { Icon } from '../../components/ui/icons'
 import { Button } from '../../components/ui/Button'
 import { EmptyState } from '../../components/ui/DataTable'
 import { FiguresTable } from '../../components/ui/FiguresTable'
+import { PAGE, totalOf, usePaged } from '../../components/ui/LoadMore'
 import { useToasts } from '../../components/ui/Toast'
 import { FilterBar, filterInWords } from '../../components/FilterBar'
 import { SalesBoxes } from '../../components/SalesBoxes'
@@ -14,7 +15,7 @@ import { ChartFrame } from '../../components/charts/ChartFrame'
 import { TrendChart } from '../../components/charts/TrendChart'
 import { Donut, DonutTable, type DonutSlice } from '../../components/charts/Donut'
 import { OriginRibbon, OriginTable } from '../../components/charts/OriginRibbon'
-import { SkuBars, SkuTable } from '../../components/charts/SkuBars'
+import { SkuBars } from '../../components/charts/SkuBars'
 import { HeatCalendar } from '../../components/charts/HeatCalendar'
 import { Sparkline } from '../../components/charts/Sparkline'
 import { useData } from '../../store/useData'
@@ -29,15 +30,18 @@ import {
   selectLocationSparkline,
   selectLocationRows,
   selectOriginMix,
+  salesWindows,
   selectSkusForCountry,
-  selectSkuPerformance,
+  selectSkuSales,
   selectTimeSeries,
   type Filter,
   type Metric,
+  type SkuSales,
+  type SkuSalesRow,
 } from '../../store/selectors'
 import { CHANNEL_PLURAL } from '../../data/locations'
 import { countryByCode } from '../../data/countries'
-import { addDays, formatDate } from '../../lib/dates'
+import { addDays, formatDate, formatDateShort, monthKey, monthLabel } from '../../lib/dates'
 import { downloadCsv } from '../../lib/exportCsv'
 import { openPrintReport } from '../../lib/printReport'
 import { num, rm, rmCompact } from '../../lib/format'
@@ -51,9 +55,13 @@ import { num, rm, rmCompact } from '../../lib/format'
  *
  * The figures come first and the graphs last (client, 1 November): the four
  * sales boxes, narrowed by the filter's stores, products and countries; the
- * tables, each with its total; the sales report; then the trend and the
- * trading pattern at the foot of the page.
+ * countries and channels; the sales report; product performance by the same
+ * four windows as the boxes; every store, ten at a time; then the trend and
+ * the trading pattern at the foot of the page.
  */
+
+type Window = 'today' | 'yesterday' | 'monthToDate' | 'lastMonth' | 'chosen'
+const WINDOWS: Window[] = ['today', 'yesterday', 'monthToDate', 'lastMonth', 'chosen']
 export function Analytics() {
   const navigate = useNavigate()
   const data = useData()
@@ -69,7 +77,6 @@ export function Analytics() {
   const trend = useMemo(() => selectTimeSeries(data, filter, metric), [data, filter, metric])
   const heat = useMemo(() => selectTimeSeries(data, filter, 'revenue'), [data, filter])
   const mix = useMemo(() => selectOriginMix(data, filter), [data, filter])
-  const skuRows = useMemo(() => selectSkuPerformance(data, filter), [data, filter])
   const rows = useMemo(() => selectLocationRows(data, filter, metric), [data, filter, metric])
   const channels = useMemo(() => selectChannelSplit(data, filter), [data, filter])
   const coverage = useMemo(() => countryCoverage(data, filter), [data, filter])
@@ -92,7 +99,8 @@ export function Analytics() {
   const empty = kpis.current.revenue === 0 && kpis.current.units === 0
   const period = `${formatDate(filter.from)} to ${formatDate(filter.to)}`
 
-  // Every store in view, not only the 25 the table shows.
+  // Every store in view, ten at a time; the total counts them all.
+  const stores = usePaged(rows, { page: PAGE, resetOn: JSON.stringify([filter, metric]) })
   const totals = {
     revenue: rows.reduce((a, r) => a + r.revenue, 0),
     units: rows.reduce((a, r) => a + r.units, 0),
@@ -109,6 +117,58 @@ export function Analytics() {
     variants: filter.variants,
     countryCodes: filter.countryCodes,
   }
+
+  // Product performance by the boxes' four windows, and the dates set above
+  // (asked on 1 November, after Revision 9). The boxes' base is the filter
+  // without its dates, so the filter alone decides when to work it out again.
+  const skuRows = useMemo(
+    () => selectSkuSales(data, boxBase, filter),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data, filter],
+  )
+  const windows = salesWindows(data.today)
+  const WINDOW_LABEL: Record<Window, string> = {
+    today: 'Today · live',
+    yesterday: `Yesterday · ${formatDateShort(windows.yesterday.from)}`,
+    monthToDate: `Month to date · since ${formatDateShort(windows.monthToDate.from)}`,
+    lastMonth: `Last month · ${monthLabel(monthKey(windows.lastMonth.from))}`,
+    chosen: `Dates above · ${formatDateShort(filter.from)} to ${formatDateShort(filter.to)}`,
+  }
+  const skuTotal = (w: Window): SkuSales =>
+    skuRows.reduce((a, r) => ({ units: a.units + r[w].units, revenue: a.revenue + r[w].revenue }), { units: 0, revenue: 0 })
+  // The measure chosen above leads; the other sits under it.
+  const skuFigure = (s: SkuSales, strong = false) => {
+    if (s.units === 0 && s.revenue === 0) return <span className="text-ink-3">—</span>
+    const units = `${num(s.units)} ${s.units === 1 ? 'unit' : 'units'}`
+    return (
+      <span className="inline-flex flex-col items-end whitespace-nowrap">
+        <span className={strong ? 'font-semibold' : ''}>{metric === 'revenue' ? rm(s.revenue) : units}</span>
+        <span className="text-[10.5px] text-ink-3">{metric === 'revenue' ? units : rm(s.revenue)}</span>
+      </span>
+    )
+  }
+  const skuSorted = useMemo(
+    () =>
+      metric === 'revenue'
+        ? skuRows
+        : [...skuRows].sort(
+            (a, b) =>
+              b.monthToDate.units - a.monthToDate.units ||
+              b.lastMonth.units - a.lastMonth.units ||
+              b.chosen.units - a.chosen.units,
+          ),
+    [skuRows, metric],
+  )
+  // The chart draws the dates set above, the best twelve.
+  const skuBars = useMemo(
+    () =>
+      skuRows
+        .map((r) => ({ skuId: r.skuId, label: r.label, ...r.chosen }))
+        .filter((r) => r.units > 0 || r.revenue > 0)
+        .sort((a, b) => (metric === 'revenue' ? b.revenue - a.revenue : b.units - a.units))
+        .slice(0, 12),
+    [skuRows, metric],
+  )
 
   // The period goes in the file, and on every row (client, 20 October).
   const exportSummary = () =>
@@ -246,6 +306,8 @@ export function Analytics() {
                 <FiguresTable
                   rows={countryBasket}
                   rowKey={(r) => r.skuId}
+                  page={PAGE}
+                  pageKey={JSON.stringify(filter)}
                   columns={[
                     { header: 'Product', render: (r) => r.label },
                     {
@@ -299,20 +361,48 @@ export function Analytics() {
             </ChartFrame>
           </div>
 
+        </>
+      )}
+
+      {/* The counter: date, store, item and nationality — above product
+          performance (asked on 1 November, after Revision 9). */}
+      <SalesReport />
+
+      {!empty && (
+        <>
           <ChartFrame
             title="Product performance"
-            meta="Every size, set and tester counted separately"
+            meta={`Every size, set and tester counted separately, ${PAGE} at a time. Today is live; the days before are as filed. The chart shows the dates set above.`}
             height={280}
-            table={<SkuTable rows={skuRows} />}
+            note="Narrowed by the filter's stores, products and countries, like the boxes. A dealer's or consignment partner's month keyed in on Dealer sales has no products behind it, so it is not in this table."
+            table={
+              <FiguresTable<SkuSalesRow>
+                rows={skuSorted}
+                rowKey={(r) => r.skuId}
+                page={PAGE}
+                pageKey={JSON.stringify([filter, metric])}
+                empty="No product sold in these windows."
+                columns={[
+                  // Wide enough on a phone that a name takes two lines, not four.
+                  { header: 'Product', render: (r) => <span className="block min-w-[120px]">{r.label}</span> },
+                  ...WINDOWS.map((w) => ({
+                    header: WINDOW_LABEL[w],
+                    align: 'right' as const,
+                    render: (r: SkuSalesRow) => skuFigure(r[w], w === 'monthToDate'),
+                    total: skuFigure(skuTotal(w)),
+                  })),
+                ]}
+              />
+            }
           >
-            <SkuBars rows={skuRows.slice(0, 12)} metric={metric} />
+            <SkuBars rows={skuBars} metric={metric} />
           </ChartFrame>
 
           <Panel>
             <PanelHeader
               eyebrow="By store"
               title={`Ranked by ${METRIC_LABEL[metric].toLowerCase()}`}
-              meta={`${rows.length} stores in view. Tap any row to open that store.`}
+              meta={`${rows.length} stores in view, ${PAGE} at a time. Tap any row to open that store.`}
             />
             <Rule />
             <PanelBody>
@@ -336,7 +426,7 @@ export function Analytics() {
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.slice(0, 25).map((r, i) => (
+                    {stores.visible.map((r, i) => (
                       <tr
                         key={r.locationId}
                         onClick={() => navigate(`/stores/${r.locationId}`)}
@@ -389,7 +479,7 @@ export function Analytics() {
                     <tr className="border-t border-line">
                       <td />
                       <td className="py-2.5 text-[12.5px] font-semibold text-ink-2">
-                        Total{rows.length > 25 ? ` · all ${rows.length} stores` : ''}
+                        {totalOf(stores.partial, rows.length)}
                       </td>
                       <td className="hidden sm:table-cell" />
                       <td className="hidden sm:table-cell" />
@@ -401,18 +491,11 @@ export function Analytics() {
                   </tfoot>
                 </table>
               </div>
-              {rows.length > 25 && (
-                <p className="mt-3 text-[12px] text-ink-3">
-                  Showing the top 25 of {rows.length}; the total counts them all. Narrow the filter to see the rest.
-                </p>
-              )}
+              {stores.more}
             </PanelBody>
           </Panel>
         </>
       )}
-
-      {/* The counter: date, store, item and nationality (client, 1 November). */}
-      <SalesReport />
 
       {/* The graphs, at the foot of the page. */}
       {!empty && (

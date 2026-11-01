@@ -1,7 +1,11 @@
 import { seriesColor } from './palette'
 import { collections, skuById, productById } from '../../data/products'
+import { totalOf, usePaged } from '../ui/LoadMore'
 import { num, rm } from '../../lib/format'
 import type { SkuPerformance } from '../../store/selectors'
+
+/** What a bar needs: the product, and what it sold. */
+type SkuBar = Pick<SkuPerformance, 'skuId' | 'label' | 'units' | 'revenue'>
 
 /**
  * SKU ranking. Horizontal bars because the labels are words, and words read
@@ -12,10 +16,10 @@ export function SkuBars({
   rows,
   metric = 'revenue',
 }: {
-  rows: SkuPerformance[]
+  rows: SkuBar[]
   metric?: 'revenue' | 'units'
 }) {
-  const value = (r: SkuPerformance) => (metric === 'revenue' ? r.revenue : r.units)
+  const value = (r: SkuBar) => (metric === 'revenue' ? r.revenue : r.units)
   const max = Math.max(1, ...rows.map(value))
   const format = metric === 'revenue' ? (n: number) => rm(n) : (n: number) => `${num(n)} units`
 
@@ -50,54 +54,61 @@ export function SkuBars({
 
 /**
  * The same figures as a table, with a total at the foot of every column. The
- * collection column was taken off at the client's request (1 November).
+ * collection column was taken off at the client's request (1 November). With
+ * `page`, it shows that many products at a time, and the total counts them all.
  */
 export function SkuTable({
   rows,
   totalLabel = 'Total',
+  page,
 }: {
   rows: SkuPerformance[]
   /** "Top 12 total", where the table shows only the first few. */
   totalLabel?: string
+  page?: number
 }) {
+  const { visible, partial, more } = usePaged(rows, { page })
   const units = rows.reduce((a, r) => a + r.units, 0)
   const revenue = rows.reduce((a, r) => a + r.revenue, 0)
   const perDay = rows.reduce((a, r) => a + r.velocity, 0)
   return (
-    <table className="w-full border-collapse">
-      <thead>
-        <tr className="border-b border-line">
-          {['SKU', 'Units', 'Revenue', 'Per day'].map((h, i) => (
-            <th
-              key={h}
-              scope="col"
-              className={`pb-2 text-[10px] font-semibold uppercase tracking-wide2 text-ink-3 ${
-                i >= 1 ? 'text-right' : 'text-left'
-              }`}
-            >
-              {h}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((r) => (
-          <tr key={r.skuId} className="border-b border-line/70 last:border-0">
-            <td className="py-1.5 text-[12.5px] text-ink">{r.label}</td>
-            <td className="readout py-1.5 text-right text-[12.5px] text-ink">{num(r.units)}</td>
-            <td className="readout py-1.5 text-right text-[12.5px] text-ink">{rm(r.revenue)}</td>
-            <td className="readout py-1.5 text-right text-[12.5px] text-ink-2">
-              {r.velocity.toFixed(1)}
-            </td>
+    <>
+      <table className="w-full border-collapse">
+        <thead>
+          <tr className="border-b border-line">
+            {['SKU', 'Units', 'Revenue', 'Per day'].map((h, i) => (
+              <th
+                key={h}
+                scope="col"
+                className={`pb-2 text-[10px] font-semibold uppercase tracking-wide2 text-ink-3 ${
+                  i >= 1 ? 'text-right' : 'text-left'
+                }`}
+              >
+                {h}
+              </th>
+            ))}
           </tr>
-        ))}
-        <tr className="border-t border-line">
-          <td className="py-1.5 text-[12.5px] font-semibold text-ink-2">{totalLabel}</td>
-          <td className="readout py-1.5 text-right text-[12.5px] font-semibold text-ink">{num(units)}</td>
-          <td className="readout py-1.5 text-right text-[12.5px] font-semibold text-ink">{rm(revenue)}</td>
-          <td className="readout py-1.5 text-right text-[12.5px] text-ink-2">{perDay.toFixed(1)}</td>
-        </tr>
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {visible.map((r) => (
+            <tr key={r.skuId} className="border-b border-line/70 last:border-0">
+              <td className="py-1.5 text-[12.5px] text-ink">{r.label}</td>
+              <td className="readout py-1.5 text-right text-[12.5px] text-ink">{num(r.units)}</td>
+              <td className="readout py-1.5 text-right text-[12.5px] text-ink">{rm(r.revenue)}</td>
+              <td className="readout py-1.5 text-right text-[12.5px] text-ink-2">
+                {r.velocity.toFixed(1)}
+              </td>
+            </tr>
+          ))}
+          <tr className="border-t border-line">
+            <td className="py-1.5 text-[12.5px] font-semibold text-ink-2">{totalOf(partial, rows.length, totalLabel)}</td>
+            <td className="readout py-1.5 text-right text-[12.5px] font-semibold text-ink">{num(units)}</td>
+            <td className="readout py-1.5 text-right text-[12.5px] font-semibold text-ink">{rm(revenue)}</td>
+            <td className="readout py-1.5 text-right text-[12.5px] text-ink-2">{perDay.toFixed(1)}</td>
+          </tr>
+        </tbody>
+      </table>
+      {more}
+    </>
   )
 }

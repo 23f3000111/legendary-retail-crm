@@ -4,6 +4,7 @@ import { Modal } from './ui/Modal'
 import { Button } from './ui/Button'
 import { Flag } from './ui/Flag'
 import { FiguresTable } from './ui/FiguresTable'
+import { PAGE } from './ui/LoadMore'
 import { useData } from '../store/useData'
 import { selectCountryDetail, type Filter } from '../store/selectors'
 import { locationById } from '../data/locations'
@@ -55,6 +56,7 @@ export function CountryDetailModal({
           <FiguresTable
             rows={d.stores}
             rowKey={(s) => s.locationId}
+            page={PAGE}
             columns={[
               {
                 header: 'Store',
@@ -76,6 +78,7 @@ export function CountryDetailModal({
           <FiguresTable
             rows={d.skus}
             rowKey={(s) => s.skuId}
+            page={PAGE}
             columns={[
               { header: 'Product', render: (s) => s.label },
               { header: 'Units', align: 'right', render: (s) => num(s.units), total: num(d.units) },

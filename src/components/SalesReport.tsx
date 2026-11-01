@@ -4,6 +4,7 @@ import { Button } from './ui/Button'
 import { Icon } from './ui/icons'
 import { EmptyState } from './ui/DataTable'
 import { FiguresTable } from './ui/FiguresTable'
+import { PAGE } from './ui/LoadMore'
 import { useToasts } from './ui/Toast'
 import { Select } from './ui/Field'
 import { Flag } from './ui/Flag'
@@ -287,13 +288,15 @@ export function SalesReport({ locationId }: { locationId?: string } = {}) {
           <p className="readout text-[15px] font-semibold text-ink">{rm(report.revenue)}</p>
         </div>
 
-        {/* A month of every store is a long list: it scrolls in its own box, the
-            total at its foot, and the export has it all. */}
+        {/* A month of every store is a long list: ten rows at a time, the total
+            at its foot counting them all, and the export has it all. */}
         {report.rows.length ? (
-          <div className="max-h-[560px] overflow-y-auto rounded-xl border border-line px-3 py-2 sm:px-4">
+          <div className="rounded-xl border border-line px-3 py-2 sm:px-4">
             <FiguresTable
               rows={report.rows}
               rowKey={(r) => `${r.day}::${r.locationId}`}
+              page={PAGE}
+              pageKey={JSON.stringify(rules)}
               columns={[
                 { header: 'Business date', render: (r) => <span className="readout">{formatDate(r.day)}</span> },
                 ...(locationId

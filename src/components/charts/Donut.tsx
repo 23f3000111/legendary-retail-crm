@@ -1,5 +1,8 @@
 import { useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { seriesColor, OTHER, INK } from './palette'
+import { Icon } from '../ui/icons'
+import { totalOf, usePaged } from '../ui/LoadMore'
 import { num, pct } from '../../lib/format'
 
 export interface DonutSlice {
@@ -21,6 +24,7 @@ export function Donut({
   size = 200,
   thickness = 26,
   format = (n: number) => num(n),
+  href,
 }: {
   slices: DonutSlice[]
   total?: number
@@ -29,6 +33,8 @@ export function Donut({
   size?: number
   thickness?: number
   format?: (n: number) => string
+  /** Where a segment's name leads, if anywhere: a store's own page. */
+  href?: (key: string) => string | undefined
 }) {
   const [hovered, setHovered] = useState<string | null>(null)
 
@@ -143,7 +149,7 @@ export function Donut({
               aria-hidden="true"
             />
             {/* Labels wear ink, never the series colour — the swatch carries identity. */}
-            <span className="flex-1 text-[12px] text-ink-2">{a.label}</span>
+            <SegmentName label={a.label} to={a.key === 'OTHER' ? undefined : href?.(a.key)} className="flex-1 text-[12px] text-ink-2" />
             <span className="readout text-[11.5px] text-ink-3">{a.share.toFixed(1)}%</span>
           </li>
         ))}
@@ -152,58 +158,92 @@ export function Donut({
   )
 }
 
-/** The same figures as a table, for the chart frame's "Figures" view. */
+/** A segment's name: a link to its own page where it has one (client, 1 November). */
+function SegmentName({ label, to, className }: { label: string; to?: string; className: string }) {
+  if (!to) return <span className={className}>{label}</span>
+  return (
+    <Link to={to} onClick={(e) => e.stopPropagation()} className={`group inline-flex items-center gap-1 hover:text-primary ${className}`}>
+      {label}
+      <Icon
+        name="chevronRight"
+        className="h-3 w-3 shrink-0 text-ink-3 transition-transform group-hover:translate-x-0.5 group-hover:text-primary"
+      />
+    </Link>
+  )
+}
+
+/**
+ * The same figures as a table, for the chart frame's "Figures" view. With
+ * `href`, each row opens its own page; with `page`, a long list shows that
+ * many rows at a time, and the total still counts them all.
+ */
 export function DonutTable({
   slices,
   format = (n: number) => num(n),
   unitHeader = 'Value',
+  href,
+  page,
 }: {
   slices: DonutSlice[]
   format?: (n: number) => string
   unitHeader?: string
+  href?: (key: string) => string | undefined
+  page?: number
 }) {
+  const navigate = useNavigate()
+  const { visible, partial, more } = usePaged(slices, { page })
   const total = slices.reduce((a, s) => a + s.value, 0)
   return (
-    <table className="w-full border-collapse">
-      <thead>
-        <tr className="border-b border-line">
-          {['Segment', unitHeader, 'Share'].map((h, i) => (
-            <th
-              key={h}
-              scope="col"
-              className={`pb-2 text-[10px] font-semibold uppercase tracking-wide2 text-ink-3 ${
-                i === 0 ? 'text-left' : 'text-right'
-              }`}
-            >
-              {h}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {slices.map((s, i) => (
-          <tr key={s.key} className="border-b border-line/70 last:border-0">
-            <td className="py-1.5 text-[12.5px] text-ink">
-              <span
-                className="mr-2 inline-block h-2.5 w-2.5 rounded-[3px] align-middle"
-                style={{ background: s.key === 'OTHER' ? OTHER : seriesColor(i) }}
-              />
-              {s.label}
-            </td>
-            <td className="readout py-1.5 text-right text-[12.5px] text-ink">{format(s.value)}</td>
-            <td className="readout py-1.5 text-right text-[12.5px] text-ink-2">
-              {total ? ((s.value / total) * 100).toFixed(1) : '0.0'}%
-            </td>
+    <>
+      <table className="w-full border-collapse">
+        <thead>
+          <tr className="border-b border-line">
+            {['Segment', unitHeader, 'Share'].map((h, i) => (
+              <th
+                key={h}
+                scope="col"
+                className={`pb-2 text-[10px] font-semibold uppercase tracking-wide2 text-ink-3 ${
+                  i === 0 ? 'text-left' : 'text-right'
+                }`}
+              >
+                {h}
+              </th>
+            ))}
           </tr>
-        ))}
-        <tr className="border-t border-line">
-          <td className="py-1.5 text-[12.5px] text-ink-2">Total</td>
-          <td className="readout py-1.5 text-right text-[12.5px] text-ink" style={{ color: INK.primary }}>
-            {format(total)}
-          </td>
-          <td className="readout py-1.5 text-right text-[12.5px] text-ink-2">100.0%</td>
-        </tr>
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {visible.map((s, i) => {
+            const to = s.key === 'OTHER' ? undefined : href?.(s.key)
+            return (
+              <tr
+                key={s.key}
+                onClick={to ? () => navigate(to) : undefined}
+                className={`border-b border-line/70 last:border-0 ${to ? 'cursor-pointer transition-colors hover:bg-primary/5' : ''}`}
+              >
+                <td className="py-1.5 text-[12.5px] text-ink">
+                  <span
+                    className="mr-2 inline-block h-2.5 w-2.5 rounded-[3px] align-middle"
+                    style={{ background: s.key === 'OTHER' ? OTHER : seriesColor(i) }}
+                  />
+                  <SegmentName label={s.label} to={to} className="align-middle" />
+                </td>
+                <td className="readout py-1.5 text-right text-[12.5px] text-ink">{format(s.value)}</td>
+                <td className="readout py-1.5 text-right text-[12.5px] text-ink-2">
+                  {total ? ((s.value / total) * 100).toFixed(1) : '0.0'}%
+                </td>
+              </tr>
+            )
+          })}
+          <tr className="border-t border-line">
+            <td className="py-1.5 text-[12.5px] text-ink-2">{totalOf(partial, slices.length)}</td>
+            <td className="readout py-1.5 text-right text-[12.5px] text-ink" style={{ color: INK.primary }}>
+              {format(total)}
+            </td>
+            <td className="readout py-1.5 text-right text-[12.5px] text-ink-2">100.0%</td>
+          </tr>
+        </tbody>
+      </table>
+      {more}
+    </>
   )
 }

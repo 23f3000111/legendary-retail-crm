@@ -4,6 +4,7 @@ import { Button } from '../../components/ui/Button'
 import { Badge } from '../../components/ui/Badge'
 import { NumberInput, Select } from '../../components/ui/Field'
 import { Icon } from '../../components/ui/icons'
+import { PAGE, usePaged } from '../../components/ui/LoadMore'
 import { useData, PARTNER_KEYERS } from '../../store/useData'
 import { useCurrentUser } from '../../store/useAuth'
 import { useToasts } from '../../components/ui/Toast'
@@ -190,6 +191,8 @@ function ChannelPanel({
   invalid: (id: string) => boolean
 }) {
   const partners = partnersIn(channel)
+  // Ten at a time; Show all brings every box up at once for keying in a month.
+  const { visible, more } = usePaged(partners, { page: PAGE })
   const rows = new Map(selectPartnerMonth(data, channel, month).map((r) => [r.locationId, r]))
   const done = partners.filter((l) => rows.get(l.id)?.has).length
   const total = [...rows.values()].reduce((a, r) => a + r.revenue, 0)
@@ -214,7 +217,7 @@ function ChannelPanel({
       />
       <Rule />
       <PanelBody className="space-y-1.5">
-        {partners.map((l) => {
+        {visible.map((l) => {
           const row = rows.get(l.id)
           const isChanged = changed(l.id)
           const isInvalid = invalid(l.id)
@@ -257,6 +260,7 @@ function ChannelPanel({
             </div>
           )
         })}
+        {more}
       </PanelBody>
     </Panel>
   )

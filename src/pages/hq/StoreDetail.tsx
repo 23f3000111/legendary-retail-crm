@@ -8,6 +8,7 @@ import { Modal } from '../../components/ui/Modal'
 import { SegmentedControl } from '../../components/ui/Field'
 import { Icon } from '../../components/ui/icons'
 import { LinkIf } from '../../components/ui/LinkIf'
+import { PAGE, totalOf, usePaged } from '../../components/ui/LoadMore'
 import { StockItemDetail } from '../../components/StockItemDetail'
 import { StorePicker } from '../../components/StorePicker'
 import { ChartFrame } from '../../components/charts/ChartFrame'
@@ -83,8 +84,6 @@ export function StoreDetail() {
     return { op: 'equal', from: yesterday, to: yesterday }
   })
   const [item, setItem] = useState<StockRow | null>(null)
-  /** The stock table shows its best sellers first, ten at a time (client, 1 November). */
-  const [stockShown, setStockShown] = useState(10)
   /** Where they came from: the figures first, the ribbon a tap away. */
   const [originChart, setOriginChart] = useState(false)
   const [country, setCountry] = useState<string | null>(null)
@@ -154,6 +153,8 @@ export function StoreDetail() {
       .sort((a, b) => b.units - a.units || a.i - b.i)
       .map((x) => x.r)
   }, [data, id, location])
+  /** The stock table shows its best sellers first, ten at a time (client, 1 November). */
+  const stockPage = usePaged(stock, { page: PAGE, resetOn: id })
 
   // A store's drafts are its own until they are sent (20 October).
   const orders = useMemo(
@@ -387,22 +388,13 @@ export function StoreDetail() {
         <PanelBody>
           <DataTable
             columns={stockColumns}
-            rows={stock.slice(0, stockShown)}
+            rows={stockPage.visible}
             rowKey={(r) => r.skuId}
             dense
             onRowClick={setItem}
-            totalLabel={stockShown < stock.length ? `Total · all ${num(stock.length)}` : 'Total'}
+            totalLabel={totalOf(stockPage.partial, stock.length)}
           />
-          {stock.length > stockShown && (
-            <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
-              <Button size="sm" variant="secondary" icon="chevronDown" onClick={() => setStockShown((n) => n + 10)}>
-                Load more · {num(Math.min(10, stock.length - stockShown))} of {num(stock.length - stockShown)} left
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setStockShown(stock.length)}>
-                Show all {num(stock.length)}
-              </Button>
-            </div>
-          )}
+          {stockPage.more}
         </PanelBody>
       </Panel>
 
@@ -418,7 +410,7 @@ export function StoreDetail() {
         title="Best sellers here"
         meta={`Every product sold, last ${range} days: units and what they came to, with the total at the foot.`}
         height={300}
-        table={<SkuTable rows={skuRows} />}
+        table={<SkuTable rows={skuRows} page={PAGE} />}
       >
         <SkuBars rows={skuRows.slice(0, 8)} metric="units" />
       </ChartFrame>

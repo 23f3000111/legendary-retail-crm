@@ -7,8 +7,10 @@ import { EmptyState } from '../../components/ui/DataTable'
 import { FiguresTable } from '../../components/ui/FiguresTable'
 import { SegmentedControl, TextInput } from '../../components/ui/Field'
 import { useToasts } from '../../components/ui/Toast'
+import { PAGE } from '../../components/ui/LoadMore'
 import { SalesBoxes } from '../../components/SalesBoxes'
 import { SalesReport } from '../../components/SalesReport'
+import { SalesCalendar } from '../../components/SalesCalendar'
 import { useData } from '../../store/useData'
 import { salesWindows, selectSalesPeriods, selectStoreSales, type PeriodSales, type StoreSalesRow } from '../../store/selectors'
 import { CHANNEL_PLURAL, locationById, locations, tradingLocations } from '../../data/locations'
@@ -31,6 +33,9 @@ const PERIODS: Period[] = ['today', 'yesterday', 'monthToDate', 'lastMonth']
  * rules, and a table of every store's today, yesterday, month so far and last
  * month, with a total at the foot of each column. A store that reports a
  * month at a time shows a dash for the days it does not report.
+ *
+ * The table shows ten stores at a time, and the calendar of daily sales sits
+ * above the stores opening soon (both asked on 1 November, after Revision 9).
  */
 export function Locations() {
   const navigate = useNavigate()
@@ -174,7 +179,7 @@ export function Locations() {
           meta={
             view === 'consignment' || view === 'dealer'
               ? 'Dealers and consignment partners report a month at a time, on Dealer sales: last month is their figure, and the days show a dash.'
-              : 'Today is live; yesterday and the month are as filed. Tap a store to open it.'
+              : `Today is live; yesterday and the month are as filed. ${PAGE} at a time; tap a store to open it.`
           }
           action={
             <div className="flex flex-wrap items-center gap-2">
@@ -205,6 +210,8 @@ export function Locations() {
               rows={rows}
               rowKey={(r) => r.locationId}
               onRowClick={(r) => navigate(`/stores/${r.locationId}`)}
+              page={PAGE}
+              pageKey={`${view}|${query}`}
               columns={[
                 {
                   header: 'Store',
@@ -236,6 +243,8 @@ export function Locations() {
           )}
         </PanelBody>
       </Panel>
+
+      <SalesCalendar />
 
       {coming.length > 0 && (
         <Panel>

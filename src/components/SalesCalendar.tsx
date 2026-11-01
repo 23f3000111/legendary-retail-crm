@@ -6,6 +6,7 @@ import { Button, IconButton } from './ui/Button'
 import { Flag } from './ui/Flag'
 import { Modal } from './ui/Modal'
 import { FiguresTable } from './ui/FiguresTable'
+import { PAGE } from './ui/LoadMore'
 import { useData } from '../store/useData'
 import { useCan } from '../store/useAuth'
 import { selectDailySales, selectDayDetail } from '../store/selectors'
@@ -177,6 +178,7 @@ export function DayDetailModal({ day, locationId, onClose }: { day: string; loca
             <FiguresTable
               rows={d.stores}
               rowKey={(s) => s.locationId}
+              page={PAGE}
               columns={[
                 {
                   header: 'Store',
@@ -203,6 +205,7 @@ export function DayDetailModal({ day, locationId, onClose }: { day: string; loca
           <FiguresTable
             rows={d.skus}
             rowKey={(s) => s.skuId}
+            page={PAGE}
             columns={[
               {
                 // Who bought it sits under the name, so a phone needs no fourth column.

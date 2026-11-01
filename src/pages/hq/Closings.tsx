@@ -9,6 +9,7 @@ import { Field, SegmentedControl, TextArea } from '../../components/ui/Field'
 import { Modal } from '../../components/ui/Modal'
 import { ChangeList } from '../../components/ui/Notice'
 import { Icon } from '../../components/ui/icons'
+import { PAGE, totalOf, usePaged } from '../../components/ui/LoadMore'
 import { Sparkline } from '../../components/charts/Sparkline'
 import { SalesBoxes } from '../../components/SalesBoxes'
 import { useData } from '../../store/useData'
@@ -53,6 +54,8 @@ export function Closings() {
   )
 
   const stores = locationsInChannel(channel).filter((l) => l.status === 'open')
+  // Forty-four dealers make a long grid: ten at a time, the foot counting them all.
+  const shown = usePaged(stores, { page: PAGE, resetOn: channel })
   const filed = (locationId: string, period: string) =>
     data.closings.find((c) => c.locationId === locationId && c.period === period)
 
@@ -236,7 +239,11 @@ export function Closings() {
       )}
 
       <Panel>
-        <PanelHeader eyebrow="Filing grid" title="Who has filed" />
+        <PanelHeader
+          eyebrow="Filing grid"
+          title="Who has filed"
+          meta={stores.length > PAGE ? `${stores.length} stores, ${PAGE} at a time.` : undefined}
+        />
         <Rule />
         <PanelBody>
           {channel === 'consignment' ? (
@@ -271,7 +278,7 @@ export function Closings() {
                   </tr>
                 </thead>
                 <tbody>
-                  {stores.map((s) => {
+                  {shown.visible.map((s) => {
                     const y = filed(s.id, yesterday)
                     return (
                       <tr key={s.id} className="border-b border-line/70 last:border-0">
@@ -350,7 +357,9 @@ export function Closings() {
                 {/* Each day's count of stores in, and yesterday's takings (client, 1 November). */}
                 <tfoot>
                   <tr className="border-t border-line">
-                    <td className="py-2 pr-3 text-[12.5px] font-semibold text-ink-2">Total</td>
+                    <td className="py-2 pr-3 text-[12.5px] font-semibold text-ink-2">
+                      {totalOf(shown.partial, stores.length)}
+                    </td>
                     {days.map((d) => {
                       const due = stores.filter((s) => expected(s.id, d)).length
                       const done = stores.filter((s) => filed(s.id, d)).length
@@ -373,6 +382,7 @@ export function Closings() {
               </table>
             </div>
           )}
+          {channel !== 'consignment' && shown.more}
         </PanelBody>
       </Panel>
 
