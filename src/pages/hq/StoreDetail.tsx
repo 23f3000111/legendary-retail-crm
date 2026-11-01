@@ -13,26 +13,39 @@ import { StockItemDetail } from '../../components/StockItemDetail'
 import { StorePicker } from '../../components/StorePicker'
 import { ChartFrame } from '../../components/charts/ChartFrame'
 import { TrendChart } from '../../components/charts/TrendChart'
-import { OriginRibbon, OriginTable } from '../../components/charts/OriginRibbon'
-import { SkuBars, SkuTable } from '../../components/charts/SkuBars'
+import { OriginRibbon, OriginWindowsTable } from '../../components/charts/OriginRibbon'
+import { SkuBars, SkuWindowsTable } from '../../components/charts/SkuBars'
 import { useData } from '../../store/useData'
 import { useCurrentUser } from '../../store/useAuth'
 import { canOpen } from '../../components/layout/nav'
 import { seenBy } from '../../lib/po-machine'
 import {
   emptyFilter,
+  salesWindows,
   selectLastFiled,
-  selectOriginMix,
+  selectOriginSales,
   selectOriginsBetween,
   selectPricesAt,
   selectSkuPerformance,
+  selectSkuSales,
   selectStock,
   selectTimeSeries,
+  type SalesWindow,
   type SoldAt,
   type StockRow,
 } from '../../store/selectors'
 import { CHANNEL_LABEL, locationById } from '../../data/locations'
-import { addDays, formatDate, spanDays, spanLabel, startOfMonth, startOfWeek, type DateSpan } from '../../lib/dates'
+import {
+  addDays,
+  formatDate,
+  formatDateShort,
+  monthKey,
+  monthLabel,
+  spanDays,
+  spanLabel,
+  startOfWeek,
+  type DateSpan,
+} from '../../lib/dates'
 import { DateSpanInput } from '../../components/DateSpanInput'
 import { SalesBoxes } from '../../components/SalesBoxes'
 import { SalesCalendar } from '../../components/SalesCalendar'
@@ -45,11 +58,11 @@ import { TIER_LABEL } from '../../data/products'
 type RangeKey = '7' | '30' | '90'
 
 /**
- * "Where they came from" over the page's range, or yesterday, this week, this
- * month, or chosen dates (client, 15 October; "Today" became "Yesterday" and
- * the dates were added on 20 October).
+ * The last column of "Where they came from": the page's range, this week, or
+ * chosen dates (client, 15 and 20 October). Yesterday and the month to date
+ * have columns of their own since the four windows came in (1 November).
  */
-type OriginPeriod = 'range' | 'yesterday' | 'week' | 'month' | 'dates'
+type OriginPeriod = 'range' | 'week' | 'dates'
 
 const RANGES: { value: RangeKey; label: string }[] = [
   { value: '7', label: '7 days' },
@@ -86,7 +99,8 @@ export function StoreDetail() {
   const [item, setItem] = useState<StockRow | null>(null)
   /** Where they came from: the figures first, the ribbon a tap away. */
   const [originChart, setOriginChart] = useState(false)
-  const [country, setCountry] = useState<string | null>(null)
+  /** A country opened from "Where they came from", and the days of the figure tapped. */
+  const [country, setCountry] = useState<{ code: string; window: SalesWindow } | null>(null)
 
   const location = locationById(id)
 
@@ -97,46 +111,84 @@ export function StoreDetail() {
     }),
     [data.today, range, id],
   )
+  const store = useMemo(() => ({ locationIds: [id] }), [id])
 
   const series = useMemo(() => selectTimeSeries(data, filter, 'revenue'), [data, filter])
-  // The page's range reads what was filed, like every chart on the page.
-  // This week and the month to date read today's sales live as well, and so
-  // do chosen dates that take in today.
-  const yesterday = addDays(data.today, -1)
+
+  // The tables by the four windows read as the boxes do: the days that have
+  // ended as filed, and today live (asked on 1 November, after Revision 9).
+  const windows = salesWindows(data.today)
+  const days = (d: { from: string; to: string }) =>
+    d.from === d.to ? formatDateShort(d.from) : `${formatDateShort(d.from)} to ${formatDateShort(d.to)}`
+  const rangeHeading = `Last ${range} days · ${days(filter)}`
+
+  // Where they came from: the last column is the page's range, this week, or
+  // chosen dates, and today is live in any of them that takes it in.
   const originDays: { from: string; to: string } | null =
-    originPeriod === 'yesterday'
-      ? { from: yesterday, to: yesterday }
+    originPeriod === 'range'
+      ? { from: filter.from, to: filter.to }
       : originPeriod === 'week'
         ? { from: startOfWeek(data.today), to: data.today }
-        : originPeriod === 'month'
-          ? { from: startOfMonth(data.today), to: data.today }
-          : originPeriod === 'dates'
-            ? spanDays(originDates)
-            : null
-  const origins = useMemo(
-    () =>
-      originPeriod === 'range'
-        ? selectOriginMix(data, filter, 6)
+        : spanDays(originDates)
+  const originHeading =
+    originPeriod === 'range'
+      ? rangeHeading
+      : originPeriod === 'week'
+        ? `This week · since ${formatDateShort(startOfWeek(data.today))}`
         : originDays
-          ? selectOriginsBetween(data, id, originDays.from, originDays.to, 6)
-          : [],
+          ? `Dates · ${days(originDays)}`
+          : 'Dates · choose them'
+  const originRows = useMemo(
+    () =>
+      selectOriginSales(
+        data,
+        store,
+        originDays ? { ...emptyFilter(originDays.from, originDays.to), ...store } : null,
+      ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [data, filter, id, originPeriod, originDays?.from, originDays?.to],
+    [data, store, originDays?.from, originDays?.to],
   )
-  const filedYesterday = data.closings.some(
-    (c) => c.locationId === id && c.periodType === 'day' && c.period === yesterday,
+  // The ribbon draws the last column's days, counted as the table counts them.
+  const originSlices = useMemo(
+    () => (originChart && originDays ? selectOriginsBetween(data, id, originDays.from, originDays.to, 6) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data, id, originChart, originDays?.from, originDays?.to],
+  )
+  // A country opens for the days of the figure tapped, read the same way.
+  const countryDays = country ? (country.window === 'chosen' ? originDays : windows[country.window]) : null
+  const countryFilter = useMemo(
+    () => (countryDays ? { ...emptyFilter(countryDays.from, countryDays.to), ...store } : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [countryDays?.from, countryDays?.to, store],
   )
   const originWhen =
     originPeriod === 'range'
       ? `Last ${range} days`
-      : originPeriod === 'yesterday'
-        ? `Yesterday, ${formatDate(yesterday)}${filedYesterday ? '' : ' — not filed yet'}`
-        : originPeriod === 'week' || originPeriod === 'month'
-          ? `${originPeriod === 'week' ? 'This week' : 'Month to date'}: ${formatDate(originDays!.from)} to today, with today live`
-          : originDays
-            ? spanLabel(originDays)
-            : 'Choose the dates'
-  const skuRows = useMemo(() => selectSkuPerformance(data, filter), [data, filter])
+      : originPeriod === 'week'
+        ? `This week: ${formatDate(startOfWeek(data.today))} to today, with today live`
+        : originDays
+          ? spanLabel(originDays)
+          : 'Choose the dates'
+  const countryWhen: Record<SalesWindow, string> = {
+    today: 'Today, live',
+    yesterday: `Yesterday, ${formatDate(windows.yesterday.from)}`,
+    monthToDate: `Month to date, since ${formatDate(windows.monthToDate.from)}`,
+    lastMonth: `Last month, ${monthLabel(monthKey(windows.lastMonth.from))}`,
+    chosen: originWhen,
+  }
+
+  // Best sellers here, by the four windows and the page's range.
+  const skuRows = useMemo(() => selectSkuSales(data, store, filter), [data, store, filter])
+  // The bars: the range's best sellers, by the bottle.
+  const skuBars = useMemo(
+    () =>
+      skuRows
+        .map((r) => ({ skuId: r.skuId, label: r.label, ...r.chosen }))
+        .filter((r) => r.units > 0)
+        .sort((a, b) => b.units - a.units || b.revenue - a.revenue)
+        .slice(0, 8),
+    [skuRows],
+  )
   // Best sellers first: what this store sold most of over the last 30 days,
   // then everything else in the range's own order.
   const stock = useMemo(() => {
@@ -405,14 +457,19 @@ export function StoreDetail() {
       {/* The rules stay as they are when another store is picked, to compare like with like. */}
       <SalesReport locationId={id} />
 
-      {/* ── What sells: the figures first (client, 1 November) ─────────── */}
+      {/* ── What sells: the figures first, by the four windows (1 November) ── */}
       <ChartFrame
         title="Best sellers here"
-        meta={`Every product sold, last ${range} days: units and what they came to, with the total at the foot.`}
+        meta={`Every product sold here, ${PAGE} at a time, with what it came to and its units under it. Today is live; the days before are as filed. The chart shows the last ${range} days.`}
         height={300}
-        table={<SkuTable rows={skuRows} page={PAGE} />}
+        note={
+          location.channel === 'main'
+            ? undefined
+            : 'A month keyed in on Dealer sales has no products behind it, so it is not in this table.'
+        }
+        table={<SkuWindowsTable rows={skuRows} chosen={rangeHeading} pageKey={id} />}
       >
-        <SkuBars rows={skuRows.slice(0, 8)} metric="units" />
+        <SkuBars rows={skuBars} metric="units" />
       </ChartFrame>
 
       {/* ── Where they came from ──────────────────────────────────────── */}
@@ -422,7 +479,7 @@ export function StoreDetail() {
             title="Where they came from"
             meta={
               location.recordsCountries
-                ? `${originWhen}. Counted by customer: one sale is one customer, however much they bought. Tap a country to open it.`
+                ? 'Counted by customer: one sale is one customer, however much they bought. Today is live; the days before are as filed. Tap a figure to see what those customers bought, or a country for the last column’s days.'
                 : 'This channel does not record customer countries.'
             }
             action={
@@ -441,29 +498,34 @@ export function StoreDetail() {
           <PanelBody className="space-y-4">
             {location.recordsCountries ? (
               <>
-                <SegmentedControl<OriginPeriod>
-                  size="sm"
-                  value={originPeriod}
-                  onChange={setOriginPeriod}
-                  options={[
-                    { value: 'yesterday', label: 'Yesterday' },
-                    { value: 'week', label: 'Week' },
-                    { value: 'month', label: 'Month' },
-                    { value: 'range', label: `${range} days` },
-                    { value: 'dates', label: 'Dates' },
-                  ]}
-                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[11.5px] text-ink-3">{originChart ? 'Days' : 'Last column'}</span>
+                  <SegmentedControl<OriginPeriod>
+                    size="sm"
+                    value={originPeriod}
+                    onChange={setOriginPeriod}
+                    options={[
+                      { value: 'week', label: 'Week' },
+                      { value: 'range', label: `${range} days` },
+                      { value: 'dates', label: 'Dates' },
+                    ]}
+                  />
+                </div>
                 {originPeriod === 'dates' && (
                   <DateSpanInput value={originDates} onChange={setOriginDates} max={data.today} />
                 )}
-                {origins.length ? (
-                  originChart ? (
-                    <OriginRibbon slices={origins} height={40} />
-                  ) : (
-                    <OriginTable slices={origins} onSelect={setCountry} />
-                  )
+                {originChart ? (
+                  <div className="space-y-2">
+                    <p className="text-[11.5px] text-ink-3">{originWhen}</p>
+                    <OriginRibbon slices={originSlices} height={40} />
+                  </div>
                 ) : (
-                  <p className="py-4 text-center text-[12.5px] text-ink-3">No customers recorded yet.</p>
+                  <OriginWindowsTable
+                    rows={originRows}
+                    chosen={originHeading}
+                    onSelect={(code, window) => setCountry({ code, window })}
+                    pageKey={id}
+                  />
                 )}
               </>
             ) : (
@@ -532,15 +594,12 @@ export function StoreDetail() {
         {item && <StockItemDetail locationId={id} skuId={item.skuId} row={item} />}
       </Modal>
 
-      {country && (
+      {country && countryFilter && (
         <CountryDetailModal
-          countryCode={country}
-          filter={
-            originDays
-              ? { ...emptyFilter(originDays.from, originDays.to), locationIds: [id] }
-              : filter
-          }
-          when={originWhen}
+          countryCode={country.code}
+          filter={countryFilter}
+          when={countryWhen[country.window]}
+          live
           onClose={() => setCountry(null)}
         />
       )}

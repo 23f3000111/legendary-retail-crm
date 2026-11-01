@@ -3,7 +3,8 @@ import { motion } from 'framer-motion'
 import { seriesColor, OTHER, INK } from './palette'
 import { num, rm } from '../../lib/format'
 import { Flag } from '../ui/Flag'
-import type { OriginSlice } from '../../store/selectors'
+import { Dash, WindowFigure, WindowsTable } from '../WindowsTable'
+import type { OriginSales, OriginSalesRow, OriginSlice, SalesWindow } from '../../store/selectors'
 
 /**
  * The Origin Ribbon.
@@ -192,5 +193,89 @@ export function OriginTable({
         </tr>
       </tbody>
     </table>
+  )
+}
+
+/**
+ * Where the customers came from, by the four boxes' windows and the page's
+ * own dates (asked on 1 November, after Revision 9): the customers lead, with
+ * what they bought and what it came to under them, ten countries at a time.
+ * With `onSelect`, a country opens on its own — from a figure, for that
+ * figure's days; from its name, for the page's own dates.
+ */
+export function OriginWindowsTable({
+  rows,
+  chosen,
+  onSelect,
+  pageKey,
+}: {
+  rows: OriginSalesRow[]
+  /** The page's own dates, in words, for the last column. */
+  chosen: string
+  onSelect?: (countryCode: string, window: SalesWindow) => void
+  pageKey?: string
+}) {
+  const figure = (s: OriginSales, strong = false) =>
+    s.customers === 0 && s.units === 0 ? (
+      <Dash />
+    ) : (
+      <WindowFigure
+        lead={`${num(s.customers)} ${s.customers === 1 ? 'customer' : 'customers'}`}
+        sub={`${num(s.units)} ${s.units === 1 ? 'unit' : 'units'} · ${rm(s.revenue)}`}
+        strong={strong}
+      />
+    )
+  const total = (w: SalesWindow): OriginSales =>
+    rows.reduce(
+      (a, r) => ({ customers: a.customers + r[w].customers, units: a.units + r[w].units, revenue: a.revenue + r[w].revenue }),
+      { customers: 0, units: 0, revenue: 0 },
+    )
+  return (
+    <WindowsTable<OriginSalesRow>
+      rows={rows}
+      rowKey={(r) => r.countryCode}
+      chosen={chosen}
+      pageKey={pageKey}
+      empty="No customers recorded yet."
+      first={{
+        header: 'Origin',
+        render: (r) => {
+          const name = (
+            <span className="flex items-center gap-2">
+              <Flag code={r.countryCode} size={16} fallback={r.flag} />
+              {r.name}
+            </span>
+          )
+          // Wide enough on a phone that a name keeps to a line or two.
+          return onSelect ? (
+            <button
+              onClick={() => onSelect(r.countryCode, 'chosen')}
+              className="group flex min-w-[110px] items-center gap-1 text-left hover:text-primary"
+              title={`Open ${r.name}: ${chosen}`}
+            >
+              {name}
+              <span className="text-ink-3 transition-transform group-hover:translate-x-0.5 group-hover:text-primary">›</span>
+            </button>
+          ) : (
+            <span className="block min-w-[110px]">{name}</span>
+          )
+        },
+      }}
+      cell={(r, w) => {
+        const s = r[w]
+        const shown = figure(s, w === 'monthToDate')
+        if (!onSelect || (s.customers === 0 && s.units === 0)) return shown
+        return (
+          <button
+            onClick={() => onSelect(r.countryCode, w)}
+            className="-mr-1 rounded-md px-1 py-0.5 transition-colors hover:bg-primary/5 hover:text-primary"
+            title={`Open ${r.name} for these days`}
+          >
+            {shown}
+          </button>
+        )
+      }}
+      total={(w) => figure(total(w))}
+    />
   )
 }

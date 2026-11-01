@@ -15,7 +15,7 @@ import { ChartFrame } from '../../components/charts/ChartFrame'
 import { TrendChart } from '../../components/charts/TrendChart'
 import { Donut, DonutTable, type DonutSlice } from '../../components/charts/Donut'
 import { OriginRibbon, OriginTable } from '../../components/charts/OriginRibbon'
-import { SkuBars } from '../../components/charts/SkuBars'
+import { SkuBars, SkuWindowsTable } from '../../components/charts/SkuBars'
 import { HeatCalendar } from '../../components/charts/HeatCalendar'
 import { Sparkline } from '../../components/charts/Sparkline'
 import { useData } from '../../store/useData'
@@ -30,18 +30,15 @@ import {
   selectLocationSparkline,
   selectLocationRows,
   selectOriginMix,
-  salesWindows,
   selectSkusForCountry,
   selectSkuSales,
   selectTimeSeries,
   type Filter,
   type Metric,
-  type SkuSales,
-  type SkuSalesRow,
 } from '../../store/selectors'
 import { CHANNEL_PLURAL } from '../../data/locations'
 import { countryByCode } from '../../data/countries'
-import { addDays, formatDate, formatDateShort, monthKey, monthLabel } from '../../lib/dates'
+import { addDays, formatDate, formatDateShort } from '../../lib/dates'
 import { downloadCsv } from '../../lib/exportCsv'
 import { openPrintReport } from '../../lib/printReport'
 import { num, rm, rmCompact } from '../../lib/format'
@@ -59,9 +56,6 @@ import { num, rm, rmCompact } from '../../lib/format'
  * four windows as the boxes; every store, ten at a time; then the trend and
  * the trading pattern at the foot of the page.
  */
-
-type Window = 'today' | 'yesterday' | 'monthToDate' | 'lastMonth' | 'chosen'
-const WINDOWS: Window[] = ['today', 'yesterday', 'monthToDate', 'lastMonth', 'chosen']
 export function Analytics() {
   const navigate = useNavigate()
   const data = useData()
@@ -125,39 +119,6 @@ export function Analytics() {
     () => selectSkuSales(data, boxBase, filter),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [data, filter],
-  )
-  const windows = salesWindows(data.today)
-  const WINDOW_LABEL: Record<Window, string> = {
-    today: 'Today · live',
-    yesterday: `Yesterday · ${formatDateShort(windows.yesterday.from)}`,
-    monthToDate: `Month to date · since ${formatDateShort(windows.monthToDate.from)}`,
-    lastMonth: `Last month · ${monthLabel(monthKey(windows.lastMonth.from))}`,
-    chosen: `Dates above · ${formatDateShort(filter.from)} to ${formatDateShort(filter.to)}`,
-  }
-  const skuTotal = (w: Window): SkuSales =>
-    skuRows.reduce((a, r) => ({ units: a.units + r[w].units, revenue: a.revenue + r[w].revenue }), { units: 0, revenue: 0 })
-  // The measure chosen above leads; the other sits under it.
-  const skuFigure = (s: SkuSales, strong = false) => {
-    if (s.units === 0 && s.revenue === 0) return <span className="text-ink-3">—</span>
-    const units = `${num(s.units)} ${s.units === 1 ? 'unit' : 'units'}`
-    return (
-      <span className="inline-flex flex-col items-end whitespace-nowrap">
-        <span className={strong ? 'font-semibold' : ''}>{metric === 'revenue' ? rm(s.revenue) : units}</span>
-        <span className="text-[10.5px] text-ink-3">{metric === 'revenue' ? units : rm(s.revenue)}</span>
-      </span>
-    )
-  }
-  const skuSorted = useMemo(
-    () =>
-      metric === 'revenue'
-        ? skuRows
-        : [...skuRows].sort(
-            (a, b) =>
-              b.monthToDate.units - a.monthToDate.units ||
-              b.lastMonth.units - a.lastMonth.units ||
-              b.chosen.units - a.chosen.units,
-          ),
-    [skuRows, metric],
   )
   // The chart draws the dates set above, the best twelve.
   const skuBars = useMemo(
@@ -376,22 +337,12 @@ export function Analytics() {
             height={280}
             note="Narrowed by the filter's stores, products and countries, like the boxes. A dealer's or consignment partner's month keyed in on Dealer sales has no products behind it, so it is not in this table."
             table={
-              <FiguresTable<SkuSalesRow>
-                rows={skuSorted}
-                rowKey={(r) => r.skuId}
-                page={PAGE}
+              // The measure chosen above leads; the other sits under it.
+              <SkuWindowsTable
+                rows={skuRows}
+                metric={metric}
+                chosen={`Dates above · ${formatDateShort(filter.from)} to ${formatDateShort(filter.to)}`}
                 pageKey={JSON.stringify([filter, metric])}
-                empty="No product sold in these windows."
-                columns={[
-                  // Wide enough on a phone that a name takes two lines, not four.
-                  { header: 'Product', render: (r) => <span className="block min-w-[120px]">{r.label}</span> },
-                  ...WINDOWS.map((w) => ({
-                    header: WINDOW_LABEL[w],
-                    align: 'right' as const,
-                    render: (r: SkuSalesRow) => skuFigure(r[w], w === 'monthToDate'),
-                    total: skuFigure(skuTotal(w)),
-                  })),
-                ]}
               />
             }
           >

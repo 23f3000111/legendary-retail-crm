@@ -1,8 +1,10 @@
+import { useMemo } from 'react'
 import { seriesColor } from './palette'
 import { collections, skuById, productById } from '../../data/products'
 import { totalOf, usePaged } from '../ui/LoadMore'
+import { Dash, WindowFigure, WindowsTable } from '../WindowsTable'
 import { num, rm } from '../../lib/format'
-import type { SkuPerformance } from '../../store/selectors'
+import type { SalesWindow, SkuPerformance, SkuSales, SkuSalesRow } from '../../store/selectors'
 
 /** What a bar needs: the product, and what it sold. */
 type SkuBar = Pick<SkuPerformance, 'skuId' | 'label' | 'units' | 'revenue'>
@@ -110,5 +112,61 @@ export function SkuTable({
       </table>
       {more}
     </>
+  )
+}
+
+/**
+ * Every product by the four boxes' windows and the page's own dates (asked on
+ * 1 November, after Revision 9): its sales and its units in each, with the
+ * measure chosen leading and the products ranked by it, ten at a time.
+ */
+export function SkuWindowsTable({
+  rows,
+  metric = 'revenue',
+  chosen,
+  pageKey,
+}: {
+  rows: SkuSalesRow[]
+  metric?: 'revenue' | 'units'
+  /** The page's own dates, in words, for the last column. */
+  chosen: string
+  pageKey?: string
+}) {
+  // The rows come best month so far first, by sales; units re-rank them.
+  const sorted = useMemo(
+    () =>
+      metric === 'revenue'
+        ? rows
+        : [...rows].sort(
+            (a, b) =>
+              b.monthToDate.units - a.monthToDate.units ||
+              b.lastMonth.units - a.lastMonth.units ||
+              b.chosen.units - a.chosen.units,
+          ),
+    [rows, metric],
+  )
+  const figure = (s: SkuSales, strong = false) => {
+    if (s.units === 0 && s.revenue === 0) return <Dash />
+    const units = `${num(s.units)} ${s.units === 1 ? 'unit' : 'units'}`
+    return metric === 'revenue' ? (
+      <WindowFigure lead={rm(s.revenue)} sub={units} strong={strong} />
+    ) : (
+      <WindowFigure lead={units} sub={rm(s.revenue)} strong={strong} />
+    )
+  }
+  const total = (w: SalesWindow): SkuSales =>
+    rows.reduce((a, r) => ({ units: a.units + r[w].units, revenue: a.revenue + r[w].revenue }), { units: 0, revenue: 0 })
+  return (
+    <WindowsTable<SkuSalesRow>
+      rows={sorted}
+      rowKey={(r) => r.skuId}
+      chosen={chosen}
+      pageKey={pageKey}
+      empty="No product sold in these windows."
+      // Wide enough on a phone that a name takes two lines, not four.
+      first={{ header: 'Product', render: (r) => <span className="block min-w-[120px]">{r.label}</span> }}
+      cell={(r, w) => figure(r[w], w === 'monthToDate')}
+      total={(w) => figure(total(w))}
+    />
   )
 }

@@ -12,24 +12,28 @@ import { countryByCode } from '../data/countries'
 import { num, rm } from '../lib/format'
 
 /**
- * One nationality, opened from "Which countries bought" (client, 1 November):
- * which stores had the most customers from it, and which products they bought
- * the most. Over the same days and filters as the table it was opened from.
+ * One nationality, opened from "Which countries bought" or a store's "Where
+ * they came from" (client, 1 November): which stores had the most customers
+ * from it, and which products they bought the most. Over the same days and
+ * filters as the table it was opened from, read the way that table reads them.
  */
 export function CountryDetailModal({
   countryCode,
   filter,
   when,
+  live = false,
   onClose,
 }: {
   countryCode: string
   filter: Filter
   /** The days it covers, in words: "Last 30 days". */
   when: string
+  /** Today from the counter, as the four boxes read it, for a table by the four windows. */
+  live?: boolean
   onClose: () => void
 }) {
   const data = useData()
-  const d = useMemo(() => selectCountryDetail(data, filter, countryCode), [data, filter, countryCode])
+  const d = useMemo(() => selectCountryDetail(data, filter, countryCode, live), [data, filter, countryCode, live])
   const country = countryByCode(countryCode)
 
   return (

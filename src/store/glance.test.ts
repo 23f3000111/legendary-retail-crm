@@ -5,6 +5,7 @@ import {
   selectCountryDetail,
   selectDailySales,
   selectDayDetail,
+  selectOriginSales,
   selectOriginsBetween,
   selectSalesPeriods,
   selectSalesReport,
@@ -226,5 +227,68 @@ describe('product performance, by the four boxes', () => {
       units: 1,
       revenue: 188,
     })
+  })
+
+  // A store's best sellers, by the four windows and the page's range.
+  it('gives one store its products, with the page range as the last column', () => {
+    const range = { ...emptyFilter('2026-10-05', today), locationIds: ['pavilion-5'] }
+    const rows = selectSkuSales(data, { locationIds: ['pavilion-5'] }, range)
+    expect(rows.map((r) => r.skuId)).toEqual(['orchid-retail', 'wish-3-set'])
+    expect(rows[0]).toMatchObject({
+      today: { units: 1, revenue: 188 },
+      yesterday: { units: 1, revenue: 188 },
+      monthToDate: { units: 3, revenue: 574 },
+      lastMonth: { units: 3, revenue: 564 },
+      chosen: { units: 6, revenue: 1138 },
+    })
+  })
+})
+
+describe('where the customers came from, by the four boxes', () => {
+  const store = { locationIds: ['pavilion-5'] }
+
+  it('gives each nationality its customers, units and sales in every window', () => {
+    const rows = selectOriginSales(data, store, { ...emptyFilter('2026-10-31', '2026-11-02'), ...store })
+    // Most customers this month first.
+    expect(rows.map((r) => r.countryCode)).toEqual(['CN', 'MY'])
+    expect(rows[0]).toMatchObject({
+      name: 'China',
+      // Today from the counter; 2 Nov is one customer with two things.
+      today: { customers: 1, units: 1, revenue: 188 },
+      yesterday: { customers: 1, units: 2, revenue: 188 },
+      monthToDate: { customers: 3, units: 4, revenue: 574 },
+      lastMonth: { customers: 1, units: 2, revenue: 376 },
+      chosen: { customers: 2, units: 3, revenue: 386 },
+    })
+    expect(rows[1]).toMatchObject({
+      today: { customers: 0, units: 0, revenue: 0 },
+      lastMonth: { customers: 1, units: 1, revenue: 188 },
+      chosen: { customers: 1, units: 1, revenue: 188 },
+    })
+  })
+
+  it('counts the same customers as the boxes, where every sale has a country', () => {
+    const rows = selectOriginSales(data, {}, null)
+    const sum = (k: 'today' | 'yesterday' | 'monthToDate' | 'lastMonth') => rows.reduce((a, r) => a + r[k].customers, 0)
+    const boxes = selectSalesPeriods(data)
+    expect(sum('today')).toBe(boxes.today.customers)
+    expect(sum('yesterday')).toBe(boxes.yesterday.customers)
+    expect(sum('monthToDate')).toBe(boxes.monthToDate.customers)
+    expect(sum('lastMonth')).toBe(boxes.lastMonth.customers)
+    // No dates of the page's own: the last column is empty.
+    expect(rows.every((r) => r.chosen.customers === 0 && r.chosen.units === 0)).toBe(true)
+  })
+
+  it('opens a country by the same rules: today live, and its closing never counted as well', () => {
+    const month = { ...emptyFilter('2026-11-01', today), locationIds: ['klia-t2'] }
+    expect(selectCountryDetail(data, month, 'ID', true)).toMatchObject({ customers: 1, units: 1, revenue: 188 })
+    // As filed, today's closing counts and the counter does not.
+    expect(selectCountryDetail(data, month, 'ID')).toMatchObject({ customers: 2, units: 100 })
+    const live = selectCountryDetail(data, { ...emptyFilter('2026-11-01', today), ...store }, 'CN', true)
+    expect(live).toMatchObject({ customers: 3, units: 4, revenue: 574 })
+    expect(live.skus.map((s) => [s.skuId, s.units])).toEqual([
+      ['orchid-retail', 3],
+      ['wish-3-set', 1],
+    ])
   })
 })
