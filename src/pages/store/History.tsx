@@ -11,7 +11,9 @@ import { HeatCalendar } from '../../components/charts/HeatCalendar'
 import { OriginRibbon } from '../../components/charts/OriginRibbon'
 import { useData } from '../../store/useData'
 import { useCurrentUser } from '../../store/useAuth'
-import { emptyFilter, originSlicesFrom, selectTimeSeries } from '../../store/selectors'
+import { emptyFilter, originSlicesFrom,
+  tallyOrigin,
+  type OriginTally, selectTimeSeries } from '../../store/selectors'
 import { locationById } from '../../data/locations'
 import { lineUnitPrice, skuById, skuLabel, TIER_LABEL, type PriceBasis } from '../../data/products'
 import { addDays, formatDayShort, formatTimestamp } from '../../lib/dates'
@@ -264,14 +266,11 @@ function DayDetail({ day, basis }: { day: Closing; basis: PriceBasis }) {
           <p className="eyebrow mb-2">Countries that day</p>
           <OriginRibbon
             slices={originSlicesFrom(
-              day.lines.reduce((m, l) => {
-                if (!l.countryCode) return m
-                const b = m.get(l.countryCode) ?? { units: 0, revenue: 0 }
-                b.units += l.qty
-                b.revenue += l.qty * lineUnitPrice(l, basis)
-                m.set(l.countryCode, b)
+              // By customer: one sale is one customer (1 November).
+              day.lines.reduce((m, l, i) => {
+                tallyOrigin(m, day.locationId, l, l.qty * lineUnitPrice(l, basis), `${day.id}#${i}`)
                 return m
-              }, new Map<string, { units: number; revenue: number }>()),
+              }, new Map<string, OriginTally>()),
             )}
             height={40}
           />

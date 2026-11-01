@@ -91,6 +91,9 @@ export function Finance() {
   }, [data])
 
   const consignmentTotal = consignmentRows.rows.reduce((a, r) => a + r.revenue, 0)
+  // A keyed-in month has no units behind it, so the total counts those that do.
+  const counted = consignmentRows.rows.filter((r) => r.units !== null)
+  const consignmentUnits = counted.length ? counted.reduce((a, r) => a + (r.units ?? 0), 0) : null
 
   const staffTotal = useMemo(() => {
     const rows = filteredClosings(data, filter)
@@ -208,33 +211,6 @@ export function Finance() {
 
       <SalesReport />
 
-      <div className="grid gap-5 lg:grid-cols-[1.5fr_1fr]">
-        <ChartFrame
-          title="Revenue"
-          meta={`${rm(kpis.current.revenue)} over 30 days`}
-          height={240}
-        >
-          <TrendChart data={trend} format={rmCompact} label="Daily revenue" />
-        </ChartFrame>
-
-        <ChartFrame
-          title="By channel"
-          meta="Main stores, dealers and consignment"
-          height={240}
-          table={<DonutTable slices={channelSlices} format={rm} unitHeader="Revenue" />}
-        >
-          <div className="flex h-full items-center justify-center">
-            <Donut
-              slices={channelSlices}
-              centreLabel="30-day revenue"
-              centreValue={rmCompact(kpis.current.revenue)}
-              format={rm}
-              size={176}
-            />
-          </div>
-        </ChartFrame>
-      </div>
-
       <Panel>
         <PanelHeader
           eyebrow="Consignment"
@@ -297,6 +273,21 @@ export function Finance() {
                   </tr>
                 ))}
               </tbody>
+              <tfoot>
+                <tr className="border-t border-line">
+                  <td className="py-2.5 text-[12.5px] font-semibold text-ink-2">Total</td>
+                  <td className="readout py-2.5 text-right text-[13px] font-semibold text-ink">
+                    {consignmentUnits === null ? '—' : num(consignmentUnits)}
+                  </td>
+                  <td className="readout py-2.5 text-right text-[13px] font-semibold text-ink">
+                    {rm(consignmentTotal)}
+                  </td>
+                  <td />
+                  <td className="py-2.5 text-right text-[11.5px] text-ink-3">
+                    {consignmentRows.rows.filter((r) => r.filed).length} of {consignmentRows.rows.length} reported
+                  </td>
+                </tr>
+              </tfoot>
             </table>
           </div>
         </PanelBody>
@@ -329,6 +320,34 @@ export function Finance() {
           )}
         </PanelBody>
       </Panel>
+
+      {/* The graphs, at the foot of the page (client, 1 November). */}
+      <div className="grid gap-5 lg:grid-cols-[1.5fr_1fr]">
+        <ChartFrame
+          title="Revenue"
+          meta={`${rm(kpis.current.revenue)} over 30 days`}
+          height={240}
+        >
+          <TrendChart data={trend} format={rmCompact} label="Daily revenue" />
+        </ChartFrame>
+
+        <ChartFrame
+          title="By channel"
+          meta="Main stores, dealers and consignment"
+          height={240}
+          table={<DonutTable slices={channelSlices} format={rm} unitHeader="Revenue" />}
+        >
+          <div className="flex h-full items-center justify-center">
+            <Donut
+              slices={channelSlices}
+              centreLabel="30-day revenue"
+              centreValue={rmCompact(kpis.current.revenue)}
+              format={rm}
+              size={176}
+            />
+          </div>
+        </ChartFrame>
+      </div>
     </div>
   )
 }

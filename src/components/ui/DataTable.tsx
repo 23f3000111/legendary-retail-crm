@@ -8,6 +8,11 @@ export interface Column<T> {
   align?: 'left' | 'right'
   width?: string
   render: (row: T) => ReactNode
+  /**
+   * What the column adds up to, at the foot of the table (client, 1 November:
+   * every column of amounts has its total). Columns without one leave it empty.
+   */
+  total?: ReactNode
 }
 
 export function DataTable<T>({
@@ -17,6 +22,7 @@ export function DataTable<T>({
   onRowClick,
   empty,
   dense = false,
+  totalLabel = 'Total',
 }: {
   columns: Column<T>[]
   rows: T[]
@@ -24,8 +30,11 @@ export function DataTable<T>({
   onRowClick?: (row: T) => void
   empty?: ReactNode
   dense?: boolean
+  /** The first cell of the total row, where that column has no total of its own. */
+  totalLabel?: ReactNode
 }) {
   if (!rows.length && empty) return <>{empty}</>
+  const hasTotal = columns.some((c) => c.total !== undefined)
 
   return (
     // Wide tables scroll inside their own panel; the page never scrolls sideways.
@@ -83,6 +92,22 @@ export function DataTable<T>({
             </tr>
           ))}
         </tbody>
+        {hasTotal && (
+          <tfoot>
+            <tr className="border-t border-line">
+              {columns.map((c, i) => (
+                <td
+                  key={c.key}
+                  className={`${dense ? 'py-2' : 'py-2.5'} pr-4 text-[13px] font-semibold last:pr-0 ${
+                    c.align === 'right' ? 'readout text-right text-ink' : 'text-left text-ink-2'
+                  }`}
+                >
+                  {i === 0 && c.total === undefined ? totalLabel : c.total}
+                </td>
+              ))}
+            </tr>
+          </tfoot>
+        )}
       </table>
     </div>
   )

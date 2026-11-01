@@ -15,7 +15,9 @@ import { SaleEditor } from '../../components/SaleEditor'
 import { useData } from '../../store/useData'
 import { useCurrentUser } from '../../store/useAuth'
 import { useToasts } from '../../components/ui/Toast'
-import { originSlicesFrom, selectClosingOutOfStep } from '../../store/selectors'
+import { originSlicesFrom,
+  tallyOrigin,
+  type OriginTally, selectClosingOutOfStep } from '../../store/selectors'
 import { locationById } from '../../data/locations'
 import {
   lineUnitPrice,
@@ -120,17 +122,12 @@ export function Sell() {
   // Filed already, and the sales have moved on since: the closing needs a look.
   const outOfStep = selectClosingOutOfStep(data, locationId)
 
+  // By customer: one sale is one customer, however much they bought (1 November).
   const mix = useMemo(() => {
-    const tally = new Map<string, { units: number; revenue: number }>()
-    for (const l of lines) {
-      if (!l.countryCode) continue
-      const b = tally.get(l.countryCode) ?? { units: 0, revenue: 0 }
-      b.units += l.qty
-      b.revenue += l.qty * lineUnitPrice(l, basis)
-      tally.set(l.countryCode, b)
-    }
+    const tally = new Map<string, OriginTally>()
+    lines.forEach((l, i) => tallyOrigin(tally, locationId, l, l.qty * lineUnitPrice(l, basis), `live#${i}`))
     return originSlicesFrom(tally)
-  }, [lines])
+  }, [lines, locationId])
 
   // A basket line is an item *at a price*, so the same bottle at retail and at
   // promotion sit side by side rather than merging — and two "other" prices

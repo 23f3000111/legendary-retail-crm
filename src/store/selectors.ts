@@ -34,12 +34,13 @@ import {
   priceOfId,
   productById,
   type CollectionId,
+  type PriceBasis,
   type PriceTier,
   type Variant,
 } from '../data/products'
 import { countries } from '../data/countries'
 import { linesDiffer } from '../lib/changes'
-import { addDays, dateRange, daysBetween, monthKey, shiftMonth, spanDays, type DateSpan } from '../lib/dates'
+import { addDays, dateRange, daysBetween, monthKey, shiftMonth, spanDays, startOfMonth, type DateSpan } from '../lib/dates'
 import { effectiveQty, isOpen } from '../lib/po-machine'
 import type { Alert, Closing, CrmData, DateStr, PartnerSales, PurchaseOrder, SaleLine } from '../data/types'
 
@@ -304,65 +305,98 @@ export interface OriginSlice {
   countryCode: string
   name: string
   flag: string
+  /**
+   * Customers of this nationality: one a sale, however much they bought. The
+   * share and the order go by these (client, 1 November: nationality "should
+   * go according to customer amount, not perfume amount").
+   */
+  customers: number
   /** Units bought by this nationality — exact, from the sale lines. */
   units: number
   revenue: number
   share: number
 }
 
-export const originSlicesFrom = (
-  tally: Map<string, { units: number; revenue: number }>,
-  top = 6,
-): OriginSlice[] => {
-  const total = [...tally.values()].reduce((a, b) => a + b.units, 0)
-  const sorted = [...tally.entries()].sort((a, b) => b[1].units - a[1].units)
+/** A nationality's figures as they are counted up: its customers by basket. */
+export interface OriginTally {
+  units: number
+  revenue: number
+  baskets: Set<string>
+}
+
+export const newOriginTally = (): OriginTally => ({ units: 0, revenue: 0, baskets: new Set() })
+
+/** The key that makes one sale one customer. */
+const basketOf = (locationId: string, l: Pick<SaleLine, 'saleId' | 'id'>, fallback: string) =>
+  `${locationId}::${l.saleId ?? l.id ?? fallback}`
+
+export const originSlicesFrom = (tally: Map<string, OriginTally>, top = 6): OriginSlice[] => {
+  const total = [...tally.values()].reduce((a, b) => a + b.baskets.size, 0)
+  const sorted = [...tally.entries()].sort(
+    (a, b) => b[1].baskets.size - a[1].baskets.size || b[1].units - a[1].units || a[0].localeCompare(b[0]),
+  )
   const head = sorted.slice(0, top)
   const tail = sorted.slice(top)
 
-  const slice = (code: string, units: number, revenue: number): OriginSlice => {
+  const slice = (code: string, customers: number, units: number, revenue: number): OriginSlice => {
     const meta = countries.find((c) => c.code === code)
     return {
       countryCode: code,
       name: meta?.name ?? code,
       flag: meta?.flag ?? '🏳️',
+      customers,
       units,
-      revenue: Math.round(revenue),
-      share: total ? (units / total) * 100 : 0,
+      revenue: Math.round(revenue * 100) / 100,
+      share: total ? (customers / total) * 100 : 0,
     }
   }
 
-  const out = head.map(([code, v]) => slice(code, v.units, v.revenue))
+  const out = head.map(([code, v]) => slice(code, v.baskets.size, v.units, v.revenue))
   if (tail.length) {
-    const units = tail.reduce((a, [, v]) => a + v.units, 0)
-    const revenue = tail.reduce((a, [, v]) => a + v.revenue, 0)
-    if (units > 0) {
+    const customers = tail.reduce((a, [, v]) => a + v.baskets.size, 0)
+    if (customers > 0) {
       out.push({
-        countryCode: 'OTHER',
+        ...slice(
+          'OTHER',
+          customers,
+          tail.reduce((a, [, v]) => a + v.units, 0),
+          tail.reduce((a, [, v]) => a + v.revenue, 0),
+        ),
         name: 'Other',
         flag: '🌍',
-        units,
-        revenue: Math.round(revenue),
-        share: total ? (units / total) * 100 : 0,
       })
     }
   }
   return out
 }
 
-/** Units and revenue by nationality across the filtered window. */
+/** Counts one sale line into a nationality's tally. */
+export const tallyOrigin = (
+  tally: Map<string, OriginTally>,
+  locationId: string,
+  l: SaleLine,
+  value: number,
+  fallback: string,
+) => {
+  if (!l.countryCode) return
+  const t = tally.get(l.countryCode) ?? newOriginTally()
+  t.units += l.qty
+  t.revenue += value
+  t.baskets.add(basketOf(locationId, l, fallback))
+  tally.set(l.countryCode, t)
+}
+
+/** Customers, units and revenue by nationality across the filtered window. */
 export const selectOriginMix = (data: CrmData, f: Filter, top = 6): OriginSlice[] => {
   const allowed = skuIdsFor(f)
-  const tally = new Map<string, { units: number; revenue: number }>()
+  const tally = new Map<string, OriginTally>()
 
   for (const c of filteredClosings(data, f)) {
-    for (const line of c.lines) {
-      if (!line.countryCode) continue
-      if (!lineMatches(line, allowed, f)) continue
-      const bucket = tally.get(line.countryCode) ?? { units: 0, revenue: 0 }
-      bucket.units += line.qty
-      bucket.revenue += line.qty * lineUnitPrice(line, basisOf(c.locationId))
-      tally.set(line.countryCode, bucket)
-    }
+    const basis = basisOf(c.locationId)
+    c.lines.forEach((line, i) => {
+      if (!lineMatches(line, allowed, f)) return
+      tallyOrigin(tally, c.locationId, line, line.qty * lineUnitPrice(line, basis), `${c.id}#${i}`)
+    })
   }
 
   return originSlicesFrom(tally, top)
@@ -383,20 +417,15 @@ export const selectOriginsBetween = (
   top = 6,
 ): OriginSlice[] => {
   const basis = basisOf(locationId)
-  const tally = new Map<string, { units: number; revenue: number }>()
-  const count = (line: SaleLine) => {
-    if (!line.countryCode) return
-    const bucket = tally.get(line.countryCode) ?? { units: 0, revenue: 0 }
-    bucket.units += line.qty
-    bucket.revenue += line.qty * lineUnitPrice(line, basis)
-    tally.set(line.countryCode, bucket)
-  }
+  const tally = new Map<string, OriginTally>()
+  const count = (fallback: string) => (line: SaleLine, i: number) =>
+    tallyOrigin(tally, locationId, line, line.qty * lineUnitPrice(line, basis), `${fallback}#${i}`)
   for (const c of data.closings) {
     if (c.locationId !== locationId || c.periodType !== 'day') continue
     if (c.period < from || c.period > to || c.period >= data.today) continue
-    c.lines.forEach(count)
+    c.lines.forEach(count(c.id))
   }
-  if (from <= data.today && data.today <= to) (data.liveLines[locationId] ?? []).forEach(count)
+  if (from <= data.today && data.today <= to) (data.liveLines[locationId] ?? []).forEach(count('live'))
   return originSlicesFrom(tally, top)
 }
 
@@ -410,6 +439,8 @@ export const selectOriginsBetween = (
  */
 export type ReportRule =
   | { id: string; field: 'date'; span: DateSpan }
+  /** Which stores (client, 1 November: "toggle date, store, item and nationality"). */
+  | { id: string; field: 'store'; op: 'equal' | 'not_equal'; locationIds: string[] }
   | { id: string; field: 'item'; op: 'equal' | 'not_equal'; skuIds: string[] }
   | { id: string; field: 'nationality'; op: 'equal' | 'not_equal'; countryCodes: string[] }
 
@@ -438,10 +469,12 @@ export const selectSalesReport = (
   locationId?: string,
 ): { rows: ReportRow[]; units: number; revenue: number; days: { from: DateStr; to: DateStr } | null } => {
   let days: { from: DateStr; to: DateStr } | null = null
+  let stores: Extract<ReportRule, { field: 'store' }> | undefined
   let items: Extract<ReportRule, { field: 'item' }> | undefined
   let nations: Extract<ReportRule, { field: 'nationality' }> | undefined
   for (const r of rules) {
     if (r.field === 'date') days = spanDays(r.span)
+    else if (r.field === 'store' && r.locationIds.length) stores = r
     else if (r.field === 'item' && r.skuIds.length) items = r
     else if (r.field === 'nationality' && r.countryCodes.length) nations = r
   }
@@ -462,7 +495,8 @@ export const selectSalesReport = (
     row.revenue += l.qty * lineUnitPrice(l, basisOf(locationId))
     tally.set(key, row)
   }
-  const here = (id: string) => !locationId || id === locationId
+  const here = (id: string) =>
+    (!locationId || id === locationId) && (!stores || stores.locationIds.includes(id) === (stores.op === 'equal'))
   for (const c of data.closings) {
     if (c.periodType !== 'day' || c.period >= data.today || !inSpan(c.period) || !here(c.locationId)) continue
     for (const l of c.lines) add(c.period, c.locationId, l)
@@ -1171,6 +1205,284 @@ export const selectMonthToDate = (data: CrmData): SalesFigure & { byStore: Store
   }
   const byStore = [...stores.entries()].map(([locationId, f]) => ({ locationId, ...finish(f) }))
   return { ...finish(total), byStore: byStore.sort((a, b) => b.revenue - a.revenue) }
+}
+
+// ── Sales at a glance (client's seventh amendments, 1 November) ─────────────
+
+/** A period's sales, with the days it covers. */
+export interface PeriodSales extends SalesFigure {
+  from: DateStr
+  to: DateStr
+}
+
+/**
+ * Sales in a window, for the four boxes and the stores table. Days that have
+ * ended read what was filed; today, if the window takes it in, reads the
+ * counter live, and its closing is never counted as well. A dealer's or
+ * consignment partner's month keyed in at head office counts as one figure,
+ * where nothing narrows the view to products or countries it cannot answer.
+ */
+const salesIn = (data: CrmData, f: Filter): SalesFigure => {
+  const allowed = skuIdsFor(f)
+  const keyed = keyedMonths(data)
+  const acc = blank()
+  const add = (locationId: string, l: SaleLine, basis: PriceBasis, fallback: string) => {
+    if (!lineMatches(l, allowed, f)) return
+    acc.revenue += l.qty * lineUnitPrice(l, basis)
+    acc.units += l.qty
+    acc.baskets.add(basketOf(locationId, l, fallback))
+  }
+  for (const c of filteredClosings(data, f)) {
+    if (c.period >= data.today) continue
+    if (keyed.size && keyed.has(`${c.locationId}::${monthKey(c.period)}`)) continue
+    const basis = basisOf(c.locationId)
+    c.lines.forEach((l, i) => add(c.locationId, l, basis, `${c.id}#${i}`))
+  }
+  if (!narrowsByProduct(f)) {
+    for (const p of data.partnerSales) {
+      if (inWindow(`${p.month}-01`, f) && locationMatches(p.locationId, f)) acc.revenue += p.revenueMYR
+    }
+  }
+  if (inWindow(data.today, f)) {
+    for (const [locationId, lines] of Object.entries(data.liveLines)) {
+      if (!locationMatches(locationId, f)) continue
+      const basis = basisOf(locationId)
+      lines.forEach((l, i) => add(locationId, l, basis, `live#${i}`))
+    }
+  }
+  return finish(acc)
+}
+
+export interface SalesPeriods {
+  today: PeriodSales
+  yesterday: PeriodSales
+  monthToDate: PeriodSales
+  lastMonth: PeriodSales
+}
+
+/** The four windows the boxes show, as dates. */
+export const salesWindows = (today: DateStr) => {
+  const monthStart = startOfMonth(today)
+  return {
+    today: { from: today, to: today },
+    yesterday: { from: addDays(today, -1), to: addDays(today, -1) },
+    monthToDate: { from: monthStart, to: today },
+    lastMonth: { from: `${shiftMonth(monthKey(today), -1)}-01`, to: addDays(monthStart, -1) },
+  }
+}
+
+/**
+ * The four boxes on every main page (client, 1 November): today's sales,
+ * live; yesterday's, as filed; the month so far; and last month. `base`
+ * narrows them as a page's own filter does — one store, a nationality, a
+ * product — and the dates are always these four.
+ */
+export const selectSalesPeriods = (data: CrmData, base: Partial<Filter> = {}): SalesPeriods => {
+  const w = salesWindows(data.today)
+  const period = (window: { from: DateStr; to: DateStr }): PeriodSales => ({
+    ...window,
+    ...salesIn(data, { ...emptyFilter(window.from, window.to), ...base, from: window.from, to: window.to }),
+  })
+  return {
+    today: period(w.today),
+    yesterday: period(w.yesterday),
+    monthToDate: period(w.monthToDate),
+    lastMonth: period(w.lastMonth),
+  }
+}
+
+export interface StoreSalesRow extends SalesPeriods {
+  locationId: string
+}
+
+/** Every trading location's four figures, for the Stores table. */
+export const selectStoreSales = (data: CrmData): StoreSalesRow[] => {
+  // Each store reads only its own records: sixty stores over months of
+  // closings is otherwise a long walk, four times over.
+  const byStore = new Map<string, Closing[]>()
+  for (const c of data.closings) {
+    const list = byStore.get(c.locationId)
+    if (list) list.push(c)
+    else byStore.set(c.locationId, [c])
+  }
+  return tradingLocations.map((l) => ({
+    locationId: l.id,
+    ...selectSalesPeriods(
+      {
+        ...data,
+        closings: byStore.get(l.id) ?? [],
+        liveLines: { [l.id]: data.liveLines[l.id] ?? [] },
+        partnerSales: data.partnerSales.filter((p) => p.locationId === l.id),
+      },
+      { locationIds: [l.id] },
+    ),
+  }))
+}
+
+// ── One nationality, opened ─────────────────────────────────────────────────
+
+export interface CountryDetail {
+  countryCode: string
+  customers: number
+  units: number
+  revenue: number
+  /** Stores, most customers of this nationality first. */
+  stores: { locationId: string; customers: number; units: number; revenue: number }[]
+  /** Products, most bought by this nationality first. */
+  skus: { skuId: string; label: string; units: number; revenue: number }[]
+}
+
+/**
+ * Everything one nationality bought in a window: which stores they shopped
+ * at, most customers first, and which products, most bought first (client,
+ * 1 November: "which store had the most customers from the country, which
+ * perfume SKU was bought the most from this country").
+ */
+export const selectCountryDetail = (data: CrmData, f: Filter, countryCode: string): CountryDetail => {
+  const allowed = skuIdsFor(f)
+  const total = newOriginTally()
+  const stores = new Map<string, OriginTally>()
+  const products = new Map<string, { units: number; revenue: number }>()
+  for (const c of filteredClosings(data, f)) {
+    const basis = basisOf(c.locationId)
+    c.lines.forEach((l, i) => {
+      if (l.countryCode !== countryCode || !lineMatches(l, allowed, f)) return
+      const value = l.qty * lineUnitPrice(l, basis)
+      const basket = basketOf(c.locationId, l, `${c.id}#${i}`)
+      const store = stores.get(c.locationId) ?? newOriginTally()
+      for (const t of [store, total]) {
+        t.units += l.qty
+        t.revenue += value
+        t.baskets.add(basket)
+      }
+      stores.set(c.locationId, store)
+      const p = products.get(l.skuId) ?? { units: 0, revenue: 0 }
+      p.units += l.qty
+      p.revenue += value
+      products.set(l.skuId, p)
+    })
+  }
+  const sen = (n: number) => Math.round(n * 100) / 100
+  return {
+    countryCode,
+    customers: total.baskets.size,
+    units: total.units,
+    revenue: sen(total.revenue),
+    stores: [...stores.entries()]
+      .map(([locationId, t]) => ({ locationId, customers: t.baskets.size, units: t.units, revenue: sen(t.revenue) }))
+      .sort((a, b) => b.customers - a.customers || b.revenue - a.revenue),
+    skus: [...products.entries()]
+      .map(([skuId, p]) => ({ skuId, label: skuById(skuId)?.label ?? skuId, units: p.units, revenue: sen(p.revenue) }))
+      .sort((a, b) => b.units - a.units || b.revenue - a.revenue),
+  }
+}
+
+// ── The calendar ────────────────────────────────────────────────────────────
+
+/** The lines of one day, store by store: as filed, or today's as they stand. */
+const linesOfDay = (data: CrmData, day: DateStr, locationId?: string): [string, SaleLine[], boolean][] => {
+  const filed = new Set(
+    data.closings.filter((c) => c.period === day && c.periodType === 'day').map((c) => c.locationId),
+  )
+  if (day === data.today) {
+    return Object.entries(data.liveLines)
+      .filter(([id]) => !locationId || id === locationId)
+      .map(([id, lines]) => [id, lines, filed.has(id)])
+  }
+  return data.closings
+    .filter((c) => c.period === day && c.periodType === 'day' && (!locationId || c.locationId === locationId))
+    .map((c) => [c.locationId, c.lines, true])
+}
+
+/**
+ * Each day of a month, up to today, with its sales: what was filed for the
+ * days that have ended, and today as it stands. Days with nothing on record
+ * are left out.
+ */
+export const selectDailySales = (data: CrmData, month: string, locationId?: string): Map<DateStr, SalesFigure> => {
+  const out = new Map<DateStr, SalesFigure>()
+  const days = new Set<DateStr>(
+    data.closings
+      .filter((c) => c.periodType === 'day' && monthKey(c.period) === month && c.period < data.today)
+      .filter((c) => !locationId || c.locationId === locationId)
+      .map((c) => c.period),
+  )
+  if (monthKey(data.today) === month) days.add(data.today)
+  for (const day of [...days].sort()) {
+    const acc = blank()
+    for (const [id, lines] of linesOfDay(data, day, locationId)) {
+      const basis = basisOf(id)
+      lines.forEach((l, i) => {
+        acc.revenue += l.qty * lineUnitPrice(l, basis)
+        acc.units += l.qty
+        acc.baskets.add(basketOf(id, l, `${day}#${i}`))
+      })
+    }
+    if (day !== data.today || acc.baskets.size || acc.units) out.set(day, finish(acc))
+  }
+  return out
+}
+
+export interface DayDetail extends SalesFigure {
+  day: DateStr
+  /** Each store that sold, or filed, that day — best first. */
+  stores: (StoreSales & { filed: boolean })[]
+  /** Each product sold, and which nationalities bought it. */
+  skus: { skuId: string; label: string; units: number; revenue: number; countries: { countryCode: string; units: number }[] }[]
+  /** Each nationality: how many customers, and what they bought. */
+  countries: { countryCode: string; customers: number; units: number; revenue: number }[]
+}
+
+/**
+ * One day, opened from the calendar (client, 1 November): each store's sales,
+ * how many of each product went, and which countries the buyers came from.
+ */
+export const selectDayDetail = (data: CrmData, day: DateStr, locationId?: string): DayDetail => {
+  const total = blank()
+  const stores: DayDetail['stores'] = []
+  const products = new Map<string, { units: number; revenue: number; countries: Map<string, number> }>()
+  const nations = new Map<string, OriginTally>()
+  for (const [id, lines, filed] of linesOfDay(data, day, locationId)) {
+    const basis = basisOf(id)
+    const here = blank()
+    lines.forEach((l, i) => {
+      const value = l.qty * lineUnitPrice(l, basis)
+      const basket = basketOf(id, l, `${day}#${i}`)
+      for (const f of [here, total]) {
+        f.revenue += value
+        f.units += l.qty
+        f.baskets.add(basket)
+      }
+      const p = products.get(l.skuId) ?? { units: 0, revenue: 0, countries: new Map<string, number>() }
+      p.units += l.qty
+      p.revenue += value
+      if (l.countryCode) p.countries.set(l.countryCode, (p.countries.get(l.countryCode) ?? 0) + l.qty)
+      products.set(l.skuId, p)
+      tallyOrigin(nations, id, l, value, `${day}#${i}`)
+    })
+    stores.push({ locationId: id, ...finish(here), filed })
+  }
+  const name = (id: string) => locationById(id)?.shortName ?? id
+  const sen = (n: number) => Math.round(n * 100) / 100
+  return {
+    day,
+    ...finish(total),
+    stores: stores.sort((a, b) => b.revenue - a.revenue || b.units - a.units || name(a.locationId).localeCompare(name(b.locationId))),
+    skus: [...products.entries()]
+      .map(([skuId, p]) => ({
+        skuId,
+        label: skuById(skuId)?.label ?? skuId,
+        units: p.units,
+        revenue: sen(p.revenue),
+        countries: [...p.countries.entries()]
+          .map(([countryCode, units]) => ({ countryCode, units }))
+          .sort((a, b) => b.units - a.units || a.countryCode.localeCompare(b.countryCode)),
+      }))
+      .sort((a, b) => b.revenue - a.revenue || b.units - a.units),
+    countries: [...nations.entries()]
+      .map(([countryCode, t]) => ({ countryCode, customers: t.baskets.size, units: t.units, revenue: sen(t.revenue) }))
+      .sort((a, b) => b.customers - a.customers || b.units - a.units || a.countryCode.localeCompare(b.countryCode)),
+  }
 }
 
 // ── Dealers and consignment, month by month ─────────────────────────────────

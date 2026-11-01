@@ -43,7 +43,9 @@ export function ChartFrame({
    */
   grow?: boolean
 }) {
-  const [showTable, setShowTable] = useState(false)
+  // The figures are the first thing shown, the chart a tap away (client, 1
+  // November: "the primary view must be the figures").
+  const [showTable, setShowTable] = useState(Boolean(table))
 
   return (
     <section className="panel flex flex-col">
@@ -61,14 +63,10 @@ export function ChartFrame({
               onClick={() => setShowTable((s) => !s)}
               aria-pressed={showTable}
               title={showTable ? 'Show the chart' : 'Show the figures'}
-              className={`inline-flex h-7 items-center gap-1.5 rounded-lg border px-2 text-[11px] font-medium transition-colors duration-200 ${
-                showTable
-                  ? 'border-primary/40 bg-primary/10 text-primary'
-                  : 'border-line text-ink-3 hover:text-ink'
-              }`}
+              className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-line px-2 text-[11px] font-medium text-ink-3 transition-colors duration-200 hover:border-primary/40 hover:text-primary"
             >
-              <Icon name="grid" className="h-3 w-3" />
-              Figures
+              <Icon name={showTable ? 'chart' : 'grid'} className="h-3 w-3" />
+              {showTable ? 'Chart' : 'Figures'}
             </button>
           )}
         </div>

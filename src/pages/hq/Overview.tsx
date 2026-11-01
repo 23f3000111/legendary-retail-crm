@@ -1,13 +1,16 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Panel, PanelBody, PanelHeader, Rule } from '../../components/ui/Panel'
 import { Button } from '../../components/ui/Button'
 import { Badge, LiveDot, SeverityBadge } from '../../components/ui/Badge'
-import { StatTile } from '../../components/ui/StatTile'
 import { EmptyState } from '../../components/ui/DataTable'
 import { ProgressBar } from '../../components/ui/Progress'
 import { Icon } from '../../components/ui/icons'
 import { LinkIf } from '../../components/ui/LinkIf'
+import { SalesBoxes } from '../../components/SalesBoxes'
+import { SalesReport } from '../../components/SalesReport'
+import { SalesCalendar } from '../../components/SalesCalendar'
+import { CountryDetailModal } from '../../components/CountryDetail'
 import { ChartFrame } from '../../components/charts/ChartFrame'
 import { Donut, DonutTable, type DonutSlice } from '../../components/charts/Donut'
 import { OriginRibbon, OriginTable } from '../../components/charts/OriginRibbon'
@@ -23,7 +26,6 @@ import {
   partnersKeyed,
   poValue,
   selectClosingFor,
-  selectKpis,
   selectLocationRows,
   selectLocationSparkline,
   selectMonthToDate,
@@ -87,8 +89,9 @@ export function Overview() {
   const capability = useCan()
   const executive = user?.role === 'director'
   const filter = useMemo(() => emptyFilter(addDays(data.today, -29), data.today), [data.today])
+  /** A country opened from "Which countries bought". */
+  const [country, setCountry] = useState<string | null>(null)
 
-  const kpis = useMemo(() => selectKpis(data, filter), [data, filter])
   const mix = useMemo(() => selectOriginMix(data, filter), [data, filter])
   const rows = useMemo(() => selectLocationRows(data, filter), [data, filter])
   const skuRows = useMemo(() => selectSkuPerformance(data, filter), [data, filter])
@@ -164,6 +167,9 @@ export function Overview() {
         </div>
       </div>
 
+      {/* ── The four boxes (client, 1 November) ──────────────────────────── */}
+      <SalesBoxes />
+
       {/* ── The founder's morning three ───────────────────────────────── */}
       {executive && (
         <Panel>
@@ -205,34 +211,6 @@ export function Overview() {
             </ul>
           </PanelBody>
         </Panel>
-      )}
-
-      {/* ── Headline: today, and the month ────────────────────────────── */}
-      {!executive && (
-        <div className="grid grid-cols-2 gap-3 sm:gap-4">
-          <StatTile
-            label="Revenue · today"
-            to={open('/analytics')}
-            value={today.revenue}
-            format={rm}
-            footnote={
-              today.customers
-                ? `so far · ${num(today.customers)} ${today.customers === 1 ? 'customer' : 'customers'}, live`
-                : 'nothing rung up yet today'
-            }
-            tone="violet"
-            icon="chart"
-          />
-          <StatTile
-            label="Units sold · month to date"
-            to={open('/analytics')}
-            value={monthToDate.units}
-            format={(n) => num(Math.round(n))}
-            footnote={`since ${formatDate(startOfMonth(data.today))}`}
-            tone="blue"
-            icon="box"
-          />
-        </div>
       )}
 
       {/* ── The founder's short list ──────────────────────────────────── */}
@@ -324,9 +302,9 @@ export function Overview() {
       {!executive && (
         <ChartFrame
           title="Best sellers"
-          meta="By revenue over the last 30 days, coloured by collection"
+          meta="The top 12 by revenue over the last 30 days. The chart colours them by collection."
           height={230}
-          table={<SkuTable rows={skuRows.slice(0, 12)} />}
+          table={<SkuTable rows={skuRows.slice(0, 12)} totalLabel={skuRows.length > 12 ? 'Top 12 total' : 'Total'} />}
         >
           <SkuBars rows={skuRows.slice(0, 8)} />
         </ChartFrame>
@@ -336,10 +314,10 @@ export function Overview() {
       {!executive && (
         <ChartFrame
           title="Which countries bought"
-          meta={`${num(kpis.current.attributedUnits)} units with a country recorded, last 30 days`}
+          meta={`${num(mix.reduce((a, s) => a + s.customers, 0))} customers with a country recorded, last 30 days. Tap a country to open it.`}
           height={110}
-          note="Recorded against every sale in the main stores. Dealers and consignment partners do not capture nationality, so they are not represented here."
-          table={<OriginTable slices={mix} />}
+          note="Counted by customer: one sale is one customer, however much they bought. Recorded against every sale in the main stores; dealers and consignment partners do not capture nationality."
+          table={<OriginTable slices={mix} onSelect={setCountry} />}
         >
           <div className="flex h-full items-center">
             <div className="w-full">
@@ -372,14 +350,20 @@ export function Overview() {
                 .filter((l) => l.channel === 'main')
                 .map((l) => {
                   const s = today.byStore.find((x) => x.locationId === l.id)
+                  // Yesterday's closing, on top of the box (client, 1 November).
+                  const filed = selectClosingFor(data, l.id, yesterday)
                   return {
                     locationId: l.id,
                     name: l.shortName,
                     place: l.region,
                     revenue: s?.revenue ?? 0,
+                    above: filed
+                      ? { label: `Yesterday · ${rm(filed.revenueMYR)}`, warn: false }
+                      : { label: 'Yesterday · not filed', warn: true },
+                    tiebreak: filed?.revenueMYR ?? 0,
                     detail: s
-                      ? `${num(s.units)} ${s.units === 1 ? 'unit' : 'units'} · ${num(s.customers)} ${s.customers === 1 ? 'customer' : 'customers'}`
-                      : 'nothing yet today',
+                      ? `Today · ${num(s.units)} ${s.units === 1 ? 'unit' : 'units'} · ${num(s.customers)} ${s.customers === 1 ? 'customer' : 'customers'}`
+                      : 'Today · nothing yet',
                   }
                 })}
             />
@@ -448,6 +432,11 @@ export function Overview() {
         </Panel>
       )}
 
+      {/* ── The counter, and the calendar (client, 1 November) ─────────── */}
+      {/* The founder's too: "the owner wants to export as he likes". */}
+      <SalesReport />
+      <SalesCalendar />
+
       {/* ── Supply ────────────────────────────────────────────────────── */}
       {!executive && (
         <Panel>
@@ -500,6 +489,15 @@ export function Overview() {
             )}
           </PanelBody>
         </Panel>
+      )}
+
+      {country && (
+        <CountryDetailModal
+          countryCode={country}
+          filter={filter}
+          when="Last 30 days"
+          onClose={() => setCountry(null)}
+        />
       )}
 
       {notFiled.length > 0 && capability.canEdit && (
@@ -597,9 +595,19 @@ function Ranking({
   rows,
 }: {
   title: string
-  rows: { locationId: string; name: string; place: string; revenue: number; detail: string }[]
+  rows: {
+    locationId: string
+    name: string
+    place: string
+    revenue: number
+    detail: string
+    /** A line on top of the box: yesterday's closing, for the main stores. */
+    above?: { label: string; warn: boolean }
+    /** What decides the order when two figures are the same. */
+    tiebreak?: number
+  }[]
 }) {
-  const top = [...rows].sort((a, b) => b.revenue - a.revenue).slice(0, 9)
+  const top = [...rows].sort((a, b) => b.revenue - a.revenue || (b.tiebreak ?? 0) - (a.tiebreak ?? 0)).slice(0, 9)
   return (
     <div>
       <p className="eyebrow mb-2">{title}</p>
@@ -610,8 +618,15 @@ function Ranking({
                 right, so three leagues of nine are not a scroll of 27 cards. */}
             <Link
               to={`/stores/${r.locationId}`}
-              className="group flex items-start gap-3 rounded-xl border border-line bg-surface-2 px-3.5 py-3 transition-all duration-200 hover:border-primary/45 hover:shadow-glass sm:block"
+              className="group flex flex-wrap items-start gap-x-3 rounded-xl border border-line bg-surface-2 px-3.5 py-3 transition-all duration-200 hover:border-primary/45 hover:shadow-glass sm:block"
             >
+              {r.above && (
+                <p
+                  className={`readout mb-1.5 basis-full text-[11px] font-semibold ${r.above.warn ? 'text-warn' : 'text-ink-2'}`}
+                >
+                  {r.above.label}
+                </p>
+              )}
               <div className="flex min-w-0 flex-1 items-start gap-2">
                 <span className="readout mt-0.5 w-4 shrink-0 text-[11px] text-ink-3">{i + 1}</span>
                 <div className="min-w-0 flex-1">

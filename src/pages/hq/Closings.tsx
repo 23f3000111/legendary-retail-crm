@@ -10,6 +10,7 @@ import { Modal } from '../../components/ui/Modal'
 import { ChangeList } from '../../components/ui/Notice'
 import { Icon } from '../../components/ui/icons'
 import { Sparkline } from '../../components/charts/Sparkline'
+import { SalesBoxes } from '../../components/SalesBoxes'
 import { useData } from '../../store/useData'
 import { useCan, useCurrentUser } from '../../store/useAuth'
 import { useToasts } from '../../components/ui/Toast'
@@ -79,10 +80,6 @@ export function Closings() {
   const trading = stores.filter((s) => startedOn(s.id) !== undefined)
   const filedYesterday = stores.filter((s) => filed(s.id, yesterday)).length
   const expectedYesterday = stores.filter((s) => expected(s.id, yesterday)).length
-  const revenueYesterday = stores.reduce(
-    (a, s) => a + (filed(s.id, yesterday)?.revenueMYR ?? 0),
-    0,
-  )
   const gaps = stores.reduce(
     (a, s) => a + days.filter((d) => expected(s.id, d) && !filed(s.id, d)).length,
     0,
@@ -138,7 +135,10 @@ export function Closings() {
         />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      {/* The same four boxes as the Overview, Stores and Analytics (client, 1 November). */}
+      <SalesBoxes />
+
+      <div className="grid gap-4 sm:grid-cols-2">
         <StatTile
           label="Filed yesterday"
           value={filedYesterday}
@@ -152,13 +152,6 @@ export function Closings() {
           }
           tone="violet"
           icon="clipboard"
-        />
-        <StatTile
-          label="Revenue filed yesterday"
-          value={revenueYesterday}
-          format={rm}
-          tone="blue"
-          icon="wallet"
         />
         <StatTile
           label={`Gaps in ${TRAIL} days`}
@@ -354,6 +347,29 @@ export function Closings() {
                     )
                   })}
                 </tbody>
+                {/* Each day's count of stores in, and yesterday's takings (client, 1 November). */}
+                <tfoot>
+                  <tr className="border-t border-line">
+                    <td className="py-2 pr-3 text-[12.5px] font-semibold text-ink-2">Total</td>
+                    {days.map((d) => {
+                      const due = stores.filter((s) => expected(s.id, d)).length
+                      const done = stores.filter((s) => filed(s.id, d)).length
+                      return (
+                        <td
+                          key={d}
+                          title={`${formatDateShort(d)} · ${done} of ${due} filed`}
+                          className={`readout py-2 text-center text-[10px] ${done < due ? 'text-critical' : 'text-ink-3'}`}
+                        >
+                          {due ? `${done}/${due}` : ''}
+                        </td>
+                      )
+                    })}
+                    <td />
+                    <td className="readout py-2 text-right text-[12.5px] font-semibold text-ink">
+                      {rm(stores.reduce((a, s) => a + (filed(s.id, yesterday)?.revenueMYR ?? 0), 0))}
+                    </td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
           )}

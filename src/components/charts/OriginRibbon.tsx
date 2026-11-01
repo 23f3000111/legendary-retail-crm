@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { seriesColor, OTHER, INK } from './palette'
-import { num } from '../../lib/format'
+import { num, rm } from '../../lib/format'
 import { Flag } from '../ui/Flag'
 import type { OriginSlice } from '../../store/selectors'
 
@@ -27,7 +27,8 @@ export function OriginRibbon({
   showLabels?: boolean
 }) {
   const [hovered, setHovered] = useState<string | null>(null)
-  const total = slices.reduce((a, s) => a + s.units, 0)
+  // By customer, not by bottle (client, 1 November).
+  const total = slices.reduce((a, s) => a + s.customers, 0)
 
   if (!total) {
     return (
@@ -35,7 +36,7 @@ export function OriginRibbon({
         className="flex items-center justify-center rounded-xl border border-dashed border-line text-[12px] text-ink-3"
         style={{ height }}
       >
-        No sales recorded yet today
+        No customers recorded for these days
       </div>
     )
   }
@@ -60,12 +61,12 @@ export function OriginRibbon({
               key={s.countryCode}
               className="relative flex min-w-0 cursor-default items-center justify-center first:rounded-l-xl last:rounded-r-xl"
               initial={{ flexGrow: 0 }}
-              animate={{ flexGrow: s.units, opacity: dim ? 0.35 : 1 }}
+              animate={{ flexGrow: s.customers, opacity: dim ? 0.35 : 1 }}
               transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
               style={{ background: colour, flexBasis: 0 }}
               onMouseEnter={() => setHovered(s.countryCode)}
               onMouseLeave={() => setHovered(null)}
-              title={`${s.name} · ${num(s.units)} units · ${s.share.toFixed(1)}%`}
+              title={`${s.name} · ${num(s.customers)} ${s.customers === 1 ? 'customer' : 'customers'} · ${num(s.units)} units · ${s.share.toFixed(1)}%`}
             >
               {roomForLabel && (
                 <span className="flex items-center gap-1 truncate px-2 text-[11px] font-semibold text-white">
@@ -95,7 +96,9 @@ export function OriginRibbon({
               <Flag code={s.countryCode} size={14} fallback={s.flag} />
               {s.name}
             </span>
-            <span className="readout text-[11px] text-ink-3">{num(s.units)}</span>
+            <span className="readout text-[11px] text-ink-3" title={`${num(s.customers)} customers`}>
+              {num(s.customers)}
+            </span>
           </li>
         ))}
       </ul>
@@ -103,14 +106,24 @@ export function OriginRibbon({
   )
 }
 
-/** The same figures as a table, for the chart frame's "Figures" view. */
-export function OriginTable({ slices }: { slices: OriginSlice[] }) {
-  const total = slices.reduce((a, s) => a + s.units, 0)
+/**
+ * The same figures as a table: customers first, then what they bought and
+ * what it came to (client, 1 November), with a total at the foot of every
+ * column. With `onSelect`, a country opens its own breakdown.
+ */
+export function OriginTable({
+  slices,
+  onSelect,
+}: {
+  slices: OriginSlice[]
+  onSelect?: (countryCode: string) => void
+}) {
+  const total = (k: 'customers' | 'units' | 'revenue') => slices.reduce((a, s) => a + s[k], 0)
   return (
     <table className="w-full border-collapse">
       <thead>
         <tr className="border-b border-line">
-          {['Origin', 'Units', 'Share'].map((h, i) => (
+          {['Origin', 'Customers', 'Units', 'Sales', 'Share'].map((h, i) => (
             <th
               key={h}
               scope="col"
@@ -124,29 +137,57 @@ export function OriginTable({ slices }: { slices: OriginSlice[] }) {
         </tr>
       </thead>
       <tbody>
-        {slices.map((s, i) => (
-          <tr key={s.countryCode} className="border-b border-line/70 last:border-0">
-            <td className="py-1.5 text-[12.5px] text-ink">
-              <span className="flex items-center gap-2">
-                <span
-                  className="inline-block h-2.5 w-2.5 shrink-0 rounded-[3px]"
-                  style={{ background: s.countryCode === 'OTHER' ? OTHER : seriesColor(i) }}
-                />
-                <Flag code={s.countryCode} size={16} fallback={s.flag} />
-                {s.name}
-              </span>
-            </td>
-            <td className="readout py-1.5 text-right text-[12.5px] text-ink">
-              {num(s.units)}
-            </td>
-            <td className="readout py-1.5 text-right text-[12.5px] text-ink-2">
-              {s.share.toFixed(1)}%
-            </td>
-          </tr>
-        ))}
+        {slices.map((s, i) => {
+          const name = (
+            <span className="flex items-center gap-2">
+              <span
+                className="inline-block h-2.5 w-2.5 shrink-0 rounded-[3px]"
+                style={{ background: s.countryCode === 'OTHER' ? OTHER : seriesColor(i) }}
+              />
+              <Flag code={s.countryCode} size={16} fallback={s.flag} />
+              {s.name}
+            </span>
+          )
+          // The whole row takes the tap, which is kinder on a phone; the name
+          // stays a button for the keyboard.
+          const opens = Boolean(onSelect) && s.countryCode !== 'OTHER'
+          return (
+            <tr
+              key={s.countryCode}
+              onClick={opens ? () => onSelect?.(s.countryCode) : undefined}
+              className={`border-b border-line/70 last:border-0 ${opens ? 'cursor-pointer transition-colors hover:bg-primary/5' : ''}`}
+            >
+              <td className="py-1.5 text-[12.5px] text-ink">
+                {onSelect && opens ? (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onSelect(s.countryCode)
+                    }}
+                    className="group flex items-center gap-1 text-left hover:text-primary"
+                    title={`Open ${s.name}: its stores and products`}
+                  >
+                    {name}
+                    <span className="text-ink-3 transition-transform group-hover:translate-x-0.5 group-hover:text-primary">
+                      ›
+                    </span>
+                  </button>
+                ) : (
+                  name
+                )}
+              </td>
+              <td className="readout py-1.5 text-right text-[12.5px] font-semibold text-ink">{num(s.customers)}</td>
+              <td className="readout py-1.5 text-right text-[12.5px] text-ink-2">{num(s.units)}</td>
+              <td className="readout py-1.5 text-right text-[12.5px] text-ink">{rm(s.revenue)}</td>
+              <td className="readout py-1.5 text-right text-[12.5px] text-ink-2">{s.share.toFixed(1)}%</td>
+            </tr>
+          )
+        })}
         <tr className="border-t border-line">
-          <td className="py-1.5 text-[12.5px] text-ink-2">Total</td>
-          <td className="readout py-1.5 text-right text-[12.5px] text-ink">{num(total)}</td>
+          <td className="py-1.5 text-[12.5px] font-semibold text-ink-2">Total</td>
+          <td className="readout py-1.5 text-right text-[12.5px] font-semibold text-ink">{num(total('customers'))}</td>
+          <td className="readout py-1.5 text-right text-[12.5px] text-ink">{num(total('units'))}</td>
+          <td className="readout py-1.5 text-right text-[12.5px] font-semibold text-ink">{rm(total('revenue'))}</td>
           <td className="readout py-1.5 text-right text-[12.5px] text-ink-2">100.0%</td>
         </tr>
       </tbody>

@@ -65,6 +65,7 @@ export function StatTile({
   to,
   onClick,
   active,
+  fit = false,
 }: {
   label: string
   value: number
@@ -80,6 +81,11 @@ export function StatTile({
   onClick?: () => void
   /** A tile used as a filter, showing it is the one chosen. */
   active?: boolean
+  /**
+   * Two to a row on a phone: the figure shrinks with the screen so that a
+   * seven-figure amount stays on one line.
+   */
+  fit?: boolean
 }) {
   const shown = useCountUp(value)
   const toned = tone !== 'plain'
@@ -117,7 +123,9 @@ export function StatTile({
       </div>
 
       <p
-        className={`readout relative mt-2 font-display text-[26px] font-semibold leading-none tracking-tight ${
+        className={`readout relative mt-2 font-display font-semibold leading-none tracking-tight ${
+          fit ? 'whitespace-nowrap text-[length:clamp(17px,5.1vw,26px)]' : 'text-[26px]'
+        } ${
           toned ? 'text-white' : 'text-ink'
         }`}
       >

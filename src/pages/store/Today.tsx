@@ -15,6 +15,8 @@ import { useCurrentUser } from '../../store/useAuth'
 import {
   emptyFilter,
   originSlicesFrom,
+  tallyOrigin,
+  type OriginTally,
   selectClosingFor,
   selectClosingOutOfStep,
   selectKpis,
@@ -66,16 +68,11 @@ export function Today() {
 
   const todayMix = useMemo(() => {
     const source = closedToday ? closedToday.lines : lines
-    const tally = new Map<string, { units: number; revenue: number }>()
-    for (const l of source) {
-      if (!l.countryCode) continue
-      const b = tally.get(l.countryCode) ?? { units: 0, revenue: 0 }
-      b.units += l.qty
-      b.revenue += l.qty * lineUnitPrice(l, basis)
-      tally.set(l.countryCode, b)
-    }
+    // By customer: one sale is one customer, however much they bought (1 November).
+    const tally = new Map<string, OriginTally>()
+    source.forEach((l, i) => tallyOrigin(tally, locationId, l, l.qty * lineUnitPrice(l, basis), `today#${i}`))
     return originSlicesFrom(tally)
-  }, [closedToday, lines])
+  }, [closedToday, lines, locationId])
 
   if (!location || !user) return null
 

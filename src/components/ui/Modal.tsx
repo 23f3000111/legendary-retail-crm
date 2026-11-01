@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import type { ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { IconButton } from './Button'
@@ -33,7 +34,10 @@ export function Modal({
     }
   }, [open, onClose])
 
-  return (
+  // Into the page's body, not where it was opened: a panel's frosted glass
+  // (backdrop-filter) would otherwise hold the dialog and its shade inside the
+  // panel, wherever the page happens to be scrolled.
+  return createPortal(
     <AnimatePresence>
       {open && (
         <div className="no-print fixed inset-0 z-[60] flex items-center justify-center p-4">
@@ -74,6 +78,7 @@ export function Modal({
           </motion.div>
         </div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   )
 }

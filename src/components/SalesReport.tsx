@@ -2,13 +2,16 @@ import { useMemo, useState } from 'react'
 import { Panel, PanelBody, PanelHeader, Rule } from './ui/Panel'
 import { Button } from './ui/Button'
 import { Icon } from './ui/icons'
-import { DataTable, EmptyState, type Column } from './ui/DataTable'
+import { EmptyState } from './ui/DataTable'
+import { FiguresTable } from './ui/FiguresTable'
+import { useToasts } from './ui/Toast'
 import { Select } from './ui/Field'
 import { Flag } from './ui/Flag'
 import { DateSpanInput } from './DateSpanInput'
 import { useData } from '../store/useData'
 import { selectSalesReport, type ReportRow, type ReportRule } from '../store/selectors'
-import { locationById } from '../data/locations'
+import { CHANNEL_PLURAL, locationById, tradingLocations } from '../data/locations'
+import { openPrintReport } from '../lib/printReport'
 import { countriesAlphabetical, countryByCode } from '../data/countries'
 import { products, skuLabel, skus } from '../data/products'
 import { addDays, formatDate, spanLabel } from '../lib/dates'
@@ -18,18 +21,31 @@ import { num, rm } from '../lib/format'
 
 const FIELD_LABEL: Record<ReportRule['field'], string> = {
   date: 'Business date',
+  store: 'Store',
   item: 'Item',
   nationality: 'Nationality',
 }
 
-const FIELDS: ReportRule['field'][] = ['date', 'item', 'nationality']
+const ALL_FIELDS: ReportRule['field'][] = ['date', 'store', 'item', 'nationality']
 
 const blankRule = (field: ReportRule['field'], yesterday: string): ReportRule =>
   field === 'date'
     ? { id: newId(), field, span: { op: 'equal', from: yesterday, to: yesterday } }
-    : field === 'item'
-      ? { id: newId(), field, op: 'equal', skuIds: [] }
-      : { id: newId(), field, op: 'equal', countryCodes: [] }
+    : field === 'store'
+      ? { id: newId(), field, op: 'equal', locationIds: [] }
+      : field === 'item'
+        ? { id: newId(), field, op: 'equal', skuIds: [] }
+        : { id: newId(), field, op: 'equal', countryCodes: [] }
+
+/** A rule in words, for the PDF report: "Store equal KLIA T2, BSAS". */
+const ruleInWords = (r: ReportRule): string | null => {
+  const list = (op: 'equal' | 'not_equal', names: string[]) =>
+    names.length ? `${FIELD_LABEL[r.field]} ${op === 'equal' ? 'is' : 'is not'} ${names.join(', ')}` : null
+  if (r.field === 'store') return list(r.op, r.locationIds.map((id) => locationById(id)?.shortName ?? id))
+  if (r.field === 'item') return list(r.op, r.skuIds.map((id) => skuLabel(id)))
+  if (r.field === 'nationality') return list(r.op, r.countryCodes.map((c) => countryByCode(c)?.name ?? c))
+  return null
+}
 
 /**
  * The sales report: every store, day by day — or, on a store's own page, that
@@ -43,7 +59,10 @@ const blankRule = (field: ReportRule['field'], yesterday: string): ReportRule =>
  */
 export function SalesReport({ locationId }: { locationId?: string } = {}) {
   const data = useData()
+  const push = useToasts((s) => s.push)
   const yesterday = addDays(data.today, -1)
+  // On one store's own page there is no store to choose.
+  const FIELDS = locationId ? ALL_FIELDS.filter((f) => f !== 'store') : ALL_FIELDS
   const [rules, setRules] = useState<ReportRule[]>(() => FIELDS.map((f) => blankRule(f, yesterday)))
   const store = locationId ? locationById(locationId) : undefined
 
@@ -57,53 +76,52 @@ export function SalesReport({ locationId }: { locationId?: string } = {}) {
 
   const when = report.days ? spanLabel(report.days) : 'Every day on record'
 
-  const columns: Column<ReportRow>[] = [
-    {
-      key: 'day',
-      header: 'Business date',
-      width: '140px',
-      render: (r) => <span className="readout text-[12.5px] text-ink">{formatDate(r.day)}</span>,
-    },
-    // On a store's own page every row is that store: no column for it.
-    ...(locationId
-      ? []
-      : [
-          {
-            key: 'store',
-            header: 'Store',
-            render: (r: ReportRow) => {
-              const l = locationById(r.locationId)
-              return (
-                <div className="min-w-0">
-                  <p className="truncate text-[13px] leading-tight text-ink">{l?.name ?? r.locationId}</p>
-                  <p className="readout text-[10.5px] text-ink-3">{l?.code}</p>
-                </div>
-              )
-            },
-          },
-        ]),
-    {
-      key: 'units',
-      header: 'Units',
-      align: 'right',
-      width: '90px',
-      render: (r) => <span className="readout text-[12.5px] text-ink-2">{num(r.units)}</span>,
-    },
-    {
-      key: 'revenue',
-      header: 'Revenue',
-      align: 'right',
-      width: '130px',
-      render: (r) => <span className="readout text-[12.5px] font-semibold text-ink">{rm(r.revenue)}</span>,
-    },
-  ]
+  const tag = report.days
+    ? report.days.from === report.days.to
+      ? report.days.from
+      : `${report.days.from}-to-${report.days.to}`
+    : 'all-dates'
+
+  // The same report, designed, for printing or saving as a PDF (1 November).
+  const printReport = () => {
+    const byDay = new Map<string, number>()
+    for (const r of report.rows) byDay.set(r.day, (byDay.get(r.day) ?? 0) + r.revenue)
+    const byStore = new Map<string, number>()
+    for (const r of report.rows) byStore.set(r.locationId, (byStore.get(r.locationId) ?? 0) + r.revenue)
+    // One store, or one day: the bars go the other way.
+    const bars =
+      store || byDay.size > 1
+        ? [...byDay.entries()].map(([day, value]) => ({ label: formatDate(day), value, display: rm(value) }))
+        : [...byStore.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .map(([id, value]) => ({ label: locationById(id)?.shortName ?? id, value, display: rm(value) }))
+    const days = new Set(report.rows.map((r) => r.day)).size
+    const ok = openPrintReport({
+      title: `Sales report${store ? ` · ${store.name}` : ''}`,
+      subtitle: report.days ? spanLabel(report.days) : 'Every day on record',
+      boxes: [
+        { label: 'Sales', value: rm(report.revenue) },
+        { label: 'Units', value: num(report.units) },
+        { label: store ? 'Days' : 'Stores', value: num(store ? days : byStore.size) },
+        { label: 'Per day', value: rm(days ? report.revenue / days : 0), note: `${num(days)} ${days === 1 ? 'day' : 'days'}` },
+      ],
+      rules: rules.map(ruleInWords).filter((r): r is string => Boolean(r)),
+      chart: { title: byDay.size > 1 || store ? 'Sales by day' : 'Sales by store', bars },
+      table: {
+        headers: store ? ['Business date', 'Units', 'Revenue'] : ['Business date', 'Store', 'Units', 'Revenue'],
+        right: store ? [false, true, true] : [false, false, true, true],
+        rows: report.rows.map((r) =>
+          store
+            ? [formatDate(r.day), num(r.units), rm(r.revenue)]
+            : [formatDate(r.day), locationById(r.locationId)?.name ?? r.locationId, num(r.units), rm(r.revenue)],
+        ),
+        total: store ? ['Total', num(report.units), rm(report.revenue)] : ['Total', '', num(report.units), rm(report.revenue)],
+      },
+    })
+    if (!ok) push('The report could not open: allow pop-ups for this site, then try again.', 'critical')
+  }
 
   const exportReport = () => {
-    const tag = report.days
-      ? report.days.from === report.days.to
-        ? report.days.from
-        : `${report.days.from}-to-${report.days.to}`
-      : 'all-dates'
     downloadCsv(
       `legendary-sales-report-${store ? `${store.code}-` : ''}${tag}.csv`,
       ['Business date', 'Store', 'Store code', 'Units', 'Revenue MYR'],
@@ -133,9 +151,14 @@ export function SalesReport({ locationId }: { locationId?: string } = {}) {
               : ''
         }`}
         action={
-          <Button size="sm" variant="secondary" icon="download" onClick={exportReport} disabled={!report.rows.length}>
-            Export
-          </Button>
+          <div className="flex flex-wrap gap-1.5">
+            <Button size="sm" variant="secondary" icon="download" onClick={exportReport} disabled={!report.rows.length}>
+              CSV
+            </Button>
+            <Button size="sm" variant="primary" icon="printer" onClick={printReport} disabled={!report.rows.length}>
+              PDF report
+            </Button>
+          </div>
         }
       />
       <Rule />
@@ -154,6 +177,30 @@ export function SalesReport({ locationId }: { locationId?: string } = {}) {
                     value={rule.span}
                     onChange={(span) => update(rule.id, { ...rule, span })}
                     max={data.today}
+                  />
+                ) : rule.field === 'store' ? (
+                  <ChoiceRule
+                    op={rule.op}
+                    onOp={(op) => update(rule.id, { ...rule, op })}
+                    chosen={rule.locationIds}
+                    onChosen={(locationIds) => update(rule.id, { ...rule, locationIds })}
+                    noun="store"
+                    label={(id) => locationById(id)?.shortName ?? id}
+                    options={
+                      <>
+                        {(['main', 'dealer', 'consignment'] as const).map((channel) => (
+                          <optgroup key={channel} label={CHANNEL_PLURAL[channel]}>
+                            {tradingLocations
+                              .filter((l) => l.channel === channel)
+                              .map((l) => (
+                                <option key={l.id} value={l.id} disabled={rule.locationIds.includes(l.id)}>
+                                  {l.name}
+                                </option>
+                              ))}
+                          </optgroup>
+                        ))}
+                      </>
+                    }
                   />
                 ) : rule.field === 'item' ? (
                   <ChoiceRule
@@ -217,7 +264,9 @@ export function SalesReport({ locationId }: { locationId?: string } = {}) {
             </div>
           ))}
           {rules.length === 0 && (
-            <p className="px-1 py-2 text-[12.5px] text-ink-3">No rules: every day, every item, every nationality.</p>
+            <p className="px-1 py-2 text-[12.5px] text-ink-3">
+              No rules: every day, {store ? '' : 'every store, '}every item, every nationality.
+            </p>
           )}
           {missing.length > 0 && (
             <div className="flex flex-wrap items-center gap-2 px-1 pt-1">
@@ -238,22 +287,43 @@ export function SalesReport({ locationId }: { locationId?: string } = {}) {
           <p className="readout text-[15px] font-semibold text-ink">{rm(report.revenue)}</p>
         </div>
 
-        {/* A month of every store is a long list: it scrolls in its own box, and the export has it all. */}
-        <div className="max-h-[560px] overflow-y-auto rounded-xl border border-line px-3 sm:px-4">
-        <DataTable
-          columns={columns}
-          rows={report.rows}
-          rowKey={(r) => `${r.day}::${r.locationId}`}
-          dense
-          empty={
-            <EmptyState
-              icon="filter"
-              title="Nothing for these rules"
-              body={`${store ? 'This store' : 'No store'} sold ${store ? 'nothing' : 'anything'} the rules allow on these dates. Widen the dates, or delete a rule.`}
+        {/* A month of every store is a long list: it scrolls in its own box, the
+            total at its foot, and the export has it all. */}
+        {report.rows.length ? (
+          <div className="max-h-[560px] overflow-y-auto rounded-xl border border-line px-3 py-2 sm:px-4">
+            <FiguresTable
+              rows={report.rows}
+              rowKey={(r) => `${r.day}::${r.locationId}`}
+              columns={[
+                { header: 'Business date', render: (r) => <span className="readout">{formatDate(r.day)}</span> },
+                ...(locationId
+                  ? []
+                  : [
+                      {
+                        header: 'Store',
+                        render: (r: ReportRow) => {
+                          const l = locationById(r.locationId)
+                          return (
+                            <span className="flex flex-col">
+                              <span className="leading-tight">{l?.name ?? r.locationId}</span>
+                              <span className="readout text-[10.5px] text-ink-3">{l?.code}</span>
+                            </span>
+                          )
+                        },
+                      },
+                    ]),
+                { header: 'Units', align: 'right', render: (r) => num(r.units), total: num(report.units) },
+                { header: 'Revenue', align: 'right', render: (r) => rm(r.revenue), total: rm(report.revenue) },
+              ]}
             />
-          }
-        />
-        </div>
+          </div>
+        ) : (
+          <EmptyState
+            icon="filter"
+            title="Nothing for these rules"
+            body={`${store ? 'This store' : 'No store'} sold ${store ? 'nothing' : 'anything'} the rules allow on these dates. Widen the dates, or delete a rule.`}
+          />
+        )}
       </PanelBody>
     </Panel>
   )

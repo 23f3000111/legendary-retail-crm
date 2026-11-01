@@ -35,6 +35,31 @@ const RANGES: { value: RangeKey; label: string }[] = [
 const VARIANTS: Variant[] = ['retail', 'set', 'travel', 'vial', 'tester']
 
 /**
+ * What the filter narrows to, in words: the bar's own summary line, the line
+ * over the sales boxes, and the rules on the PDF report.
+ */
+export const filterInWords = (filter: Filter): string[] => {
+  const names = <T,>(list: T[], name: (v: T) => string | undefined) =>
+    list.map(name).filter(Boolean).join(', ')
+  // The product chips choose every size of a product at once, so the words
+  // name the products rather than counting their sizes.
+  const productIds = [...new Set(filter.skuIds.map((id) => skus.find((s) => s.id === id)?.productId))]
+  return [
+    names(filter.channels, (c) => CHANNEL_PLURAL[c]),
+    filter.locationIds.length === 1
+      ? (locations.find((l) => l.id === filter.locationIds[0])?.shortName ?? '1 store')
+      : filter.locationIds.length
+        ? `${filter.locationIds.length} stores`
+        : '',
+    filter.regions.join(', '),
+    names(filter.collectionIds, (id) => collections.find((c) => c.id === id)?.name),
+    names(productIds, (id) => products.find((p) => p.id === id)?.name),
+    names(filter.variants, (v) => VARIANT_LABEL[v]),
+    names(filter.countryCodes, (code) => countries.find((x) => x.code === code)?.name),
+  ].filter(Boolean)
+}
+
+/**
  * One control surface for the whole page. Every panel below reads the same
  * filter, so a change here moves everything at once rather than leaving one
  * chart disagreeing with its neighbour.
@@ -108,7 +133,6 @@ export function FilterBar({
         <div>
           <p className="eyebrow mb-1.5">Period</p>
           <SegmentedControl<RangeKey>
-            size="sm"
             value={activeRange ?? '30'}
             onChange={setRange}
             options={RANGES}
@@ -120,7 +144,6 @@ export function FilterBar({
         <div>
           <p className="eyebrow mb-1.5">Measure</p>
           <SegmentedControl<Metric>
-            size="sm"
             value={metric}
             onChange={onMetricChange}
             options={(Object.keys(METRIC_LABEL) as Metric[]).map((m) => ({
@@ -130,20 +153,20 @@ export function FilterBar({
           />
         </div>
 
-        <div className="ml-auto flex items-center gap-2">
+        {/* Bigger and plainer, at the client's request (1 November). */}
+        <div className="ml-auto flex flex-wrap items-center gap-2">
           {count > 0 && (
-            <Button size="sm" variant="ghost" icon="x" onClick={clear}>
+            <Button variant="secondary" icon="x" onClick={clear}>
               Clear {count}
             </Button>
           )}
           <Button
-            size="sm"
-            variant={expanded ? 'primary' : 'secondary'}
+            variant="primary"
             icon="filter"
             iconRight={expanded ? 'chevronDown' : 'chevronRight'}
             onClick={() => setExpanded((s) => !s)}
           >
-            Filter
+            Filter by store, product, country
           </Button>
         </div>
       </div>
@@ -156,27 +179,7 @@ export function FilterBar({
         {isDimensionless(filter) ? (
           <span>· every store, every product</span>
         ) : (
-          <>
-            {filter.channels.length > 0 && (
-              <span>· {filter.channels.map((c) => CHANNEL_PLURAL[c]).join(', ')}</span>
-            )}
-            {filter.locationIds.length > 0 && <span>· {filter.locationIds.length} stores</span>}
-            {filter.regions.length > 0 && <span>· {filter.regions.join(', ')}</span>}
-            {filter.collectionIds.length > 0 && (
-              <span>
-                · {filter.collectionIds.map((id) => collections.find((c) => c.id === id)?.name).join(', ')}
-              </span>
-            )}
-            {filter.skuIds.length > 0 && <span>· {filter.skuIds.length} products</span>}
-            {filter.variants.length > 0 && (
-              <span>· {filter.variants.map((v) => VARIANT_LABEL[v]).join(', ')}</span>
-            )}
-            {filter.countryCodes.length > 0 && (
-              <span>
-                · {filter.countryCodes.map((c) => countries.find((x) => x.code === c)?.name).join(', ')}
-              </span>
-            )}
-          </>
+          filterInWords(filter).map((w, i) => <span key={i}>· {w}</span>)
         )}
       </div>
 

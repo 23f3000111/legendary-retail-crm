@@ -3,7 +3,6 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Panel, PanelBody, PanelHeader, Rule } from '../../components/ui/Panel'
 import { Button } from '../../components/ui/Button'
 import { Badge, StatusChip } from '../../components/ui/Badge'
-import { StatTile } from '../../components/ui/StatTile'
 import { DataTable, EmptyState, type Column } from '../../components/ui/DataTable'
 import { Modal } from '../../components/ui/Modal'
 import { SegmentedControl } from '../../components/ui/Field'
@@ -13,15 +12,14 @@ import { StockItemDetail } from '../../components/StockItemDetail'
 import { StorePicker } from '../../components/StorePicker'
 import { ChartFrame } from '../../components/charts/ChartFrame'
 import { TrendChart } from '../../components/charts/TrendChart'
-import { OriginRibbon } from '../../components/charts/OriginRibbon'
-import { SkuBars } from '../../components/charts/SkuBars'
+import { OriginRibbon, OriginTable } from '../../components/charts/OriginRibbon'
+import { SkuBars, SkuTable } from '../../components/charts/SkuBars'
 import { useData } from '../../store/useData'
-import { useCan, useCurrentUser } from '../../store/useAuth'
+import { useCurrentUser } from '../../store/useAuth'
 import { canOpen } from '../../components/layout/nav'
 import { seenBy } from '../../lib/po-machine'
 import {
   emptyFilter,
-  selectKpis,
   selectLastFiled,
   selectOriginMix,
   selectOriginsBetween,
@@ -29,16 +27,18 @@ import {
   selectSkuPerformance,
   selectStock,
   selectTimeSeries,
-  totalsFor,
   type SoldAt,
   type StockRow,
 } from '../../store/selectors'
 import { CHANNEL_LABEL, locationById } from '../../data/locations'
-import { addDays, formatDate, monthKey, spanDays, spanLabel, startOfMonth, startOfWeek, type DateSpan } from '../../lib/dates'
+import { addDays, formatDate, spanDays, spanLabel, startOfMonth, startOfWeek, type DateSpan } from '../../lib/dates'
 import { DateSpanInput } from '../../components/DateSpanInput'
+import { SalesBoxes } from '../../components/SalesBoxes'
+import { SalesCalendar } from '../../components/SalesCalendar'
+import { CountryDetailModal } from '../../components/CountryDetail'
 import { SalesReport } from '../../components/SalesReport'
 import { downloadCsv } from '../../lib/exportCsv'
-import { change, num, rm } from '../../lib/format'
+import { num, rm } from '../../lib/format'
 import { TIER_LABEL } from '../../data/products'
 
 type RangeKey = '7' | '30' | '90'
@@ -71,7 +71,6 @@ export function StoreDetail() {
   const { id = '' } = useParams()
   const navigate = useNavigate()
   const data = useData()
-  const capability = useCan()
   const user = useCurrentUser()
   // Everybody who sees the estate opens this page, but not everybody opens
   // orders — IT does not — and a link that bounces is worse than no link.
@@ -84,6 +83,11 @@ export function StoreDetail() {
     return { op: 'equal', from: yesterday, to: yesterday }
   })
   const [item, setItem] = useState<StockRow | null>(null)
+  /** The stock table shows its best sellers first, ten at a time (client, 1 November). */
+  const [stockShown, setStockShown] = useState(10)
+  /** Where they came from: the figures first, the ribbon a tap away. */
+  const [originChart, setOriginChart] = useState(false)
+  const [country, setCountry] = useState<string | null>(null)
 
   const location = locationById(id)
 
@@ -95,7 +99,6 @@ export function StoreDetail() {
     [data.today, range, id],
   )
 
-  const kpis = useMemo(() => selectKpis(data, filter), [data, filter])
   const series = useMemo(() => selectTimeSeries(data, filter, 'revenue'), [data, filter])
   // The page's range reads what was filed, like every chart on the page.
   // This week and the month to date read today's sales live as well, and so
@@ -134,27 +137,23 @@ export function StoreDetail() {
           : originDays
             ? spanLabel(originDays)
             : 'Choose the dates'
-  const skuRows = useMemo(() => selectSkuPerformance(data, filter).slice(0, 8), [data, filter])
-  const stock = useMemo(() => (location ? selectStock(data, id) : []), [data, id, location])
-
-  // Month to date, which is what the target is measured against.
-  const mtd = useMemo(
-    () =>
-      totalsFor(data, {
-        ...emptyFilter(startOfMonth(data.today), data.today),
-        locationIds: [id],
-      }),
-    [data, id],
-  )
-
-  const closings = useMemo(
-    () =>
-      data.closings
-        .filter((c) => c.locationId === id)
-        .sort((a, b) => (a.period < b.period ? 1 : -1))
-        .slice(0, 10),
-    [data.closings, id],
-  )
+  const skuRows = useMemo(() => selectSkuPerformance(data, filter), [data, filter])
+  // Best sellers first: what this store sold most of over the last 30 days,
+  // then everything else in the range's own order.
+  const stock = useMemo(() => {
+    if (!location) return []
+    const rows = selectStock(data, id)
+    const sold = new Map(
+      selectSkuPerformance(data, { ...emptyFilter(addDays(data.today, -29), data.today), locationIds: [id] }).map((r) => [
+        r.skuId,
+        r.units,
+      ]),
+    )
+    return rows
+      .map((r, i) => ({ r, i, units: sold.get(r.skuId) ?? 0 }))
+      .sort((a, b) => b.units - a.units || a.i - b.i)
+      .map((x) => x.r)
+  }, [data, id, location])
 
   // A store's drafts are its own until they are sent (20 October).
   const orders = useMemo(
@@ -183,10 +182,6 @@ export function StoreDetail() {
     )
   }
 
-  const target = data.targets.find(
-    (t) => t.locationId === id && t.month === monthKey(data.today),
-  )?.amountMYR
-
   // The day the store last filed, and what that closing took off the shelf:
   // the "deducted" column Finance asked for (client's fifth revision). Sold,
   // and written off — a used-up tester leaves the shelf as surely as a sale.
@@ -202,6 +197,9 @@ export function StoreDetail() {
 
   const outOfStock = stock.filter((s) => s.status === 'out').length
   const lowStock = stock.filter((s) => s.status === 'low' || s.status === 'critical').length
+  // The foot of the table counts every product, not only the ones showing.
+  const deductedTotal = stock.reduce((a, r) => a + (deducted.get(r.skuId) ?? 0), 0)
+  const onHandTotal = stock.reduce((a, r) => a + (r.counted ? r.onHand : 0), 0)
 
   const stockColumns: Column<StockRow>[] = [
     {
@@ -248,6 +246,7 @@ export function StoreDetail() {
           </span>
         )
       },
+      total: lastFiled ? (deductedTotal ? `−${num(deductedTotal)}` : '0') : undefined,
     },
     {
       key: 'onHand',
@@ -257,6 +256,7 @@ export function StoreDetail() {
       render: (r) => (
         <span className="readout text-[13px] font-semibold text-ink">{r.counted ? num(r.onHand) : '—'}</span>
       ),
+      total: num(onHandTotal),
     },
     {
       key: 'cover',
@@ -325,60 +325,124 @@ export function StoreDetail() {
         </div>
       </div>
 
-      {/* ── The numbers ───────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-        <StatTile
-          label={`Revenue · ${range} days`}
-          value={kpis.current.revenue}
-          delta={change(kpis.current.revenue, kpis.previous.revenue)}
-          format={rm}
-          tone="violet"
-          icon="chart"
-        />
-        <StatTile
-          label="Units sold"
-          value={kpis.current.units}
-          delta={change(kpis.current.units, kpis.previous.units)}
-          format={(n) => num(Math.round(n))}
-          tone="blue"
-          icon="box"
-        />
-        <StatTile
-          label="This month so far"
-          value={mtd.revenue}
-          format={rm}
-          footnote={target ? `of ${rm(target)} target` : 'no target set'}
-          tone="cyan"
-          icon="trophy"
-        />
-        <StatTile
-          label="Out of stock"
-          value={outOfStock}
-          format={(n) => num(Math.round(n))}
-          footnote={lowStock > 0 ? `${lowStock} more running low` : 'nothing running low'}
-          tone={outOfStock > 0 ? 'plain' : 'teal'}
-          icon="alert"
-        />
-      </div>
+      {/* ── The four boxes, for this store (client, 1 November) ────────── */}
+      <SalesBoxes base={{ locationIds: [id] }} />
 
-      {/* ── Trend and where the customers came from ───────────────────── */}
-      <div className="grid gap-5 lg:grid-cols-[1.6fr_1fr]">
-        <ChartFrame
-          title="Revenue"
-          meta={`Last ${range} days to ${formatDate(data.today)}`}
-          height={260}
-        >
-          <TrendChart data={series} format={rm} label="Revenue" />
-        </ChartFrame>
+      {/* ── Stock, clickable per item ─────────────────────────────────── */}
+      <Panel>
+        <PanelHeader
+          eyebrow="Stock"
+          title={`${stock.length} products on the shelf${outOfStock ? ` · ${outOfStock} out of stock` : ''}${
+            lowStock ? ` · ${lowStock} running low` : ''
+          }`}
+          meta={
+            lastFiled
+              ? `Best sellers here first. Price is what each product went for on ${formatDate(lastFiled.period)}, as on the sales, or what it usually goes for here if it did not sell that day. Deducted is what that closing took off the shelf: sold, plus any tester, damage or sample. Tap a product to see what came in and what went out.`
+              : 'Best sellers here first. Price is what each product usually goes for here. Tap a product to see what came in and what went out.'
+          }
+          action={
+            <Button
+              size="sm"
+              variant="secondary"
+              icon="download"
+              onClick={() =>
+                downloadCsv(
+                  `legendary-stock-${location.code}.csv`,
+                  [
+                    'Product',
+                    'Code',
+                    'Price',
+                    lastFiled ? `Deducted ${lastFiled.period}` : 'Deducted',
+                    'On hand',
+                    'Reorder at',
+                    'Days left',
+                    'Status',
+                  ],
+                  [
+                    ...stock.map((r) => [
+                      r.label,
+                      r.code,
+                      (() => {
+                        // One figure where there was one price; each, with its count, where there were more.
+                        const prices = pricesAt(r.skuId)
+                        const one = (p: SoldAt) => (p.tier === 'foc' ? 'FOC' : p.unitPrice)
+                        return several(prices) ? prices.map((p) => `${one(p)} x${p.qty}`).join(' / ') : one(prices[0])
+                      })(),
+                      deducted.get(r.skuId) ?? 0,
+                      r.onHand,
+                      r.reorderPoint,
+                      r.daysCover === null ? '' : r.daysCover.toFixed(1),
+                      r.status,
+                    ]),
+                    ['Total', '', '', deductedTotal, onHandTotal, '', '', ''],
+                  ],
+                )
+              }
+            >
+              Export
+            </Button>
+          }
+        />
+        <Rule />
+        <PanelBody>
+          <DataTable
+            columns={stockColumns}
+            rows={stock.slice(0, stockShown)}
+            rowKey={(r) => r.skuId}
+            dense
+            onRowClick={setItem}
+            totalLabel={stockShown < stock.length ? `Total · all ${num(stock.length)}` : 'Total'}
+          />
+          {stock.length > stockShown && (
+            <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+              <Button size="sm" variant="secondary" icon="chevronDown" onClick={() => setStockShown((n) => n + 10)}>
+                Load more · {num(Math.min(10, stock.length - stockShown))} of {num(stock.length - stockShown)} left
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setStockShown(stock.length)}>
+                Show all {num(stock.length)}
+              </Button>
+            </div>
+          )}
+        </PanelBody>
+      </Panel>
 
-        <Panel className="h-fit">
+      {/* ── Its days, as a calendar that opens on a day (1 November) ──── */}
+      <SalesCalendar locationId={id} />
+
+      {/* ── The sales report, for this store alone (20 October) ───────── */}
+      {/* The rules stay as they are when another store is picked, to compare like with like. */}
+      <SalesReport locationId={id} />
+
+      {/* ── What sells: the figures first (client, 1 November) ─────────── */}
+      <ChartFrame
+        title="Best sellers here"
+        meta={`Every product sold, last ${range} days: units and what they came to, with the total at the foot.`}
+        height={300}
+        table={<SkuTable rows={skuRows} />}
+      >
+        <SkuBars rows={skuRows.slice(0, 8)} metric="units" />
+      </ChartFrame>
+
+      {/* ── Where they came from ──────────────────────────────────────── */}
+        <Panel>
           <PanelHeader
             eyebrow="Customers"
             title="Where they came from"
             meta={
               location.recordsCountries
-                ? `${originWhen}. Recorded on every sale, never estimated.`
+                ? `${originWhen}. Counted by customer: one sale is one customer, however much they bought. Tap a country to open it.`
                 : 'This channel does not record customer countries.'
+            }
+            action={
+              location.recordsCountries ? (
+                <button
+                  onClick={() => setOriginChart((v) => !v)}
+                  className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-line px-2 text-[11px] font-medium text-ink-3 transition-colors duration-200 hover:border-primary/40 hover:text-primary"
+                >
+                  <Icon name={originChart ? 'grid' : 'chart'} className="h-3 w-3" />
+                  {originChart ? 'Figures' : 'Chart'}
+                </button>
+              ) : undefined
             }
           />
           <Rule />
@@ -401,7 +465,11 @@ export function StoreDetail() {
                   <DateSpanInput value={originDates} onChange={setOriginDates} max={data.today} />
                 )}
                 {origins.length ? (
-                  <OriginRibbon slices={origins} height={40} />
+                  originChart ? (
+                    <OriginRibbon slices={origins} height={40} />
+                  ) : (
+                    <OriginTable slices={origins} onSelect={setCountry} />
+                  )
                 ) : (
                   <p className="py-4 text-center text-[12.5px] text-ink-3">No customers recorded yet.</p>
                 )}
@@ -413,137 +481,8 @@ export function StoreDetail() {
             )}
           </PanelBody>
         </Panel>
-      </div>
 
-      {/* ── The sales report, for this store alone (20 October) ───────── */}
-      {/* The rules stay as they are when another store is picked, to compare like with like. */}
-      <SalesReport locationId={id} />
-
-      {/* ── What sells ────────────────────────────────────────────────── */}
-      <ChartFrame title="Best sellers here" meta={`Units, last ${range} days`} height={300}>
-        <SkuBars rows={skuRows} metric="units" />
-      </ChartFrame>
-
-      {/* ── Stock, clickable per item ─────────────────────────────────── */}
-      <Panel>
-        <PanelHeader
-          eyebrow="Stock"
-          title={`${stock.length} products on the shelf`}
-          meta={
-            lastFiled
-              ? `Price is what each product went for on ${formatDate(lastFiled.period)}, as on the sales, or what it usually goes for here if it did not sell that day. Deducted is what that closing took off the shelf: sold, plus any tester, damage or sample. Tap a product to see what came in and what went out.`
-              : 'Price is what each product usually goes for here. Tap a product to see what came in and what went out.'
-          }
-          action={
-            <Button
-              size="sm"
-              variant="secondary"
-              icon="download"
-              onClick={() =>
-                downloadCsv(
-                  `legendary-stock-${location.code}.csv`,
-                  [
-                    'Product',
-                    'Code',
-                    'Price',
-                    lastFiled ? `Deducted ${lastFiled.period}` : 'Deducted',
-                    'On hand',
-                    'Reorder at',
-                    'Days left',
-                    'Status',
-                  ],
-                  stock.map((r) => [
-                    r.label,
-                    r.code,
-                    (() => {
-                      // One figure where there was one price; each, with its count, where there were more.
-                      const prices = pricesAt(r.skuId)
-                      const one = (p: SoldAt) => (p.tier === 'foc' ? 'FOC' : p.unitPrice)
-                      return several(prices) ? prices.map((p) => `${one(p)} x${p.qty}`).join(' / ') : one(prices[0])
-                    })(),
-                    deducted.get(r.skuId) ?? 0,
-                    r.onHand,
-                    r.reorderPoint,
-                    r.daysCover === null ? '' : r.daysCover.toFixed(1),
-                    r.status,
-                  ]),
-                )
-              }
-            >
-              Export
-            </Button>
-          }
-        />
-        <Rule />
-        <PanelBody>
-          <DataTable
-            columns={stockColumns}
-            rows={stock}
-            rowKey={(r) => r.skuId}
-            dense
-            onRowClick={setItem}
-          />
-        </PanelBody>
-      </Panel>
-
-      {/* ── Recent closings and orders ────────────────────────────────── */}
-      <div className="grid gap-5 lg:grid-cols-2">
-        <Panel>
-          <PanelHeader
-            eyebrow="History"
-            title="Recent closings"
-            meta={capability.approveCorrections ? 'Open a day to see it in full or change it.' : undefined}
-          />
-          <Rule />
-          <PanelBody className="space-y-2">
-            {closings.length === 0 ? (
-              <EmptyState icon="clipboard" title="Nothing filed yet" body="No closing on record." />
-            ) : (
-              closings.map((c) => {
-                const row = (
-                  <>
-                    <span className="readout text-[12.5px] text-ink-2">{formatDate(c.period)}</span>
-                    <span className="min-w-0 truncate text-[11.5px] text-ink-3">
-                      filed by {c.submittedBy}
-                      {c.editedBy ? ` · changed by ${c.editedBy}` : ''}
-                    </span>
-                    <span className="readout ml-auto text-[13px] font-semibold text-ink">
-                      {rm(c.revenueMYR)}
-                    </span>
-                    <span className="text-[11.5px] text-ink-3">
-                      {c.lines.reduce((a, l) => a + l.qty, 0)} units
-                    </span>
-                    {c.correction && (
-                      <Badge tone={c.correction.status === 'pending' ? 'warn' : 'neutral'}>
-                        {c.correction.status === 'pending'
-                          ? 'Correction waiting'
-                          : c.correction.status === 'approved'
-                            ? 'Corrected'
-                            : 'Correction turned down'}
-                      </Badge>
-                    )}
-                  </>
-                )
-                const look =
-                  'flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5'
-                return capability.approveCorrections ? (
-                  <Link
-                    key={c.id}
-                    to={`/close?store=${c.locationId}&day=${c.period}`}
-                    className={`${look} transition-colors hover:border-primary/40`}
-                  >
-                    {row}
-                  </Link>
-                ) : (
-                  <div key={c.id} className={look}>
-                    {row}
-                  </div>
-                )
-              })
-            )}
-          </PanelBody>
-        </Panel>
-
+      {/* ── Orders ────────────────────────────────────────────────────── */}
         <Panel>
           <PanelHeader
             eyebrow="Supply"
@@ -580,7 +519,11 @@ export function StoreDetail() {
             )}
           </PanelBody>
         </Panel>
-      </div>
+
+      {/* ── The graph, at the foot of the page (client, 1 November) ────── */}
+      <ChartFrame title="Revenue" meta={`Last ${range} days to ${formatDate(data.today)}`} height={260}>
+        <TrendChart data={series} format={rm} label="Revenue" />
+      </ChartFrame>
 
       {/* ── One item: what came in, what went out ─────────────────────── */}
       <Modal
@@ -596,6 +539,19 @@ export function StoreDetail() {
       >
         {item && <StockItemDetail locationId={id} skuId={item.skuId} row={item} />}
       </Modal>
+
+      {country && (
+        <CountryDetailModal
+          countryCode={country}
+          filter={
+            originDays
+              ? { ...emptyFilter(originDays.from, originDays.to), locationIds: [id] }
+              : filter
+          }
+          when={originWhen}
+          onClose={() => setCountry(null)}
+        />
+      )}
     </div>
   )
 }

@@ -3,9 +3,13 @@ import { Link, useNavigate } from 'react-router-dom'
 import { Panel, PanelBody, PanelHeader, Rule } from '../../components/ui/Panel'
 import { Icon } from '../../components/ui/icons'
 import { Button } from '../../components/ui/Button'
-import { StatTile } from '../../components/ui/StatTile'
 import { EmptyState } from '../../components/ui/DataTable'
-import { FilterBar } from '../../components/FilterBar'
+import { FiguresTable } from '../../components/ui/FiguresTable'
+import { useToasts } from '../../components/ui/Toast'
+import { FilterBar, filterInWords } from '../../components/FilterBar'
+import { SalesBoxes } from '../../components/SalesBoxes'
+import { SalesReport } from '../../components/SalesReport'
+import { CountryDetailModal } from '../../components/CountryDetail'
 import { ChartFrame } from '../../components/charts/ChartFrame'
 import { TrendChart } from '../../components/charts/TrendChart'
 import { Donut, DonutTable, type DonutSlice } from '../../components/charts/Donut'
@@ -15,6 +19,7 @@ import { HeatCalendar } from '../../components/charts/HeatCalendar'
 import { Sparkline } from '../../components/charts/Sparkline'
 import { useData } from '../../store/useData'
 import {
+  activeFilterCount,
   countryCoverage,
   emptyFilter,
   METRIC_LABEL,
@@ -34,6 +39,7 @@ import { CHANNEL_PLURAL } from '../../data/locations'
 import { countryByCode } from '../../data/countries'
 import { addDays, formatDate } from '../../lib/dates'
 import { downloadCsv } from '../../lib/exportCsv'
+import { openPrintReport } from '../../lib/printReport'
 import { num, rm, rmCompact } from '../../lib/format'
 
 /**
@@ -42,14 +48,22 @@ import { num, rm, rmCompact } from '../../lib/format'
  * One filter drives every panel, so a change moves the whole page at once. When
  * a nationality is chosen the page adds a panel showing exactly what that
  * country bought — the question the airport stores exist to answer.
+ *
+ * The figures come first and the graphs last (client, 1 November): the four
+ * sales boxes, narrowed by the filter's stores, products and countries; the
+ * tables, each with its total; the sales report; then the trend and the
+ * trading pattern at the foot of the page.
  */
 export function Analytics() {
   const navigate = useNavigate()
   const data = useData()
+  const push = useToasts((s) => s.push)
   const [filter, setFilter] = useState<Filter>(() =>
     emptyFilter(addDays(data.today, -29), data.today),
   )
   const [metric, setMetric] = useState<Metric>('revenue')
+  /** A country opened from "Which countries bought". */
+  const [country, setCountry] = useState<string | null>(null)
 
   const kpis = useMemo(() => selectKpis(data, filter), [data, filter])
   const trend = useMemo(() => selectTimeSeries(data, filter, metric), [data, filter, metric])
@@ -76,24 +90,94 @@ export function Analytics() {
   )
 
   const empty = kpis.current.revenue === 0 && kpis.current.units === 0
+  const period = `${formatDate(filter.from)} to ${formatDate(filter.to)}`
+
+  // Every store in view, not only the 25 the table shows.
+  const totals = {
+    revenue: rows.reduce((a, r) => a + r.revenue, 0),
+    units: rows.reduce((a, r) => a + r.units, 0),
+    monthToDate: rows.reduce((a, r) => a + r.monthToDate, 0),
+  }
+
+  // The boxes keep their own four periods; the rest of the filter narrows them.
+  const boxBase: Partial<Filter> = {
+    locationIds: filter.locationIds,
+    channels: filter.channels,
+    regions: filter.regions,
+    collectionIds: filter.collectionIds,
+    skuIds: filter.skuIds,
+    variants: filter.variants,
+    countryCodes: filter.countryCodes,
+  }
 
   // The period goes in the file, and on every row (client, 20 October).
   const exportSummary = () =>
     downloadCsv(
       `legendary-analytics-${filter.from}-to-${filter.to}.csv`,
       ['From', 'To', 'Store', 'Channel', 'Region', 'Revenue MYR', 'Units', 'Month to date', 'Monthly target'],
-      rows.map((r) => [
-        filter.from,
-        filter.to,
-        r.name,
-        r.channel,
-        r.region,
-        r.revenue,
-        r.units,
-        r.monthToDate,
-        r.monthlyTarget ?? '',
-      ]),
+      [
+        ...rows.map((r) => [
+          filter.from,
+          filter.to,
+          r.name,
+          r.channel,
+          r.region,
+          r.revenue,
+          r.units,
+          r.monthToDate,
+          r.monthlyTarget ?? '',
+        ]),
+        [
+          filter.from,
+          filter.to,
+          'Total',
+          '',
+          '',
+          Math.round(totals.revenue * 100) / 100,
+          totals.units,
+          Math.round(totals.monthToDate * 100) / 100,
+          '',
+        ],
+      ],
     )
+
+  // The same figures, drawn up to print or keep as a PDF (client, 1 November).
+  const printAnalytics = () => {
+    const traded = rows.filter((r) => r.revenue > 0 || r.units > 0)
+    const ok = openPrintReport({
+      title: 'Analytics',
+      subtitle: period,
+      boxes: [
+        {
+          label: 'Revenue',
+          value: rm(kpis.current.revenue),
+          note:
+            kpis.delta.revenue === null
+              ? undefined
+              : `${kpis.delta.revenue >= 0 ? '+' : '−'}${Math.abs(kpis.delta.revenue).toFixed(1)}% on the period before`,
+        },
+        { label: 'Units sold', value: num(kpis.current.units) },
+        { label: 'Stores', value: num(traded.length), note: 'that traded' },
+        { label: 'Staff purchases', value: rm(kpis.current.staffRevenue), note: 'kept separate' },
+      ],
+      rules: activeFilterCount(filter) ? filterInWords(filter) : ['Every store, every product'],
+      chart: {
+        title: `${METRIC_LABEL[metric]}, by store`,
+        bars: rows
+          .filter((r) => metricValue(r, metric) > 0)
+          .slice(0, 20)
+          .map((r) => ({ label: r.shortName, value: metricValue(r, metric), display: format(metricValue(r, metric)) })),
+      },
+      // The stores that sold nothing in the period add nothing to the page.
+      table: {
+        headers: ['Store', 'Channel', 'Units', 'Revenue'],
+        right: [false, false, true, true],
+        rows: traded.map((r) => [r.name, CHANNEL_PLURAL[r.channel], num(r.units), rm(r.revenue)]),
+        total: ['Total', '', num(totals.units), rm(totals.revenue)],
+      },
+    })
+    if (!ok) push('The report could not open: allow pop-ups for this site, then try again.', 'critical')
+  }
 
   return (
     <div className="space-y-5">
@@ -107,12 +191,12 @@ export function Analytics() {
             Set the period, pick a measure, then filter by store, channel, product or country.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button variant="secondary" icon="download" onClick={exportSummary}>
-            Export
+            CSV
           </Button>
-          <Button variant="secondary" icon="printer" onClick={() => window.print()}>
-            Print
+          <Button variant="primary" icon="printer" onClick={printAnalytics} disabled={empty}>
+            PDF report
           </Button>
         </div>
       </div>
@@ -124,6 +208,15 @@ export function Analytics() {
         onMetricChange={setMetric}
         today={data.today}
         coverage={coverage}
+      />
+
+      <SalesBoxes
+        base={boxBase}
+        scope={
+          activeFilterCount(filter)
+            ? `Narrowed by the filter above: ${filterInWords(filter).join(' · ')}. Each box keeps its own days.`
+            : undefined
+        }
       />
 
       {empty ? (
@@ -141,49 +234,6 @@ export function Analytics() {
         </Panel>
       ) : (
         <>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <StatTile
-              label="Revenue"
-              value={kpis.current.revenue}
-              format={rm}
-              delta={kpis.delta.revenue}
-              tone="violet"
-              icon="chart"
-            />
-            <StatTile
-              label="Units sold"
-              value={kpis.current.units}
-              format={(n) => num(Math.round(n))}
-              delta={kpis.delta.units}
-              tone="blue"
-              icon="box"
-            />
-            <StatTile
-              label="With a country recorded"
-              value={kpis.current.attributedUnits}
-              format={(n) => num(Math.round(n))}
-              footnote={`${coverage.capableLocations} of ${coverage.totalLocations} stores capture it`}
-              tone="cyan"
-              icon="globe"
-            />
-            <StatTile
-              label="Staff purchases"
-              value={kpis.current.staffRevenue}
-              format={rm}
-              footnote={`${num(kpis.current.staffUnits)} units, kept separate`}
-              tone="teal"
-              icon="users"
-            />
-          </div>
-
-          <ChartFrame
-            title={METRIC_LABEL[metric]}
-            meta={`${format(metricValue(kpis.current, metric))} across the period · previous period ${format(metricValue(kpis.previous, metric))}`}
-            height={260}
-          >
-            <TrendChart data={trend} format={formatCompact} label={METRIC_LABEL[metric]} />
-          </ChartFrame>
-
           {focusCountry && countryBasket.length > 0 && (
             <Panel>
               <PanelHeader
@@ -193,35 +243,25 @@ export function Analytics() {
               />
               <Rule />
               <PanelBody>
-                <div className="scroll-x">
-                  <table className="w-full min-w-[420px] border-collapse">
-                    <thead>
-                      <tr className="border-b border-line">
-                        {['Product', 'Units', 'Revenue'].map((h, i) => (
-                          <th
-                            key={h}
-                            className={`pb-2 text-[10px] font-semibold uppercase tracking-wide2 text-ink-3 ${i === 0 ? 'text-left' : 'text-right'}`}
-                          >
-                            {h}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {countryBasket.map((r) => (
-                        <tr key={r.skuId} className="border-b border-line/70 last:border-0">
-                          <td className="py-2 text-[13px] text-ink">{r.label}</td>
-                          <td className="readout py-2 text-right text-[13px] text-ink-2">
-                            {num(r.units)}
-                          </td>
-                          <td className="readout py-2 text-right text-[13px] text-ink">
-                            {rm(r.revenue)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <FiguresTable
+                  rows={countryBasket}
+                  rowKey={(r) => r.skuId}
+                  columns={[
+                    { header: 'Product', render: (r) => r.label },
+                    {
+                      header: 'Units',
+                      align: 'right',
+                      render: (r) => num(r.units),
+                      total: num(countryBasket.reduce((a, r) => a + r.units, 0)),
+                    },
+                    {
+                      header: 'Revenue',
+                      align: 'right',
+                      render: (r) => rm(r.revenue),
+                      total: rm(countryBasket.reduce((a, r) => a + r.revenue, 0)),
+                    },
+                  ]}
+                />
               </PanelBody>
             </Panel>
           )}
@@ -229,10 +269,10 @@ export function Analytics() {
           <div className="grid gap-5 lg:grid-cols-2">
             <ChartFrame
               title="Which countries bought"
-              meta={`${num(kpis.current.attributedUnits)} units with a country recorded`}
+              meta={`${num(mix.reduce((a, m) => a + m.customers, 0))} customers with a country recorded. Tap a country to open it.`}
               height={240}
-              note="Main stores only — dealers and consignment partners do not capture nationality."
-              table={<OriginTable slices={mix} />}
+              note="Counted by customer: one sale is one customer. Main stores only — dealers and consignment partners do not capture nationality."
+              table={<OriginTable slices={mix} onSelect={setCountry} />}
             >
               <div className="flex h-full items-center">
                 <div className="w-full">
@@ -268,14 +308,6 @@ export function Analytics() {
             <SkuBars rows={skuRows.slice(0, 12)} metric={metric} />
           </ChartFrame>
 
-          <ChartFrame
-            title="Trading pattern"
-            meta={`Revenue per day · ${formatDate(filter.from)} to ${formatDate(filter.to)}`}
-            height={160}
-          >
-            <HeatCalendar data={heat} format={rmCompact} />
-          </ChartFrame>
-
           <Panel>
             <PanelHeader
               eyebrow="By store"
@@ -285,14 +317,17 @@ export function Analytics() {
             <Rule />
             <PanelBody>
               <div className="scroll-x">
-                <table className="w-full min-w-[720px] border-collapse">
+                {/* On a phone the channel and the trend step aside, so the figures fit. */}
+                <table className="w-full border-collapse sm:min-w-[720px]">
                   <thead>
                     <tr className="border-b border-line">
                       {['', 'Store', 'Channel', 'Trend', METRIC_LABEL[metric], 'vs previous'].map(
                         (h, i) => (
                           <th
                             key={h || i}
-                            className={`pb-2 text-[10px] font-semibold uppercase tracking-wide2 text-ink-3 ${i >= 4 ? 'text-right' : 'text-left'}`}
+                            className={`pb-2 text-[10px] font-semibold uppercase tracking-wide2 text-ink-3 ${i >= 4 ? 'text-right' : 'text-left'} ${
+                              i === 2 || i === 3 ? 'hidden sm:table-cell' : ''
+                            }`}
                           >
                             {h}
                           </th>
@@ -326,16 +361,16 @@ export function Analytics() {
                             <p className="text-[11px] text-ink-3">{r.region}</p>
                           </Link>
                         </td>
-                        <td className="py-2.5 text-[12px] text-ink-2">
+                        <td className="hidden py-2.5 text-[12px] text-ink-2 sm:table-cell">
                           {CHANNEL_PLURAL[r.channel]}
                         </td>
-                        <td className="py-2.5">
+                        <td className="hidden py-2.5 sm:table-cell">
                           <Sparkline data={selectLocationSparkline(data, r.locationId)} />
                         </td>
-                        <td className="readout py-2.5 text-right text-[13px] text-ink">
+                        <td className="readout whitespace-nowrap py-2.5 pl-3 text-right text-[13px] text-ink">
                           {format(metricValue(r, metric))}
                         </td>
-                        <td className="py-2.5 text-right">
+                        <td className="py-2.5 pl-3 text-right">
                           {r.delta === null ? (
                             <span className="text-[11.5px] text-ink-3">—</span>
                           ) : (
@@ -350,16 +385,59 @@ export function Analytics() {
                       </tr>
                     ))}
                   </tbody>
+                  <tfoot>
+                    <tr className="border-t border-line">
+                      <td />
+                      <td className="py-2.5 text-[12.5px] font-semibold text-ink-2">
+                        Total{rows.length > 25 ? ` · all ${rows.length} stores` : ''}
+                      </td>
+                      <td className="hidden sm:table-cell" />
+                      <td className="hidden sm:table-cell" />
+                      <td className="readout whitespace-nowrap py-2.5 pl-3 text-right text-[13px] font-semibold text-ink">
+                        {format(metric === 'revenue' ? totals.revenue : totals.units)}
+                      </td>
+                      <td />
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
               {rows.length > 25 && (
                 <p className="mt-3 text-[12px] text-ink-3">
-                  Showing the top 25 of {rows.length}. Narrow the filter to see the rest.
+                  Showing the top 25 of {rows.length}; the total counts them all. Narrow the filter to see the rest.
                 </p>
               )}
             </PanelBody>
           </Panel>
         </>
+      )}
+
+      {/* The counter: date, store, item and nationality (client, 1 November). */}
+      <SalesReport />
+
+      {/* The graphs, at the foot of the page. */}
+      {!empty && (
+        <>
+          <ChartFrame
+            title={METRIC_LABEL[metric]}
+            meta={`${format(metricValue(kpis.current, metric))} across the period · previous period ${format(metricValue(kpis.previous, metric))}`}
+            height={260}
+          >
+            <TrendChart data={trend} format={formatCompact} label={METRIC_LABEL[metric]} />
+          </ChartFrame>
+
+          <ChartFrame title="Trading pattern" meta={`Revenue per day · ${period}`} height={160}>
+            <HeatCalendar data={heat} format={rmCompact} />
+          </ChartFrame>
+        </>
+      )}
+
+      {country && (
+        <CountryDetailModal
+          countryCode={country}
+          filter={filter}
+          when={period}
+          onClose={() => setCountry(null)}
+        />
       )}
     </div>
   )
