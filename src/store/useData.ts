@@ -153,7 +153,6 @@ export interface DataState extends CrmData {
    */
   unfiledLines: Record<string, Record<DateStr, SaleLine[]>>
   syncStatus: SyncStatus
-  lastSyncAt: string | null
   /** The last thing the server refused or the last time it could not be reached. */
   lastError: string | null
   errorSeq: number
@@ -396,6 +395,13 @@ const empty = (): CrmData => ({
   partnerSales: [],
 })
 
+/**
+ * When the server last answered, for the "updated" time at the foot of the
+ * screen. Kept apart from the data so that a poll bringing nothing new moves
+ * only this line, rather than every screen that reads the data.
+ */
+export const useLastSync = create<{ at: string | null }>()(() => ({ at: null }))
+
 export const useData = create<DataState>()((set, get) => {
   /** Changes the copy at once and sends the documents on. */
   const write = (put: PutDoc[]) => {
@@ -455,6 +461,11 @@ export const useData = create<DataState>()((set, get) => {
    * line too, so the two can never be found telling different stories. Only
    * the lines the edit touched are written: a sale rung up after the closing
    * was filed is none of this edit's business and is left alone.
+   *
+   * An earlier day's sale documents are not on this screen at all — a full
+   * load leaves them out, since the closing carries them (16 November). A
+   * line taken off is therefore taken off the server whether or not this
+   * device holds its document; the server passes over one that is not there.
    */
   const syncSaleDocs = (before: SaleLine[], after: SaleLine[], closing: Closing) => {
     const put: PutDoc[] = []
@@ -472,10 +483,7 @@ export const useData = create<DataState>()((set, get) => {
     }
     const gone = before
       .filter((l) => l.id && l.saleId && !after.some((a) => a.id === l.id))
-      .filter((l) => {
-        const current = docs.get(docKey('sale_line', l.id!))
-        return current && !current.deleted
-      })
+      .filter((l) => !docs.get(docKey('sale_line', l.id!))?.deleted)
       .map((l) => l.id!)
     if (put.length) write(put)
     if (gone.length) remove('sale_line', gone)
@@ -485,7 +493,6 @@ export const useData = create<DataState>()((set, get) => {
     ...empty(),
     unfiledLines: {},
     syncStatus: 'idle',
-    lastSyncAt: null,
     lastError: null,
     errorSeq: 0,
 
@@ -1349,14 +1356,24 @@ export const useData = create<DataState>()((set, get) => {
 
     // ── Sync ─────────────────────────────────────────────────────────
     applySnapshot: (snapshot, full) => {
+      since = new Date(new Date(snapshot.now).getTime() - OVERLAP_MS).toISOString()
+      useLastSync.setState({ at: snapshot.now })
+      // Most polls bring nothing. Rebuilding anyway handed every screen new
+      // arrays, and every screen drew itself again and redid its sums every
+      // twenty seconds — most of a second on a phone, with nothing changed
+      // (16 November).
+      const nothingNew =
+        !full && snapshot.docs.length === 0 && !snapshot.people && snapshot.today === get().today
+      if (nothingNew) {
+        if (get().syncStatus !== 'ready') set({ syncStatus: 'ready' })
+        return
+      }
       if (full) docs.clear()
       for (const d of snapshot.docs) docs.set(docKey(d.kind, d.id), d)
       if (snapshot.people) people = snapshot.people
-      since = new Date(new Date(snapshot.now).getTime() - OVERLAP_MS).toISOString()
       set({
         ...rebuild(snapshot.today),
         syncStatus: 'ready',
-        lastSyncAt: snapshot.now,
       })
     },
 
@@ -1387,7 +1404,14 @@ export const useData = create<DataState>()((set, get) => {
     startSync: () => {
       const b = backend()
       void get().sync(true)
-      const stopSignal = b.onChange(() => void get().sync())
+      // Another device's write is a reason to fetch what changed, once there
+      // is a copy here to change. Until the first full load lands, the timer
+      // and the focus check try it again. Every device hears the signal at the
+      // same moment, so retrying on it sent every device still waiting back to
+      // the server together, to be turned away together (16 November).
+      const stopSignal = b.onChange(() => {
+        if (since) void get().sync()
+      })
       const timer = setInterval(() => void get().sync(), POLL_MS)
       const onFocus = () => {
         if (document.visibilityState === 'visible') void get().sync()
@@ -1408,7 +1432,8 @@ export const useData = create<DataState>()((set, get) => {
       docs.clear()
       applyCatalogue([])
       since = undefined
-      set({ ...empty(), unfiledLines: {}, syncStatus: 'idle', lastSyncAt: null })
+      useLastSync.setState({ at: null })
+      set({ ...empty(), unfiledLines: {}, syncStatus: 'idle' })
     },
 
     resetDemo: (today = DEMO_TODAY) => {

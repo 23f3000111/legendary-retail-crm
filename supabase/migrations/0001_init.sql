@@ -289,9 +289,13 @@ language sql stable as $$
   select (p.doc - 'password' - 'passwordHistory') || jsonb_build_object('active', p.active)
 $$;
 
-create or replace function _doc_json(d docs) returns jsonb
+-- A document as the app receives it. json, not jsonb: it is only ever sent,
+-- and building the binary form of every document cost three times as long
+-- (16 November). Changing the return type means dropping the old one first.
+drop function if exists _doc_json(docs);
+create function _doc_json(d docs) returns json
 language sql stable as $$
-  select jsonb_build_object(
+  select json_build_object(
     'kind', d.kind, 'id', d.id, 'location_id', d.location_id, 'day', d.day, 'doc', d.doc,
     'updated_at', to_char(d.updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
     'updated_by', d.updated_by, 'deleted', d.deleted)
@@ -459,26 +463,42 @@ end $$;
 
 -- ── Reading ─────────────────────────────────────────────────────────────────
 
-create or replace function load_state(p_token text, p_since text default null) returns jsonb
+-- Everything this person may see, or only what has changed since `p_since`.
+--
+-- A full load leaves out the sale lines of a day that has been filed: the
+-- closing carries those lines, and a filed day is read from its closing alone
+-- (`rebuild` in src/store/useData.ts). By 16 November they were 11,000 of the
+-- 20,000 documents head office was sent at every sign-in, and building the
+-- lot took most of the three seconds the server allows a call (the anon
+-- role's statement_timeout), so two people opening the CRM at once were both
+-- turned away. Today's lines always come, filed or not — the counter lists
+-- them — and so does a day not yet filed. A line that changes still reaches
+-- every device on its next look, which is an incremental load.
+--
+-- The answer is json rather than jsonb, like `_doc_json`, and for the same
+-- reason. The return type changed, so the old function goes first.
+drop function if exists load_state(text, text);
+create function load_state(p_token text, p_since text default null) returns json
 language plpgsql security definer set search_path = public as $$
 declare
   s record;
   since_ts timestamptz := case when p_since is null or p_since = '' then null else p_since::timestamptz end;
-  people_json jsonb;
-  docs_json jsonb;
+  today text := _today();
+  people_json json;
+  docs_json json;
 begin
   select * into s from _session(p_token);
-  if s.person_id is null then return jsonb_build_object('ok', false, 'error', 'Sign in again.'); end if;
+  if s.person_id is null then return json_build_object('ok', false, 'error', 'Sign in again.'); end if;
 
   -- People are sent whole on a full load, and on an incremental one only if
   -- anyone changed.
   if since_ts is null or exists (select 1 from people where updated_at > since_ts) then
-    select coalesce(jsonb_agg(_public_person(p) order by p.id), '[]'::jsonb) into people_json from people p;
+    select coalesce(json_agg(_public_person(p) order by p.id), '[]'::json) into people_json from people p;
   else
     people_json := null;
   end if;
 
-  select coalesce(jsonb_agg(_doc_json(d)), '[]'::jsonb) into docs_json
+  select coalesce(json_agg(_doc_json(d)), '[]'::json) into docs_json
   from docs d
   where (since_ts is null or d.updated_at > since_ts)
     and (
@@ -488,10 +508,17 @@ begin
         when d.kind in ('target','promotion','setting','alert_read') then true
         else d.location_id is null or d.location_id = s.location_id
       end
+    )
+    -- Mirrors `loadSync` in local.ts.
+    and not (
+      since_ts is null and d.kind = 'sale_line' and d.day < today
+      and exists (select 1 from docs k
+                  where k.kind = 'closing' and not k.deleted
+                    and k.location_id = d.location_id and k.day = d.day)
     );
 
-  return jsonb_build_object('ok', true, 'people', people_json, 'docs', docs_json,
-                            'now', _now_text(), 'today', _today());
+  return json_build_object('ok', true, 'people', people_json, 'docs', docs_json,
+                           'now', _now_text(), 'today', today);
 end $$;
 
 -- ── Writing ─────────────────────────────────────────────────────────────────

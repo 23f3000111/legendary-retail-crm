@@ -6,7 +6,7 @@ import { BrandLogo, BrandMark } from '../ui/Brand'
 import { Badge, LiveDot } from '../ui/Badge'
 import { NAV } from './nav'
 import { useAuth, useCan, useCurrentUser } from '../../store/useAuth'
-import { useData } from '../../store/useData'
+import { useData, useLastSync } from '../../store/useData'
 import { locationById, tradingLocations } from '../../data/locations'
 import { ROLE_LABEL, ROLE_ACCESS, ACCENT_GRADIENT, canChangeOwnPassword, picksStore } from '../../data/people'
 import { PasswordDialog } from '../PasswordDialog'
@@ -36,8 +36,6 @@ export function AppShell() {
   const { pathname, search } = useLocation()
   const signOut = useAuth((s) => s.signOut)
   const data = useData()
-  const syncStatus = useData((s) => s.syncStatus)
-  const lastSyncAt = useData((s) => s.lastSyncAt)
   const resetDemo = useData((s) => s.resetDemo)
   const push = useToasts((s) => s.push)
   const [switcherOpen, setSwitcherOpen] = useState(false)
@@ -372,18 +370,7 @@ export function AppShell() {
           Retail CRM
         </span>
         {isShared() ? (
-          <span className="inline-flex items-center gap-1.5">
-            <span
-              className={`h-1.5 w-1.5 rounded-full ${
-                syncStatus === 'offline' ? 'bg-critical' : syncStatus === 'ready' ? 'bg-good' : 'bg-white/50'
-              }`}
-            />
-            {syncStatus === 'offline'
-              ? 'No connection — showing what was last received'
-              : syncStatus === 'ready'
-                ? `Shared with every device · updated ${lastSyncAt ? formatTimestamp(lastSyncAt).split(' · ').pop() : ''}`
-                : 'Connecting…'}
-          </span>
+          <SyncState />
         ) : (
           <>
             <span className="hidden sm:inline">Local build · this browser only</span>
@@ -402,5 +389,28 @@ export function AppShell() {
         )}
       </footer>
     </div>
+  )
+}
+
+/**
+ * The connection light and when the server last answered. Its own component,
+ * so that the time moving on every poll redraws this line and nothing else.
+ */
+function SyncState() {
+  const syncStatus = useData((s) => s.syncStatus)
+  const lastSyncAt = useLastSync((s) => s.at)
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span
+        className={`h-1.5 w-1.5 rounded-full ${
+          syncStatus === 'offline' ? 'bg-critical' : syncStatus === 'ready' ? 'bg-good' : 'bg-white/50'
+        }`}
+      />
+      {syncStatus === 'offline'
+        ? 'No connection — showing what was last received'
+        : syncStatus === 'ready'
+          ? `Shared with every device · updated ${lastSyncAt ? formatTimestamp(lastSyncAt).split(' · ').pop() : ''}`
+          : 'Connecting…'}
+    </span>
   )
 }

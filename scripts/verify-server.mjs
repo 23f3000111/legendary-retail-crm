@@ -195,6 +195,35 @@ try {
   const gone = await one('select remove_docs($1, $2, $3::text[]) r', [promoter, 'closing', [todays.id]])
   check('but cannot delete a filed day', gone.r.ok === false, gone.r.error)
 
+  // A full load leaves out the sale lines a filed closing already carries
+  // (16 November): they were most of what head office was sent at sign-in.
+  // Today's lines still come, filed or not, and so does a day not yet filed;
+  // a changed line still reaches every device on the next look.
+  const lineOn = (id, day) =>
+    client.query(
+      `insert into docs(kind, id, location_id, day, doc) values ('sale_line', $1, 'klia-t2', $2, $3::jsonb)`,
+      [id, day, JSON.stringify({ id, saleId: id, skuId: 'x', qty: 1, day, locationId: 'klia-t2' })],
+    )
+  const { d: neverFiled } = await one(
+    `select to_char(d, 'YYYY-MM-DD') d
+       from generate_series(_today()::date - 400, _today()::date - 1, interval '1 day') d
+      where not exists (select 1 from docs k where k.kind = 'closing' and k.location_id = 'klia-t2'
+                                              and k.day = to_char(d, 'YYYY-MM-DD'))
+      order by d limit 1`,
+  )
+  await lineOn('sl-verify-filed', tooOld.period)
+  await lineOn('sl-verify-today', todays.period)
+  await lineOn('sl-verify-unfiled', neverFiled)
+  const sent = new Set((await one('select load_state($1) r', [kelly])).r.docs.map((d) => d.id))
+  check('a full load leaves out the sale lines of a filed day', !sent.has('sl-verify-filed'))
+  check("but sends today's, and a day not yet filed",
+    sent.has('sl-verify-today') && sent.has('sl-verify-unfiled'))
+  const { t: justBefore } = await one(
+    `select to_char((now() - interval '1 second') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') t`,
+  )
+  const again = (await one('select load_state($1, $2) r', [kelly, justBefore])).r
+  check('and a changed line still reaches every device', again.docs.some((d) => d.id === 'sl-verify-filed'))
+
   // Dealers' and consignment partners' months, keyed in at head office
   // (client's fifth revision): Davy, Kelly, Chloe and Finance only.
   const partnerDoc = (id, over = {}) => [

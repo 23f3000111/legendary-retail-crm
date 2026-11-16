@@ -398,10 +398,27 @@ export class LocalBackend implements Backend {
     const s = this.session(token)
     const now = new Date().toISOString()
     if (!s) return { people: [], docs: [], now, today: this.today }
+    // A full load leaves out the sale lines of a filed day: the closing
+    // carries them, and a filed day is read from its closing alone. Today's
+    // lines always come, and a changed line still comes on the next look.
+    // Mirrored in load_state.
+    const filed = since ? null : this.filedDays()
     const docs = [...this.docs.values()].filter(
-      (d) => (!since || d.updatedAt > since) && visibleTo(d, s.person, s.locationId),
+      (d) =>
+        (!since || d.updatedAt > since) &&
+        visibleTo(d, s.person, s.locationId) &&
+        !(filed && d.kind === 'sale_line' && d.day && d.day < this.today && filed.has(`${d.locationId}::${d.day}`)),
     )
     return { people: this.people.map(publicPerson), docs, now, today: this.today }
+  }
+
+  /** `locationId::day` for every day with a closing on file. */
+  private filedDays(): Set<string> {
+    const out = new Set<string>()
+    for (const d of this.docs.values()) {
+      if (d.kind === 'closing' && !d.deleted && d.locationId && d.day) out.add(`${d.locationId}::${d.day}`)
+    }
+    return out
   }
 
   /** Every document, regardless of who is asking. For the tests. */
