@@ -9,6 +9,18 @@
  * "Save as PDF" makes the file. Nothing is sent anywhere.
  */
 
+/** One titled table of a report of several parts (Revision 10). */
+export interface ReportSection {
+  title: string
+  headers: string[]
+  /** Which columns are figures, set right. */
+  right: boolean[]
+  rows: string[][]
+  /** Rows that are a product's subtotal, set in bold. */
+  subtotals?: number[]
+  total?: string[]
+}
+
 export interface ReportSpec {
   /** "Sales report · Pavilion 5th Floor". */
   title: string
@@ -18,13 +30,16 @@ export interface ReportSpec {
   /** What the report was narrowed to, in words. */
   rules?: string[]
   chart?: { title: string; bars: { label: string; value: number; display: string }[] }
-  table: {
+  /** The one table of a simple report, under "Figures". */
+  table?: {
     headers: string[]
     /** Which columns are figures, set right. */
     right: boolean[]
     rows: string[][]
     total?: string[]
   }
+  /** A detailed report's parts, each under its own title, after the table if there is one. */
+  sections?: ReportSection[]
 }
 
 const esc = (s: string) =>
@@ -65,6 +80,9 @@ export const reportHtml = (spec: ReportSpec, logoUrl: string, printedAt: string)
   tr:nth-child(even) td { background: #f8fafc; }
   .r { text-align: right; }
   tfoot td { font-weight: 700; border-top: 1.5px solid #94a3b8; border-bottom: none; background: #eef2ff !important; }
+  tr.sub td { font-weight: 700; background: #f1f5f9 !important; border-bottom: 1.5px solid #cbd5e1; }
+  section { break-inside: auto; }
+  thead { display: table-header-group; }
   footer { margin-top: 22px; color: #94a3b8; font-size: 10.5px; }
   @page { margin: 12mm; }
   @media print { body { padding: 0; } }
@@ -99,14 +117,23 @@ ${
         .join('')}`
     : ''
 }
-<h2>Figures</h2>
-<table>
-<thead><tr>${spec.table.headers.map((h, i) => cell(h, spec.table.right[i], 'th')).join('')}</tr></thead>
-<tbody>${spec.table.rows.map((r) => `<tr>${r.map((v, i) => cell(v, spec.table.right[i])).join('')}</tr>`).join('')}</tbody>
-${spec.table.total ? `<tfoot><tr>${spec.table.total.map((v, i) => cell(v, spec.table.right[i])).join('')}</tr></tfoot>` : ''}
-</table>
+${spec.table ? tableHtml({ title: 'Figures', ...spec.table }, cell) : ''}
+${(spec.sections ?? []).map((sec) => tableHtml(sec, cell)).join('')}
 <footer>Legendary Retail CRM · figures exclude SST · days that have ended are as filed, today as it stands.</footer>
 </body></html>`
+}
+
+/** One titled table, with its subtotal rows in bold and its total at the foot. */
+const tableHtml = (sec: ReportSection, cell: (v: string, right: boolean, tag?: string) => string): string => {
+  const subs = new Set(sec.subtotals ?? [])
+  return `<section><h2>${esc(sec.title)}</h2>
+<table>
+<thead><tr>${sec.headers.map((h, i) => cell(h, sec.right[i], 'th')).join('')}</tr></thead>
+<tbody>${sec.rows
+    .map((r, n) => `<tr${subs.has(n) ? ' class="sub"' : ''}>${r.map((v, i) => cell(v, sec.right[i])).join('')}</tr>`)
+    .join('')}</tbody>
+${sec.total ? `<tfoot><tr>${sec.total.map((v, i) => cell(v, sec.right[i])).join('')}</tr></tfoot>` : ''}
+</table></section>`
 }
 
 /**

@@ -102,7 +102,7 @@ export const activeFilterCount = (f: Filter): number =>
 
 // ── Building blocks ────────────────────────────────────────────────────────
 
-const locationMatches = (locationId: string, f: Filter): boolean => {
+export const locationMatches = (locationId: string, f: Filter): boolean => {
   const loc = locationById(locationId)
   if (!loc) return false
   if (f.locationIds.length && !f.locationIds.includes(locationId)) return false
@@ -127,7 +127,7 @@ export const skuIdsFor = (f: Filter): Set<string> => {
   return new Set(ids)
 }
 
-const inWindow = (date: DateStr, f: Filter) =>
+export const inWindow = (date: DateStr, f: Filter) =>
   daysBetween(f.from, date) >= 0 && daysBetween(date, f.to) >= 0
 
 export const filteredClosings = (data: CrmData, f: Filter): Closing[] =>
@@ -167,11 +167,11 @@ const lineMatches = (
 }
 
 /** A filter that narrows by product or by country, which a typed-in total cannot answer. */
-const narrowsByProduct = (f: Filter): boolean =>
+export const narrowsByProduct = (f: Filter): boolean =>
   f.countryCodes.length > 0 || f.skuIds.length > 0 || f.collectionIds.length > 0 || f.variants.length > 0
 
 /** `locationId::YYYY-MM` for every month a partner's figure was keyed in. */
-const keyedMonths = (data: CrmData): Set<string> =>
+export const keyedMonths = (data: CrmData): Set<string> =>
   new Set(data.partnerSales.map((p) => `${p.locationId}::${p.month}`))
 
 export const totalsFor = (data: CrmData, f: Filter): Totals => {
@@ -1247,29 +1247,29 @@ const salesIn = (data: CrmData, f: Filter): SalesFigure => {
  * Every sale line in a window that the filter allows, by the same rules as
  * `salesIn`: filed days that have ended, unless a keyed-in month stands in
  * for them, and today live from the counter. Each comes with what it sold
- * for, the basket it was part of, and the store that sold it.
+ * for, the basket it was part of, the store that sold it, and its day.
  */
-const eachLineIn = (
+export const eachLineIn = (
   data: CrmData,
   f: Filter,
-  visit: (l: SaleLine, value: number, basket: string, locationId: string) => void,
+  visit: (l: SaleLine, value: number, basket: string, locationId: string, day: DateStr) => void,
 ) => {
   const allowed = skuIdsFor(f)
   const keyed = keyedMonths(data)
-  const add = (locationId: string, l: SaleLine, basis: PriceBasis, fallback: string) => {
-    if (lineMatches(l, allowed, f)) visit(l, l.qty * lineUnitPrice(l, basis), basketOf(locationId, l, fallback), locationId)
+  const add = (locationId: string, l: SaleLine, basis: PriceBasis, fallback: string, day: DateStr) => {
+    if (lineMatches(l, allowed, f)) visit(l, l.qty * lineUnitPrice(l, basis), basketOf(locationId, l, fallback), locationId, day)
   }
   for (const c of filteredClosings(data, f)) {
     if (c.period >= data.today) continue
     if (keyed.size && keyed.has(`${c.locationId}::${monthKey(c.period)}`)) continue
     const basis = basisOf(c.locationId)
-    c.lines.forEach((l, i) => add(c.locationId, l, basis, `${c.id}#${i}`))
+    c.lines.forEach((l, i) => add(c.locationId, l, basis, `${c.id}#${i}`, c.period))
   }
   if (inWindow(data.today, f)) {
     for (const [locationId, lines] of Object.entries(data.liveLines)) {
       if (!locationMatches(locationId, f)) continue
       const basis = basisOf(locationId)
-      lines.forEach((l, i) => add(locationId, l, basis, `live#${i}`))
+      lines.forEach((l, i) => add(locationId, l, basis, `live#${i}`, data.today))
     }
   }
 }
