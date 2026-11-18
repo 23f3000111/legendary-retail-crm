@@ -150,12 +150,19 @@ describe('the revised staff list', () => {
     expect(promoters).toHaveLength(28)
     expect(promoters.every((p) => Boolean(p.city) && !p.locationId)).toBe(true)
 
-    // The thirteen under "KL" get the four the client listed.
+    // The thirteen under "KL" get the four the client listed, and Sogo 118
+    // since it opened (Revision 10: "let all KL promoters have access").
     const kl = promoters.filter((p) => p.city === 'Kuala Lumpur')
     expect(kl).toHaveLength(13)
-    expect(storeChoicesFor(kl[0]).sort()).toEqual(
-      ['bsas', 'klcc-isetan', 'parkson-pavilion', 'pavilion-5'].sort(),
-    )
+    for (const p of kl) {
+      expect(storeChoicesFor(p).sort(), p.username).toEqual(
+        ['bsas', 'klcc-isetan', 'parkson-pavilion', 'pavilion-5', 'sogo-118'].sort(),
+      )
+    }
+    // Nobody outside Kuala Lumpur gets it.
+    for (const p of promoters.filter((x) => x.city !== 'Kuala Lumpur')) {
+      expect(storeChoicesFor(p), p.username).not.toContain('sogo-118')
+    }
     expect(picksStore(kl[0])).toBe(true)
   })
 
@@ -169,7 +176,7 @@ describe('the revised staff list', () => {
     for (const city of ['KLIA', 'Langkawi', 'Genting Highlands', 'Melaka', 'Kota Kinabalu']) {
       expect(byCity.get(city), city).toBe(1)
     }
-    expect(byCity.get('Kuala Lumpur')).toBe(4)
+    expect(byCity.get('Kuala Lumpur')).toBe(5)
   })
 
   it('never asks head office', () => {

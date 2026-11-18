@@ -297,8 +297,11 @@ function build(r: () => number, today: DateStr): CrmData {
   const promoterFor = (loc: Location) =>
     people.find((p) => p.locationId === loc.id)?.name ?? `${loc.code} promoter`
 
-  const dailyLocations = tradingLocations.filter((l) => l.cadence === 'daily')
-  const monthlyLocations = tradingLocations.filter((l) => l.cadence === 'monthly')
+  // A store with no footfall weight has no sample history: one that has just
+  // opened, like Sogo 118 (Revision 10). Leaving it out keeps every other
+  // store's sample figures exactly as they were.
+  const dailyLocations = tradingLocations.filter((l) => l.cadence === 'daily' && l.traffic > 0)
+  const monthlyLocations = tradingLocations.filter((l) => l.cadence === 'monthly' && l.traffic > 0)
 
   // Opening stock for every location that counts stock.
   const stock = new Map<string, number>()
@@ -639,7 +642,7 @@ function deriveAlerts(
 ): Alert[] {
   const alerts: Alert[] = []
   const stamp = (d: DateStr, hh: string) => `${d}T${hh}:00+08:00`
-  const daily = tradingLocations.filter((l) => l.cadence === 'daily')
+  const daily = tradingLocations.filter((l) => l.cadence === 'daily' && l.traffic > 0)
   const countedSkus = inBuiltInOrder(rangeCounted)
 
   // Stock at or under its reorder point right now.

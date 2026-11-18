@@ -123,7 +123,10 @@ const mainSeeds: MainSeed[] = [
   { id: 'parkson-pavilion', code: 'PKP', name: 'Parkson Pavilion', shortName: 'Parkson Pavilion', region: 'Kuala Lumpur', city: 'Kuala Lumpur', basis: 'promotion', traffic: 0.62, target: 66_000, origins: ['MY', 'CN', 'IN', 'SG', 'AE'], openedOn: '2025-11-20' },
   { id: 'parkson-imago', code: 'IKK', name: 'Parkson KK Imago', shortName: 'Imago KK', region: 'Sabah', city: 'Kota Kinabalu', basis: 'promotion', traffic: 0.58, target: 61_000, origins: ['CN', 'KR', 'MY', 'JP', 'AU'], openedOn: '2024-04-19' },
   { id: 'klcc-isetan', code: 'KLC', name: 'KLCC Isetan', shortName: 'KLCC Isetan', region: 'Kuala Lumpur', city: 'Kuala Lumpur', basis: 'promotion', traffic: 0.86, target: 95_000, origins: ['MY', 'CN', 'JP', 'KR', 'SG'], openedOn: '2020-08-01' },
-  { id: 'sogo-118', code: 'SG1', name: 'Sogo 118', shortName: 'Sogo 118', region: 'Kuala Lumpur', city: 'Kuala Lumpur', basis: 'promotion', status: 'coming', traffic: 0, target: 70_000, origins: ['MY', 'CN', 'ID', 'SG', 'IN'] },
+  // Open since the client's eighth revision (Revision 10, November): already
+  // trading, and every Kuala Lumpur promoter may pick it. No opening date was
+  // given, and it has no sample history (no footfall weight).
+  { id: 'sogo-118', code: 'SG1', name: 'Sogo 118', shortName: 'Sogo 118', region: 'Kuala Lumpur', city: 'Kuala Lumpur', basis: 'promotion', traffic: 0, target: 70_000, origins: ['MY', 'CN', 'ID', 'SG', 'IN'] },
   { id: 'trx', code: 'TRX', name: 'TRX', shortName: 'TRX', region: 'Kuala Lumpur', city: 'Kuala Lumpur', basis: 'promotion', status: 'coming', traffic: 0, target: 85_000, origins: ['MY', 'CN', 'SG', 'IN', 'AE'] },
   { id: 'melaka-parkland', code: 'MPM', name: 'Melaka Parkland Mall', shortName: 'Parkland Melaka', region: 'Melaka', city: 'Melaka', basis: 'promotion', status: 'coming', traffic: 0, target: 55_000, origins: ['SG', 'ID', 'MY', 'CN', 'NL'] },
 ]

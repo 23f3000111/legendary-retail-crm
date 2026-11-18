@@ -141,7 +141,10 @@ describe('country attribution is exact, not estimated', () => {
   it('reports partial coverage so the screen can say so', () => {
     const all = countryCoverage(data, last30())
     expect(all.partial).toBe(true)
-    expect(all.capableLocations).toBe(locationsInChannel('main').filter((l) => l.status === 'open').length)
+    // Every open main store with sample history: Sogo 118 opened with none.
+    expect(all.capableLocations).toBe(
+      locationsInChannel('main').filter((l) => l.status === 'open' && l.traffic > 0).length,
+    )
 
     const mainOnly = countryCoverage(data, { ...last30(), channels: ['main'] })
     expect(mainOnly.partial).toBe(false)
