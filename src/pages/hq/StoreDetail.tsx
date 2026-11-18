@@ -3,14 +3,14 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Panel, PanelBody, PanelHeader, Rule } from '../../components/ui/Panel'
 import { Button } from '../../components/ui/Button'
 import { Badge, StatusChip } from '../../components/ui/Badge'
-import { DataTable, EmptyState, type Column } from '../../components/ui/DataTable'
-import { Modal } from '../../components/ui/Modal'
+import { EmptyState } from '../../components/ui/DataTable'
+import { FiguresTable } from '../../components/ui/FiguresTable'
 import { SegmentedControl } from '../../components/ui/Field'
 import { Icon } from '../../components/ui/icons'
 import { LinkIf } from '../../components/ui/LinkIf'
-import { PAGE, totalOf, usePaged } from '../../components/ui/LoadMore'
-import { StockItemDetail } from '../../components/StockItemDetail'
+import { PAGE } from '../../components/ui/LoadMore'
 import { StorePicker } from '../../components/StorePicker'
+import { StoreDay } from '../../components/StoreDay'
 import { ChartFrame } from '../../components/charts/ChartFrame'
 import { TrendChart } from '../../components/charts/TrendChart'
 import { OriginRibbon, OriginWindowsTable } from '../../components/charts/OriginRibbon'
@@ -25,14 +25,10 @@ import {
   selectLastFiled,
   selectOriginSales,
   selectOriginsBetween,
-  selectPricesAt,
-  selectSkuPerformance,
+  selectPartnerMonths,
   selectSkuSales,
-  selectStock,
   selectTimeSeries,
   type SalesWindow,
-  type SoldAt,
-  type StockRow,
 } from '../../store/selectors'
 import { CHANNEL_LABEL, locationById } from '../../data/locations'
 import {
@@ -50,10 +46,7 @@ import { DateSpanInput } from '../../components/DateSpanInput'
 import { SalesBoxes } from '../../components/SalesBoxes'
 import { SalesCalendar } from '../../components/SalesCalendar'
 import { CountryDetailModal } from '../../components/CountryDetail'
-import { SalesReport } from '../../components/SalesReport'
-import { downloadCsv } from '../../lib/exportCsv'
-import { num, rm } from '../../lib/format'
-import { TIER_LABEL } from '../../data/products'
+import { rm } from '../../lib/format'
 
 type RangeKey = '7' | '30' | '90'
 
@@ -80,6 +73,14 @@ const RANGES: { value: RangeKey; label: string }[] = [
  *
  * Every figure comes from the same selectors the group screens use, so this
  * page can never disagree with the dashboard that sent you here.
+ *
+ * **One day at a time** (Revision 10, the client's eighth, and the meeting of
+ * 16 November). The calendar sits straight under the four boxes and chooses
+ * the day; under it, that day alone: every product with its price, what the
+ * day took off the shelf and the count at its close, cash and card, and the
+ * customers. Days left, Status and the sales report have gone; the sales
+ * report lives on Analytics. **Finance gets only the calendar and the day** —
+ * "for finance they only want detail, there is no summary needed".
  */
 export function StoreDetail() {
   const { id = '' } = useParams()
@@ -96,13 +97,20 @@ export function StoreDetail() {
     const yesterday = addDays(data.today, -1)
     return { op: 'equal', from: yesterday, to: yesterday }
   })
-  const [item, setItem] = useState<StockRow | null>(null)
+  /** The day chosen on the calendar, for this store; it starts on the last day filed. */
+  const [picked, setPicked] = useState<{ id: string; day: string } | null>(null)
   /** Where they came from: the figures first, the ribbon a tap away. */
   const [originChart, setOriginChart] = useState(false)
   /** A country opened from "Where they came from", and the days of the figure tapped. */
   const [country, setCountry] = useState<{ code: string; window: SalesWindow } | null>(null)
 
   const location = locationById(id)
+  // "For finance they only want detail, there is no summary needed" (16 November).
+  const finance = user?.role === 'finance'
+  const partner = location ? location.channel !== 'main' : false
+  const lastFiled = selectLastFiled(data, id)
+  const day = picked?.id === id ? picked.day : (lastFiled?.period ?? data.today)
+  const partnerMonths = useMemo(() => (partner ? selectPartnerMonths(data, id) : []), [data, id, partner])
 
   const filter = useMemo(
     () => ({
@@ -189,25 +197,6 @@ export function StoreDetail() {
         .slice(0, 8),
     [skuRows],
   )
-  // Best sellers first: what this store sold most of over the last 30 days,
-  // then everything else in the range's own order.
-  const stock = useMemo(() => {
-    if (!location) return []
-    const rows = selectStock(data, id)
-    const sold = new Map(
-      selectSkuPerformance(data, { ...emptyFilter(addDays(data.today, -29), data.today), locationIds: [id] }).map((r) => [
-        r.skuId,
-        r.units,
-      ]),
-    )
-    return rows
-      .map((r, i) => ({ r, i, units: sold.get(r.skuId) ?? 0 }))
-      .sort((a, b) => b.units - a.units || a.i - b.i)
-      .map((x) => x.r)
-  }, [data, id, location])
-  /** The stock table shows its best sellers first, ten at a time (client, 1 November). */
-  const stockPage = usePaged(stock, { page: PAGE, resetOn: id })
-
   // A store's drafts are its own until they are sent (20 October).
   const orders = useMemo(
     () =>
@@ -234,113 +223,6 @@ export function StoreDetail() {
       </Panel>
     )
   }
-
-  // The day the store last filed, and what that closing took off the shelf:
-  // the "deducted" column Finance asked for (client's fifth revision). Sold,
-  // and written off — a used-up tester leaves the shelf as surely as a sale.
-  const lastFiled = selectLastFiled(data, id)
-  const deducted = new Map<string, number>()
-  for (const l of [...(lastFiled?.lines ?? []), ...(lastFiled?.writeOffs ?? [])]) {
-    deducted.set(l.skuId, (deducted.get(l.skuId) ?? 0) + l.qty)
-  }
-  // The price each product went for, off the sales themselves, so a Wish
-  // added on at the RM 10 offer reads RM 10 here as it does on the sale.
-  const pricesAt = selectPricesAt(data, id)
-  const several = (prices: SoldAt[]) => prices.length > 1
-
-  const outOfStock = stock.filter((s) => s.status === 'out').length
-  const lowStock = stock.filter((s) => s.status === 'low' || s.status === 'critical').length
-  // The foot of the table counts every product, not only the ones showing.
-  const deductedTotal = stock.reduce((a, r) => a + (deducted.get(r.skuId) ?? 0), 0)
-  const onHandTotal = stock.reduce((a, r) => a + (r.counted ? r.onHand : 0), 0)
-
-  const stockColumns: Column<StockRow>[] = [
-    {
-      key: 'label',
-      header: 'Product',
-      render: (r) => (
-        <div className="min-w-0">
-          <p className="truncate text-[13px] leading-tight text-ink">{r.label}</p>
-          <p className="readout text-[11px] text-ink-3">{r.code}</p>
-        </div>
-      ),
-    },
-    {
-      key: 'price',
-      header: 'Price',
-      align: 'right',
-      width: '130px',
-      render: (r) => {
-        const prices = pricesAt(r.skuId)
-        return (
-          <span className="inline-flex flex-col items-end gap-1">
-            {prices.map((p) => (
-              <span key={`${p.tier}:${p.unitPrice}`} className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                {/* Labelled the way the sale is, where it is not the store's own price. */}
-                {p.tier !== location.priceBasis && p.tier !== 'foc' && <Badge tone="neutral">{TIER_LABEL[p.tier]}</Badge>}
-                <span className="readout text-[12.5px] text-ink-2">{p.tier === 'foc' ? 'FOC' : rm(p.unitPrice)}</span>
-                {several(prices) && <span className="readout text-[11px] text-ink-3">×{num(p.qty)}</span>}
-              </span>
-            ))}
-          </span>
-        )
-      },
-    },
-    {
-      key: 'deducted',
-      header: 'Deducted',
-      align: 'right',
-      width: '90px',
-      render: (r) => {
-        const n = deducted.get(r.skuId) ?? 0
-        return (
-          <span className={`readout text-[12.5px] ${n ? 'font-semibold text-ink' : 'text-ink-3'}`}>
-            {lastFiled ? (n ? `−${num(n)}` : '0') : '—'}
-          </span>
-        )
-      },
-      total: lastFiled ? (deductedTotal ? `−${num(deductedTotal)}` : '0') : undefined,
-    },
-    {
-      key: 'onHand',
-      header: 'On hand',
-      align: 'right',
-      width: '90px',
-      render: (r) => (
-        <span className="readout text-[13px] font-semibold text-ink">{r.counted ? num(r.onHand) : '—'}</span>
-      ),
-      total: num(onHandTotal),
-    },
-    {
-      key: 'cover',
-      header: 'Days left',
-      align: 'right',
-      width: '100px',
-      render: (r) => (
-        <span className="readout text-[12.5px] text-ink-2">
-          {r.daysCover === null ? 'not moving' : `${r.daysCover.toFixed(1)} days`}
-        </span>
-      ),
-    },
-    {
-      key: 'status',
-      header: 'Status',
-      align: 'right',
-      width: '110px',
-      render: (r) => (
-        <Badge tone={r.status === 'out' ? 'critical' : r.status === 'ok' ? 'good' : 'warn'}>
-          {r.status === 'ok' ? 'Healthy' : r.status === 'out' ? 'Out' : 'Low'}
-        </Badge>
-      ),
-    },
-    {
-      key: 'open',
-      header: '',
-      align: 'right',
-      width: '44px',
-      render: () => <Icon name="chevronRight" className="ml-auto h-3.5 w-3.5 text-ink-3" />,
-    },
-  ]
 
   return (
     <div className="space-y-5">
@@ -369,7 +251,7 @@ export function StoreDetail() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <SegmentedControl<RangeKey> size="sm" value={range} onChange={setRange} options={RANGES} />
+          {!finance && <SegmentedControl<RangeKey> size="sm" value={range} onChange={setRange} options={RANGES} />}
           <StorePicker
             value={id}
             onChange={(next) => navigate(`/stores/${next}`)}
@@ -379,84 +261,51 @@ export function StoreDetail() {
       </div>
 
       {/* ── The four boxes, for this store (client, 1 November) ────────── */}
-      <SalesBoxes base={{ locationIds: [id] }} />
+      {/* Finance reads the day itself, not the summaries (16 November). */}
+      {!finance && <SalesBoxes base={{ locationIds: [id] }} />}
 
-      {/* ── Stock, clickable per item ─────────────────────────────────── */}
-      <Panel>
-        <PanelHeader
-          eyebrow="Stock"
-          title={`${stock.length} products on the shelf${outOfStock ? ` · ${outOfStock} out of stock` : ''}${
-            lowStock ? ` · ${lowStock} running low` : ''
-          }`}
-          meta={
-            lastFiled
-              ? `Best sellers here first. Price is what each product went for on ${formatDate(lastFiled.period)}, as on the sales, or what it usually goes for here if it did not sell that day. Deducted is what that closing took off the shelf: sold, plus any tester, damage or sample. Tap a product to see what came in and what went out.`
-              : 'Best sellers here first. Price is what each product usually goes for here. Tap a product to see what came in and what went out.'
-          }
-          action={
-            <Button
-              size="sm"
-              variant="secondary"
-              icon="download"
-              onClick={() =>
-                downloadCsv(
-                  `legendary-stock-${location.code}.csv`,
-                  [
-                    'Product',
-                    'Code',
-                    'Price',
-                    lastFiled ? `Deducted ${lastFiled.period}` : 'Deducted',
-                    'On hand',
-                    'Reorder at',
-                    'Days left',
-                    'Status',
-                  ],
-                  [
-                    ...stock.map((r) => [
-                      r.label,
-                      r.code,
-                      (() => {
-                        // One figure where there was one price; each, with its count, where there were more.
-                        const prices = pricesAt(r.skuId)
-                        const one = (p: SoldAt) => (p.tier === 'foc' ? 'FOC' : p.unitPrice)
-                        return several(prices) ? prices.map((p) => `${one(p)} x${p.qty}`).join(' / ') : one(prices[0])
-                      })(),
-                      deducted.get(r.skuId) ?? 0,
-                      r.onHand,
-                      r.reorderPoint,
-                      r.daysCover === null ? '' : r.daysCover.toFixed(1),
-                      r.status,
-                    ]),
-                    ['Total', '', '', deductedTotal, onHandTotal, '', '', ''],
-                  ],
-                )
-              }
-            >
-              Export
-            </Button>
-          }
-        />
-        <Rule />
-        <PanelBody>
-          <DataTable
-            columns={stockColumns}
-            rows={stockPage.visible}
-            rowKey={(r) => r.skuId}
-            dense
-            onRowClick={setItem}
-            totalLabel={totalOf(stockPage.partial, stock.length)}
+      {partner ? (
+        /* Dealers and consignment report a month at a time, on Dealer sales:
+           there are no days to choose, so their months stand in for them. */
+        <Panel>
+          <PanelHeader
+            eyebrow="Months"
+            title="Sales, month by month"
+            meta="Dealers and consignment partners report one figure a month, keyed in on Dealer sales."
           />
-          {stockPage.more}
-        </PanelBody>
-      </Panel>
+          <Rule />
+          <PanelBody>
+            <FiguresTable
+              rows={partnerMonths}
+              rowKey={(m) => m.month}
+              page={PAGE}
+              pageKey={id}
+              columns={[
+                { header: 'Month', render: (m) => monthLabel(m.month) },
+                { header: 'Keyed in by', render: (m) => m.keyed?.enteredBy ?? 'from its closings' },
+                {
+                  header: 'Sales',
+                  align: 'right',
+                  render: (m) => rm(m.revenue),
+                  total: rm(partnerMonths.reduce((a, m) => a + m.revenue, 0)),
+                },
+              ]}
+              empty="No month has been keyed in for this partner yet."
+            />
+          </PanelBody>
+        </Panel>
+      ) : (
+        <>
+          {/* ── The calendar chooses the day (Revision 10) ──────────────── */}
+          <SalesCalendar key={id} locationId={id} selected={day} onSelect={(d) => setPicked({ id, day: d })} />
 
-      {/* ── Its days, as a calendar that opens on a day (1 November) ──── */}
-      <SalesCalendar locationId={id} />
+          {/* ── That day alone: stock, payment, customers ───────────────── */}
+          <StoreDay locationId={id} day={day} />
+        </>
+      )}
 
-      {/* ── The sales report, for this store alone (20 October) ───────── */}
-      {/* The rules stay as they are when another store is picked, to compare like with like. */}
-      <SalesReport locationId={id} />
-
+      {!finance && (
+        <>
       {/* ── What sells: the figures first, by the four windows (1 November) ── */}
       <ChartFrame
         title="Best sellers here"
@@ -578,21 +427,8 @@ export function StoreDetail() {
       <ChartFrame title="Revenue" meta={`Last ${range} days to ${formatDate(data.today)}`} height={260}>
         <TrendChart data={series} format={rm} label="Revenue" />
       </ChartFrame>
-
-      {/* ── One item: what came in, what went out ─────────────────────── */}
-      <Modal
-        open={item !== null}
-        onClose={() => setItem(null)}
-        title={item?.label ?? ''}
-        subtitle={
-          item
-            ? `${item.code} · ${num(item.onHand)} on the shelf at ${location.shortName}`
-            : undefined
-        }
-        width="max-w-lg"
-      >
-        {item && <StockItemDetail locationId={id} skuId={item.skuId} row={item} />}
-      </Modal>
+        </>
+      )}
 
       {country && countryFilter && (
         <CountryDetailModal

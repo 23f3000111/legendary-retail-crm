@@ -1645,6 +1645,102 @@ export const selectDayDetail = (data: CrmData, day: DateStr, locationId?: string
   }
 }
 
+// ── A store's day (Revision 10) ─────────────────────────────────────────────
+
+/** One product on a store's day: what it went for, what left the shelf, what was counted. */
+export interface StoreDayRow {
+  skuId: string
+  label: string
+  code: string
+  /** Every price it went at that day, most units first; its usual price if it did not sell. */
+  prices: SoldAt[]
+  units: number
+  revenue: number
+  /** Off the shelf that day: sold, plus any tester, damage or sample written off. */
+  deducted: number
+  /** Counted at that day's close; null where nothing was counted — today, or a day not filed. */
+  onHand: number | null
+}
+
+export interface StoreDay extends SalesFigure {
+  day: DateStr
+  /** Today, read from the counter as it stands. */
+  live: boolean
+  /** That day's closing, if it was filed. */
+  closing?: Closing
+  /** How the day was paid, as filed. */
+  tender?: Closing['tender']
+  /** Every product on the shelf, in the range's order, and anything else sold or counted that day. */
+  rows: StoreDayRow[]
+  countries: DayDetail['countries']
+}
+
+/**
+ * One store's day, for its page (Revision 10, the client's eighth): "click on
+ * the date, then only appear" that day — each product with the price it went
+ * for, what the day took off the shelf, and the count at that day's close;
+ * how it was paid; and where the customers came from. Days that have ended
+ * read their closing; today reads the counter, with nothing counted yet.
+ */
+export const selectStoreDay = (data: CrmData, locationId: string, day: DateStr): StoreDay => {
+  const live = day === data.today
+  const closing = data.closings.find((c) => c.locationId === locationId && c.period === day && c.periodType === 'day')
+  const lines = live ? (data.liveLines[locationId] ?? []) : (closing?.lines ?? [])
+  const basis = basisOf(locationId)
+  const detail = selectDayDetail(data, day, locationId)
+
+  const sold = new Map<string, { units: number; revenue: number; prices: SoldAt[] }>()
+  for (const l of lines) {
+    const unitPrice = lineUnitPrice(l, basis)
+    const tier = l.priceTier ?? basis
+    const s = sold.get(l.skuId) ?? { units: 0, revenue: 0, prices: [] }
+    s.units += l.qty
+    s.revenue += l.qty * unitPrice
+    const same = s.prices.find((p) => p.unitPrice === unitPrice && p.tier === tier)
+    if (same) same.qty += l.qty
+    else s.prices.push({ unitPrice, tier, qty: l.qty })
+    sold.set(l.skuId, s)
+  }
+  const off = new Map<string, number>()
+  for (const l of closing ? [...closing.lines, ...closing.writeOffs] : lines) {
+    off.set(l.skuId, (off.get(l.skuId) ?? 0) + l.qty)
+  }
+  const count = new Map((closing?.stockCount ?? []).map((c) => [c.skuId, c.counted]))
+
+  const ids = [...countedSkus.map((s) => s.id)]
+  for (const id of [...sold.keys(), ...count.keys()]) if (!ids.includes(id)) ids.push(id)
+  const at = rangeIndex()
+  ids.sort((a, b) => (at.get(a) ?? LAST_IN_RANGE) - (at.get(b) ?? LAST_IN_RANGE))
+
+  const rows: StoreDayRow[] = ids.map((skuId) => {
+    const sku = skuById(skuId)
+    const s = sold.get(skuId)
+    const usual: SoldAt = isFoc(sku) ? { unitPrice: 0, tier: 'foc', qty: 0 } : { unitPrice: priceOf(sku, basis), tier: basis, qty: 0 }
+    return {
+      skuId,
+      label: sku?.label ?? skuId,
+      code: sku?.code ?? '',
+      prices: s ? [...s.prices].sort((a, b) => b.qty - a.qty) : [usual],
+      units: s?.units ?? 0,
+      revenue: Math.round((s?.revenue ?? 0) * 100) / 100,
+      deducted: off.get(skuId) ?? 0,
+      onHand: closing ? (count.get(skuId) ?? null) : null,
+    }
+  })
+
+  return {
+    day,
+    live,
+    closing,
+    tender: closing?.tender,
+    revenue: detail.revenue,
+    units: detail.units,
+    customers: detail.customers,
+    rows,
+    countries: detail.countries,
+  }
+}
+
 // ── Dealers and consignment, month by month ─────────────────────────────────
 
 export type PartnerChannel = 'dealer' | 'consignment'
@@ -1685,6 +1781,20 @@ const partnerFigures = (data: CrmData): Map<string, { revenue: number; keyed?: P
   for (const p of data.partnerSales) out.set(`${p.locationId}::${p.month}`, { revenue: p.revenueMYR, keyed: p })
   return out
 }
+
+/** One partner's months on record, the latest first: what was keyed in, or filed. */
+export const selectPartnerMonths = (
+  data: CrmData,
+  locationId: string,
+): { month: string; revenue: number; keyed?: PartnerSales }[] =>
+  [...partnerFigures(data).entries()]
+    .filter(([key]) => key.startsWith(`${locationId}::`))
+    .map(([key, f]) => ({
+      month: key.slice(locationId.length + 2),
+      revenue: Math.round(f.revenue * 100) / 100,
+      ...(f.keyed ? { keyed: f.keyed } : {}),
+    }))
+    .sort((a, b) => (a.month < b.month ? 1 : -1))
 
 /** Each dealer's (or consignment partner's) sales for a month, best first. */
 export const selectPartnerMonth = (

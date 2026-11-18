@@ -26,11 +26,23 @@ const firstMonth = (closings: { period: string }[], fallback: string) =>
  * day shows what it sold, and opens to show the day in full — each store's
  * sales, each product, and where the customers came from. With `locationId`,
  * one store's own days.
+ *
+ * With `onSelect`, a tap chooses the day instead, and `selected` is marked:
+ * a store's page shows the chosen day under the calendar (Revision 10, "the
+ * business date calendar that can be clicked").
  */
-export function SalesCalendar({ locationId }: { locationId?: string }) {
+export function SalesCalendar({
+  locationId,
+  selected,
+  onSelect,
+}: {
+  locationId?: string
+  selected?: string
+  onSelect?: (day: string) => void
+}) {
   const data = useData()
   const thisMonth = monthKey(data.today)
-  const [month, setMonth] = useState(thisMonth)
+  const [month, setMonth] = useState(() => (selected ? monthKey(selected) : thisMonth))
   const [open, setOpen] = useState<string | null>(null)
 
   const days = useMemo(() => selectDailySales(data, month, locationId), [data, month, locationId])
@@ -54,9 +66,13 @@ export function SalesCalendar({ locationId }: { locationId?: string }) {
       <PanelHeader
         eyebrow="Calendar"
         title={`${monthLabel(month)} · ${rm(total)}`}
-        meta={`${num(customers)} customers. Tap a day to open it: ${
-          locationId ? 'each product' : 'each store, each product'
-        }, and where the customers came from.`}
+        meta={
+          onSelect
+            ? `${num(customers)} customers. Tap a day to see it below: each product with its price, what left the shelf and the count at the close, how it was paid, and where the customers came from.`
+            : `${num(customers)} customers. Tap a day to open it: ${
+                locationId ? 'each product' : 'each store, each product'
+              }, and where the customers came from.`
+        }
         action={
           <div className="flex items-center gap-1">
             <IconButton
@@ -92,19 +108,23 @@ export function SalesCalendar({ locationId }: { locationId?: string }) {
             const sales = days.get(d)
             const future = d > data.today
             const isToday = d === data.today
+            const chosen = selected === d
             if (!inMonth) return <div key={d} aria-hidden="true" />
             return (
               <button
                 key={d}
-                onClick={() => setOpen(d)}
+                onClick={() => (onSelect ? onSelect(d) : setOpen(d))}
                 disabled={future || !sales}
+                aria-pressed={onSelect ? chosen : undefined}
                 title={sales ? `${formatDate(d)} · ${rm(sales.revenue)} · ${num(sales.customers)} customers` : formatDate(d)}
                 className={`flex min-h-[58px] flex-col items-start rounded-lg border px-1.5 py-1 text-left transition-colors sm:min-h-[76px] sm:px-2 sm:py-1.5 ${
-                  isToday
-                    ? 'border-primary/60 bg-primary/8'
-                    : sales
-                      ? 'border-line bg-surface-2 hover:border-primary/45 hover:bg-primary/5'
-                      : 'border-line/60 bg-surface'
+                  chosen
+                    ? 'border-primary bg-primary/15 ring-2 ring-primary/40'
+                    : isToday
+                      ? 'border-primary/60 bg-primary/8'
+                      : sales
+                        ? 'border-line bg-surface-2 hover:border-primary/45 hover:bg-primary/5'
+                        : 'border-line/60 bg-surface'
                 } disabled:cursor-default`}
               >
                 <span className={`readout text-[11px] ${isToday ? 'font-semibold text-primary' : 'text-ink-3'}`}>

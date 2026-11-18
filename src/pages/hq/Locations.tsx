@@ -9,9 +9,9 @@ import { SegmentedControl, TextInput } from '../../components/ui/Field'
 import { useToasts } from '../../components/ui/Toast'
 import { PAGE } from '../../components/ui/LoadMore'
 import { SalesBoxes } from '../../components/SalesBoxes'
-import { SalesReport } from '../../components/SalesReport'
 import { SalesCalendar } from '../../components/SalesCalendar'
 import { useData } from '../../store/useData'
+import { useCurrentUser } from '../../store/useAuth'
 import { salesWindows, selectSalesPeriods, selectStoreSales, type PeriodSales, type StoreSalesRow } from '../../store/selectors'
 import { CHANNEL_PLURAL, locationById, locations, tradingLocations } from '../../data/locations'
 import { formatDate, monthKey, monthLabel } from '../../lib/dates'
@@ -29,17 +29,23 @@ const PERIODS: Period[] = ['today', 'yesterday', 'monthToDate', 'lastMonth']
  * The estate — every place Legendary sells, in one list.
  *
  * Sales at a glance (client, 1 November): the same four boxes as the other
- * main pages, the sales report with its date, store, item and nationality
- * rules, and a table of every store's today, yesterday, month so far and last
- * month, with a total at the foot of each column. A store that reports a
+ * main pages, and a table of every store's today, yesterday, month so far and
+ * last month, with a total at the foot of each column. A store that reports a
  * month at a time shows a dash for the days it does not report.
  *
  * The table shows ten stores at a time, and the calendar of daily sales sits
  * above the stores opening soon (both asked on 1 November, after Revision 9).
+ *
+ * The sales report has moved to Analytics, where its dates, stores, items and
+ * nationalities drive the whole page (16 November: "I'll do this in the
+ * analytics"). Finance opens on the stores themselves: no boxes, "just keep
+ * the calendar, and then pipeline is good".
  */
 export function Locations() {
   const navigate = useNavigate()
   const data = useData()
+  const user = useCurrentUser()
+  const finance = user?.role === 'finance'
   const push = useToasts((s) => s.push)
   const [view, setView] = useState<View>('main')
   const [query, setQuery] = useState('')
@@ -167,10 +173,7 @@ export function Locations() {
         </div>
       </div>
 
-      <SalesBoxes />
-
-      {/* The counter, between the boxes and the table (client, 1 November). */}
-      <SalesReport />
+      {!finance && <SalesBoxes />}
 
       <Panel>
         <PanelHeader
