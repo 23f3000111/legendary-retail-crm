@@ -34,6 +34,8 @@ export type DocKind =
   | 'partner_sales'
   /** A line of the range as head office keyed it: added, changed or taken off (20 October). */
   | 'product'
+  /** The order the range is listed in, as Davy, Kelly or Chloe arranged it (16 November). */
+  | 'product_order'
 
 export interface Doc {
   kind: DocKind

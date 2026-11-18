@@ -32,7 +32,7 @@ import { todayInMalaysia } from '../lib/dates'
 import { auditId, type AuditEntry } from '../lib/audit'
 import { closingWriteRefusal } from '../lib/editing'
 import { partnerSalesRefusal } from '../lib/partner-sales'
-import { catalogueRefusal } from '../lib/catalogue'
+import { catalogueRefusal, productOrderRefusal } from '../lib/catalogue'
 import { poWriteRefusal } from '../lib/po-machine'
 import { newId } from '../lib/ids'
 import type { CrmData, DateStr, PurchaseOrder } from '../data/types'
@@ -80,6 +80,7 @@ const WRITERS: Record<DocKind, Role[]> = {
   setting: ['md', 'it'],
   partner_sales: ['md', 'ops', 'pa', 'finance'],
   product: ['md', 'ops', 'pa'],
+  product_order: ['md', 'ops', 'pa'],
 }
 
 /** Documents a promoter is sent: their own store's, and nothing from the log. */
@@ -442,16 +443,18 @@ export class LocalBackend implements Backend {
             ? partnerSalesRefusal(d, this.today)
             : d.kind === 'product'
               ? catalogueRefusal(d)
-              : d.kind === 'po'
-                ? (() => {
-                    const was = this.docs.get(docKey(d.kind, d.id))
-                    return poWriteRefusal(
-                      s.person.role,
-                      was && !was.deleted ? (was.doc as PurchaseOrder) : undefined,
-                      d.doc as PurchaseOrder,
-                    )
-                  })()
-                : null)
+              : d.kind === 'product_order'
+                ? productOrderRefusal(d)
+                : d.kind === 'po'
+                  ? (() => {
+                      const was = this.docs.get(docKey(d.kind, d.id))
+                      return poWriteRefusal(
+                        s.person.role,
+                        was && !was.deleted ? (was.doc as PurchaseOrder) : undefined,
+                        d.doc as PurchaseOrder,
+                      )
+                    })()
+                  : null)
       if (refused) return { ok: false, error: refused }
       if (d.kind === 'audit') {
         // Append-only: a line that exists is never rewritten. And the actor is
@@ -479,8 +482,8 @@ export class LocalBackend implements Backend {
         this.write({ ...d, doc }, s.person.id)
         continue
       }
-      if (d.kind === 'product') {
-        // And who changed a product.
+      if (d.kind === 'product' || d.kind === 'product_order') {
+        // And who changed a product, or the order of the range.
         const doc = { ...(d.doc as object), changedBy: s.person.name, changedAt: new Date().toISOString() }
         this.write({ ...d, doc }, s.person.id)
         continue

@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { useData } from './useData'
 import { settle, signInAs, startFixture, written } from './testing'
-import { applyCatalogue, countedSkus, sellableSkus, skuById, tiersFor, type CatalogueEntry } from '../data/products'
+import { applyCatalogue, countedSkus, sellableSkus, skuById, skus, tiersFor, type CatalogueEntry, type ProductOrder } from '../data/products'
 import type { LocalBackend } from '../api/local'
+import type { PutDoc } from '../api/backend'
+import { movedLines } from '../lib/catalogue'
 
 /**
  * Client, 20 October: "Can let 3 of us able to add and remove products?" —
@@ -155,5 +157,71 @@ describe('the server’s side of it', () => {
     const token = lb.openSessionForTests('kelly')
     lb.putSync(token, [{ kind: 'product', id: 'orchid-retail-50ml', doc: entry() }])
     expect(lb.removeSync(token, 'product', ['orchid-retail-50ml']).error).toMatch(/taken off/)
+  })
+})
+
+describe('arranging the range (16 November)', () => {
+  // Every line on the range, testers included, as the Products screen sends it.
+  const order = () => skus.filter((s) => !s.removed).map((s) => s.id)
+  const moved = () => {
+    const ids = order()
+    // Dream to the top of the bottles.
+    return ['dream-retail', ...ids.filter((id) => id !== 'dream-retail')]
+  }
+
+  it('lets Davy, Kelly and Chloe save the order, signed and logged', async () => {
+    const ids = moved()
+    const result = save().saveProductOrder(ids)
+    expect(result.ok).toBe(true)
+    expect(sellableSkus[0].id).toBe('dream-retail')
+    expect(written()[0]).toMatchObject({ kind: 'product', action: 'product.order_changed' })
+    expect(written()[0].summary).toBe('Changed the order of the products')
+    expect(written()[0].detail).toMatch(/Dream · 50ml/)
+
+    await settle()
+    const doc = lb.allDocs().find((d) => d.kind === 'product_order' && d.id === 'range')?.doc as ProductOrder
+    expect(doc.skuIds).toEqual(ids)
+    expect(doc.changedBy).toBe('Kelly Tew')
+
+    signInAs(lb, 'chloe')
+    expect(sellableSkus[0].id).toBe('dream-retail')
+    expect(save().saveProductOrder(order()).error).toMatch(/Nothing has been changed/)
+  })
+
+  it('is not Finance’s, a promoter’s or the founder’s to change', () => {
+    for (const [who, at] of [
+      ['siew-fang', undefined],
+      ['teokoknian', 'klia-t2'],
+      ['vins', undefined],
+    ] as const) {
+      signInAs(lb, who, at)
+      expect(save().saveProductOrder(moved()).ok, who).toBe(false)
+    }
+  })
+
+  it('reaches every store, so the closing lists the range the same way', () => {
+    save().saveProductOrder(moved())
+    signInAs(lb, 'teokoknian', 'klia-t2')
+    expect(countedSkus[0].id).toBe('dream-retail')
+  })
+
+  it('is checked by the server, however it was sent', () => {
+    const put = (who: string, d: Partial<PutDoc>) =>
+      lb.putSync(lb.openSessionForTests(who), [{ kind: 'product_order', id: 'range', doc: { skuIds: moved() }, ...d }])
+    expect(put('kelly', {}).ok).toBe(true)
+    expect(put('siew-fang', {}).ok).toBe(false)
+    expect(put('kelly', { doc: { skuIds: ['orchid-retail', 'orchid-retail'] } }).error).toMatch(/once/)
+    expect(put('kelly', { doc: { skuIds: ['Not An Id'] } }).error).toMatch(/order/)
+    expect(put('kelly', { doc: {} }).error).toMatch(/order/)
+    expect(put('kelly', { id: 'other' }).error).toMatch(/order/)
+    expect(put('kelly', { locationId: 'bsas' }).error).toMatch(/whole range/)
+  })
+})
+
+describe('what a new order moved', () => {
+  it('names the line that was moved, not the ones it pushed along', () => {
+    expect(movedLines(['a', 'b', 'c', 'd', 'e'], ['d', 'a', 'b', 'c', 'e'])).toEqual(['d'])
+    expect(movedLines(['a', 'b', 'c'], ['a', 'b', 'c'])).toEqual([])
+    expect(movedLines(['a', 'b', 'c', 'd'], ['b', 'a', 'd', 'c'])).toHaveLength(2)
   })
 })

@@ -3,6 +3,7 @@ import {
   applyCatalogue,
   countedSkus,
   hasListPrice,
+  inBuiltInOrder,
   newCodeFor,
   orderableSkus,
   type CatalogueEntry,
@@ -237,12 +238,15 @@ describe('what is counted, and what is only ordered', () => {
   })
 
   it('has the 3ml vial for the sixteen fragrances the fourth revision lists, counted on the shelf', () => {
-    expect(vialSkus.map((s) => s.productId)).toEqual([
-      'orchid', 'violet', 'mahsuri', 'man',
-      'nyonya-aromatic', 'kebaya-blooms', 'ondeh-delights',
-      'dream', 'passion', 'life', 'love', 'hope', 'confidence',
-      'wish-1', 'wish-2', 'wish-3',
-    ])
+    // Which sixteen; the order they are listed in is the client's (Revision 10, below).
+    expect(vialSkus.map((s) => s.productId).sort()).toEqual(
+      [
+        'orchid', 'violet', 'mahsuri', 'man',
+        'nyonya-aromatic', 'kebaya-blooms', 'ondeh-delights',
+        'dream', 'passion', 'life', 'love', 'hope', 'confidence',
+        'wish-1', 'wish-2', 'wish-3',
+      ].sort(),
+    )
     for (const v of vialSkus) {
       expect(v.label, v.id).toMatch(/· 3ml Vial$/)
       expect(v.sellable, v.label).toBe(true)
@@ -319,7 +323,7 @@ describe('the range, as head office keeps it (20 October)', () => {
     expect(priceOf(added, 'retail')).toBe(288)
   })
 
-  it('adds a new fragrance with its first line, at the end of its collection', () => {
+  it('adds a new fragrance with its first line, at the end of the bottles until it is arranged', () => {
     applyCatalogue([
       entry({
         skuId: 'jasmine-retail',
@@ -334,8 +338,12 @@ describe('the range, as head office keeps it (20 October)', () => {
     ])
     expect(skuById('jasmine-retail')?.label).toBe('Jasmine · 30ml')
     expect(tiersFor(skuById('jasmine-retail'), 'promotion')).toEqual(['promotion', 'promotion2', 'retail', 'other'])
+    // The range is listed in the client's order (Revision 10): a line it does
+    // not name ends the bottles, and its fragrance follows it.
     const order = products.map((p) => p.id)
-    expect(order.indexOf('jasmine')).toBe(order.indexOf('man') + 1)
+    expect(order[order.length - 1]).toBe('jasmine')
+    const bottles = countedSkus.filter((s) => s.variant !== 'vial')
+    expect(bottles[bottles.length - 1].id).toBe('jasmine-retail')
     expect(products.find((p) => p.id === 'jasmine')?.collection).toBe('Signature')
   })
 
@@ -384,5 +392,101 @@ describe('the range, as head office keeps it (20 October)', () => {
   it('gives a new line a shelf code no other line has', () => {
     expect(newCodeFor('orchid', 'retail', '30ml')).toBe('LGD-ORC-R30-2')
     expect(newCodeFor('orchid', 'retail', '75ml')).toBe('LGD-ORC-R75')
+  })
+})
+
+describe('the order of the range (Revision 10)', () => {
+  afterEach(() => applyCatalogue([]))
+
+  const soldIds = () => countedSkus.filter((s) => s.variant !== 'vial').map((s) => s.id)
+
+  it("puts the range in the client's order", () => {
+    applyCatalogue([])
+    expect(soldIds()).toEqual([
+      'orchid-retail',
+      'violet-retail',
+      'spirit-1-set',
+      'spirit-1-set-new',
+      'three-wishes-set',
+      'life-retail',
+      'passion-retail',
+      'wish-1-set',
+      'wish-2-set',
+      'wish-3-set',
+      'man-retail',
+      'mahsuri-retail',
+      'spirit-2-travel',
+      'nyonya-aromatic-retail',
+      'kebaya-blooms-retail',
+      'ondeh-delights-retail',
+      'love-retail',
+      'confidence-retail',
+      'hope-retail',
+      // Not on the client's sheet: after it, in the order they were listed before.
+      'spirit-2-set',
+      'dream-retail',
+      'three-wishes-travel',
+      'nyonya-travel',
+    ])
+  })
+
+  it("lists the vials after every bottle, in the client's vial order", () => {
+    applyCatalogue([])
+    expect(vialSkus.map((s) => s.id)).toEqual(
+      [
+        'orchid', 'violet', 'mahsuri', 'love', 'hope', 'confidence', 'passion', 'dream', 'life',
+        'wish-1', 'wish-2', 'wish-3', 'nyonya-aromatic', 'kebaya-blooms', 'ondeh-delights', 'man',
+      ].map((p) => `${p}-vial`),
+    )
+    const firstVial = countedSkus.findIndex((s) => s.variant === 'vial')
+    expect(countedSkus.slice(firstVial).every((s) => s.variant === 'vial')).toBe(true)
+    // Testers come last of all.
+    const firstTester = skus.findIndex((s) => s.variant === 'tester')
+    expect(skus.slice(firstTester).every((s) => s.variant === 'tester')).toBe(true)
+  })
+
+  it('follows a saved order, keeping each line in its own section', () => {
+    applyCatalogue([], ['dream-retail', 'orchid-vial', 'orchid-retail'])
+    expect(soldIds().slice(0, 2)).toEqual(['dream-retail', 'orchid-retail'])
+    // A vial named in the order stays among the vials, never among the bottles.
+    expect(vialSkus[0].id).toBe('orchid-vial')
+    expect(skus[skus.length - 1].variant).toBe('tester')
+  })
+
+  it('drops a stale id and puts a line the order does not name at the end of its section', () => {
+    applyCatalogue(
+      [
+        {
+          skuId: 'jasmine-retail',
+          productId: 'jasmine',
+          product: { id: 'jasmine', name: 'Jasmine', collectionId: 'signature' },
+          variant: 'retail',
+          size: '30ml',
+          code: 'LGD-JAS-R30',
+          retailPriceMYR: 238,
+          promotionPriceMYR: 188,
+          reorderPoint: 24,
+          caseSize: 12,
+        },
+      ],
+      ['gone-sku', 'violet-retail'],
+    )
+    expect(skus.some((s) => s.id === 'gone-sku')).toBe(false)
+    expect(soldIds()[0]).toBe('violet-retail')
+    expect(soldIds()[soldIds().length - 1]).toBe('jasmine-retail')
+  })
+
+  it('orders the fragrances by their first line', () => {
+    applyCatalogue([])
+    expect(products.slice(0, 4).map((p) => p.id)).toEqual(['orchid', 'violet', 'spirit-1', 'three-wishes'])
+  })
+
+  it('keeps the built-in order for the sample history', () => {
+    applyCatalogue([])
+    expect(inBuiltInOrder(countedSkus).slice(0, 3).map((s) => s.id)).toEqual([
+      'orchid-retail',
+      'violet-retail',
+      'mahsuri-retail',
+    ])
   })
 })

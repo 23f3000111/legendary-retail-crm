@@ -358,13 +358,130 @@ const testers: Sku[] = testerSeeds.map(([productId, size]) => ({
 /** The range as the client's own lists give it. */
 const BUILT_IN_SKUS: Sku[] = [...sellable, ...vials, ...testers]
 
+// ── The order the range is listed in (client, Revision 10) ─────────────────
+
+/**
+ * The order of the client's own stock sheet ("CRM Revision 10", the client's
+ * eighth): "in every page, product order shows following this order", the
+ * bottles, sets and kits first and the 3ml vials after them. Davy, Kelly and
+ * Chloe can arrange it differently on Products (16 November); this is where
+ * it starts, and where "Back to the client's order" returns to.
+ */
+export const CLIENT_ORDER: string[] = [
+  'orchid-retail', // ORCHID 30ML (NF)
+  'violet-retail', // VIOLET 30ML (NF)
+  'spirit-1-set', // SPIRIT 1 (15ML x 3) OLD
+  'spirit-1-set-new', // SPIRIT 1 (15ML x 3) VERSION 1 (NEW)
+  'three-wishes-set', // 3 WISHES (15ML x 3)
+  'life-retail', // LIFE EDP 50ML
+  'passion-retail', // PASSION EDP 50ML
+  'wish-1-set', // I WISH EDP 15ML
+  'wish-2-set', // II WISH EDP 15ML
+  'wish-3-set', // III WISH EDP 15ML
+  'man-retail', // MAN EDP 50ML (NEW)
+  'mahsuri-retail', // MAHSURI EDP 30ML
+  'spirit-2-travel', // SPIRIT 1 (TRAVEL KIT), under the id it was first filed with
+  'nyonya-aromatic-retail', // NYONYA AROMATIC EDP 30ML
+  'kebaya-blooms-retail', // KEBAYA BLOOMS EDP 30ML
+  'ondeh-delights-retail', // ONDEH DELIGHTS EDP 30ML
+  // The sheet says 15ML; the range has sold these as 50ml bottles since the
+  // fourth revision, so these are the same three bottles.
+  'love-retail',
+  'confidence-retail',
+  'hope-retail',
+  // On the range but not on the sheet: after it, as they were listed before.
+  'spirit-2-set',
+  'dream-retail',
+  'three-wishes-travel',
+  'nyonya-travel',
+  // The vials, in the sheet's vial order. Mahsuri is listed twice there; the
+  // first place stands.
+  'orchid-vial',
+  'violet-vial',
+  'mahsuri-vial',
+  'love-vial', // Spirit 1: Love, Hope, Confidence
+  'hope-vial',
+  'confidence-vial',
+  'passion-vial', // Spirit 2: Passion, Dream, Life
+  'dream-vial',
+  'life-vial',
+  'wish-1-vial', // 3 Wishes: Wish 1, Wish 2, Wish 3
+  'wish-2-vial',
+  'wish-3-vial',
+  'nyonya-aromatic-vial',
+  'kebaya-blooms-vial',
+  'ondeh-delights-vial',
+  'man-vial',
+]
+
+/**
+ * The three parts of the range, which keep to themselves whatever order is
+ * chosen: what is sold, the vials after it, and the testers last.
+ */
+export type RangeSection = 'sold' | 'vial' | 'tester'
+
+export const sectionOf = (sku: Pick<Sku, 'variant'>): RangeSection =>
+  sku.variant === 'vial' ? 'vial' : sku.variant === 'tester' ? 'tester' : 'sold'
+
+const SECTION_RANK: Record<RangeSection, number> = { sold: 0, vial: 1, tester: 2 }
+
+const LAST = Number.MAX_SAFE_INTEGER
+
+const positions = (ids: string[]) => new Map(ids.map((id, i) => [id, i]))
+const CLIENT_POSITION = positions(CLIENT_ORDER)
+const BUILT_IN_POSITION = positions(BUILT_IN_SKUS.map((s) => s.id))
+
+/**
+ * The range in order: its section first, then where the saved order puts it,
+ * then where the client's sheet does, then where it was listed before. A line
+ * neither names — one head office added since — ends its section; an id
+ * neither knows is simply not on the range.
+ */
+const rangeSort = (list: Sku[], saved: string[] = []): Sku[] => {
+  const chosen = positions(saved)
+  return list
+    .map((s, i) => ({ s, i }))
+    .sort(
+      (a, b) =>
+        SECTION_RANK[sectionOf(a.s)] - SECTION_RANK[sectionOf(b.s)] ||
+        (chosen.get(a.s.id) ?? LAST) - (chosen.get(b.s.id) ?? LAST) ||
+        (CLIENT_POSITION.get(a.s.id) ?? LAST) - (CLIENT_POSITION.get(b.s.id) ?? LAST) ||
+        a.i - b.i,
+    )
+    .map((x) => x.s)
+}
+
+/** The fragrances in the order of their first line, for every list grouped by fragrance. */
+const byFirstLine = (list: Product[], lines: Sku[]): Product[] => {
+  const first = new Map<string, number>()
+  lines.forEach((s, i) => {
+    if (!first.has(s.productId)) first.set(s.productId, i)
+  })
+  return list
+    .map((p, i) => ({ p, i }))
+    .sort((a, b) => (first.get(a.p.id) ?? LAST) - (first.get(b.p.id) ?? LAST) || a.i - b.i)
+    .map((x) => x.p)
+}
+
+/**
+ * A list in the order the range was first built in, whatever order it is
+ * shown in now. The sample history is generated from it, so arranging the
+ * range never changes the sample figures the tests are written against.
+ */
+export const inBuiltInOrder = <T extends { id: string }>(list: T[]): T[] =>
+  list
+    .map((s, i) => ({ s, i }))
+    .sort((a, b) => (BUILT_IN_POSITION.get(a.s.id) ?? LAST) - (BUILT_IN_POSITION.get(b.s.id) ?? LAST) || a.i - b.i)
+    .map((x) => x.s)
+
 /**
  * Every line there has ever been, the ones taken off included, so a sale from
  * last month still reads its name. Rebuilt by `applyCatalogue` whenever head
  * office adds, changes or takes off a product; every import sees the current
  * list.
  */
-export let skus: Sku[] = BUILT_IN_SKUS
+export let skus: Sku[] = rangeSort(BUILT_IN_SKUS)
+products = byFirstLine(BUILT_IN_PRODUCTS, skus)
 
 export const collections: { id: CollectionId; name: string; slot: 1 | 2 | 3 | 4 }[] = [
   { id: 'signature', name: 'Signature', slot: 1 },
@@ -433,6 +550,15 @@ export interface CatalogueEntry {
   changedAt?: string
 }
 
+/** The order the range is listed in, as head office arranged it (16 November). */
+export interface ProductOrder {
+  /** Every line, in order. One it does not name ends its section. */
+  skuIds: string[]
+  /** Stamped by the server: whoever was signed in, and when. */
+  changedBy?: string
+  changedAt?: string
+}
+
 /** What a line is called on the shelf: "Orchid · 30ml", "Orchid · 3ml Vial", "Orchid · Tester 30ml". */
 const labelFor = (productId: string, variant: Variant, size: string) =>
   `${productName(productId)} · ${variant === 'vial' ? '3ml Vial' : variant === 'tester' ? `Tester ${size}` : size}`
@@ -457,9 +583,10 @@ const withEntry = (sku: Sku, e: CatalogueEntry): Sku => {
 /**
  * Lays what head office has keyed in over the client's own list. Called with
  * the records each time they change, and with none to go back to the list as
- * built in.
+ * built in. `order` is the order Davy, Kelly or Chloe arranged the range in,
+ * where they have; without it the range is in the client's order.
  */
-export function applyCatalogue(entries: CatalogueEntry[]): void {
+export function applyCatalogue(entries: CatalogueEntry[], order: string[] = []): void {
   const added = new Map<string, Product>()
   for (const e of entries) {
     if (!e.product || BUILT_IN_PRODUCTS.some((p) => p.id === e.product!.id)) continue
@@ -472,7 +599,8 @@ export function applyCatalogue(entries: CatalogueEntry[]): void {
       audience: 'Unisex',
     })
   }
-  // A new fragrance sits at the end of its own collection.
+  // A new fragrance follows its first line, once the range is in order
+  // below; until then it sits at the end of its own collection.
   const list = [...BUILT_IN_PRODUCTS]
   for (const p of added.values()) {
     const last = list.map((x) => x.collectionId).lastIndexOf(p.collectionId)
@@ -507,7 +635,8 @@ export function applyCatalogue(entries: CatalogueEntry[]): void {
         e,
       ),
     )
-  skus = [...builtIn, ...fresh]
+  skus = rangeSort([...builtIn, ...fresh], order)
+  products = byFirstLine(products, skus)
   derive()
 }
 

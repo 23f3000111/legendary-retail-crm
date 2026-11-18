@@ -32,9 +32,10 @@ import {
   TIER_LABEL,
   type CatalogueEntry,
   type CollectionId,
+  type ProductOrder,
   type Variant,
 } from '../data/products'
-import { catalogueRefusal } from '../lib/catalogue'
+import { catalogueRefusal, movedLines, PRODUCT_ORDER_ID, productOrderRefusal } from '../lib/catalogue'
 import { countryName, MALAYSIA_SEGMENT_LABEL, type MalaysiaSegment } from '../data/countries'
 import { basisOf, locationById, locationName } from '../data/locations'
 import { rm } from '../lib/format'
@@ -290,6 +291,12 @@ export interface DataState extends CrmData {
   removeProduct: (skuId: string) => Result
   /** Puts a product that was taken off back on the range. */
   restoreProduct: (skuId: string) => Result
+  /**
+   * Lists the range in a new order, for everyone (16 November): every line
+   * on the range, in the order Davy, Kelly or Chloe put them. Davy, Kelly and
+   * Chloe only.
+   */
+  saveProductOrder: (skuIds: string[]) => Result
 
   markAlertRead: (id: string) => void
   markAllAlertsRead: () => void
@@ -325,8 +332,13 @@ const live = <T>(kind: DocKind): T[] => {
 
 /** The working set, from the documents. */
 function rebuild(today: DateStr): CrmData & { users: Person[]; unfiledLines: DataState['unfiledLines'] } {
-  // The range first: everything below reads it (20 October).
-  applyCatalogue(live<CatalogueEntry>('product'))
+  // The range first: everything below reads it (20 October), in the order
+  // head office arranged it, where they have (16 November).
+  const order = docs.get(docKey('product_order', PRODUCT_ORDER_ID))
+  applyCatalogue(
+    live<CatalogueEntry>('product'),
+    order && !order.deleted ? ((order.doc as ProductOrder).skuIds ?? []) : [],
+  )
   const closings = live<Closing>('closing').sort((a, b) => (a.period < b.period ? -1 : 1))
   const purchaseOrders = live<PurchaseOrder>('po').sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
   const targets = live<Target>('target')
@@ -1297,6 +1309,32 @@ export const useData = create<DataState>()((set, get) => {
         action: 'product.restored',
         summary: `Put ${sku.label} back on the range`,
         entityId: skuId,
+      })
+      return { ok: true }
+    },
+
+    saveProductOrder: (skuIds) => {
+      const who = me()
+      if (!who) return { ok: false, error: 'Sign in again.' }
+      if (!can(who.role).canEdit || !can(who.role).manageCatalogue) {
+        return { ok: false, error: 'Only Davy, Kelly or Chloe can change the order of the products.' }
+      }
+      const refused = productOrderRefusal({ kind: 'product_order', id: PRODUCT_ORDER_ID, doc: { skuIds } })
+      if (refused) return { ok: false, error: refused }
+      const gone = skuIds.find((id) => !skuById(id))
+      if (gone) return { ok: false, error: 'A product in that order is no longer on the list. Open Products again.' }
+      const before = skus.filter((s) => !s.removed).map((s) => s.id)
+      if (before.join() === skuIds.join()) return { ok: false, error: 'Nothing has been changed.' }
+
+      write([{ kind: 'product_order', id: PRODUCT_ORDER_ID, doc: { skuIds } }])
+      const moved = movedLines(before, skuIds).map((id) => skuLabel(id))
+      get().record({
+        kind: 'product',
+        action: 'product.order_changed',
+        summary: 'Changed the order of the products',
+        detail: moved.length
+          ? `Moved ${moved.slice(0, 6).join(', ')}${moved.length > 6 ? ` and ${moved.length - 6} more` : ''}`
+          : undefined,
       })
       return { ok: true }
     },

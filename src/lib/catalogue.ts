@@ -43,3 +43,55 @@ export const catalogueRefusal = (d: PutDoc): string | null => {
   if (!isWhole(e.caseSize, 1)) return 'The case size must be a whole number, 1 or more.'
   return null
 }
+
+/**
+ * The order the range is listed in, as Davy, Kelly or Chloe arranged it
+ * (16 November): one record for the whole range, a list of its line ids.
+ * The local backend's twin of `_product_order_refusal` in `0001_init.sql`;
+ * keep the two in step.
+ */
+export const PRODUCT_ORDER_ID = 'range'
+const MAX_ORDERED = 500
+
+export const productOrderRefusal = (d: PutDoc): string | null => {
+  if (d.locationId) return 'The order belongs to the whole range, not to one store.'
+  const ids = ((d.doc ?? {}) as { skuIds?: unknown }).skuIds
+  if (d.id !== PRODUCT_ORDER_ID || !Array.isArray(ids) || ids.length > MAX_ORDERED) {
+    return 'That is not an order of the range.'
+  }
+  if (ids.some((id) => typeof id !== 'string' || !/^[a-z0-9][a-z0-9-]{0,80}$/.test(id))) {
+    return 'That is not an order of the range.'
+  }
+  if (new Set(ids).size !== ids.length) return 'Each product goes in the order once.'
+  return null
+}
+
+/**
+ * Which lines were moved, rather than pushed along by another's move: those
+ * outside the longest run that kept its relative order. Moving Dream to the
+ * top shifts every other line down one, and only Dream was moved.
+ */
+export const movedLines = (before: string[], after: string[]): string[] => {
+  const was = new Map(before.map((id, i) => [id, i]))
+  const kept = after.filter((id) => was.has(id))
+  const seq = kept.map((id) => was.get(id)!)
+  // Longest increasing run of old positions, remembering how each was reached.
+  const tails: number[] = []
+  const tailAt: number[] = []
+  const prev: number[] = new Array(seq.length).fill(-1)
+  seq.forEach((v, i) => {
+    let lo = 0
+    let hi = tails.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (tails[mid] < v) lo = mid + 1
+      else hi = mid
+    }
+    tails[lo] = v
+    tailAt[lo] = i
+    prev[i] = lo > 0 ? tailAt[lo - 1] : -1
+  })
+  const stayed = new Set<string>()
+  for (let i = tails.length ? tailAt[tails.length - 1] : -1; i >= 0; i = prev[i]) stayed.add(kept[i])
+  return after.filter((id) => was.has(id) && !stayed.has(id))
+}

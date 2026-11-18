@@ -10,7 +10,7 @@
  * the one on Friday.
  */
 import { locations, tradingLocations, type Location } from './locations'
-import { countedSkus, sellableSkus, skuById, priceOf } from './products'
+import { countedSkus as rangeCounted, inBuiltInOrder, sellableSkus as rangeSellable, skuById, priceOf } from './products'
 import { countries } from './countries'
 import { seedPeople as people, seedPeople } from './people'
 import { seedPromotions } from './promotions'
@@ -284,6 +284,10 @@ const WRITE_OFF_WORD: Record<WriteOff['reason'], string> = {
 }
 
 function build(r: () => number, today: DateStr): CrmData {
+  // The range as it was first built, whatever order it is shown in: the
+  // sample history must not move when the range is arranged (Revision 10).
+  const countedSkus = inBuiltInOrder(rangeCounted)
+  const sellableSkus = inBuiltInOrder(rangeSellable)
   const start = addDays(today, -(HISTORY_DAYS - 1))
   const days = dateRange(start, today)
 
@@ -636,6 +640,7 @@ function deriveAlerts(
   const alerts: Alert[] = []
   const stamp = (d: DateStr, hh: string) => `${d}T${hh}:00+08:00`
   const daily = tradingLocations.filter((l) => l.cadence === 'daily')
+  const countedSkus = inBuiltInOrder(rangeCounted)
 
   // Stock at or under its reorder point right now.
   for (const loc of daily) {
