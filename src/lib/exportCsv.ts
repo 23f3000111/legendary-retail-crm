@@ -17,8 +17,9 @@ export function toCsv(headers: string[], rows: Cell[][]): string {
 }
 
 /**
- * One block of a report of several parts — sales by product, payment, the
- * shelf, customers — each under its own title, a blank line between them.
+ * One block of a report of several parts — the product sales listing,
+ * payment, the shelf, customers — each under its own title, a blank line
+ * between them.
  */
 export interface CsvBlock {
   title?: string

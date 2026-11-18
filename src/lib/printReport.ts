@@ -12,12 +12,21 @@
 /** One titled table of a report of several parts (Revision 10). */
 export interface ReportSection {
   title: string
+  /** A line under the title: the dates a listing covers, say. */
+  note?: string
   headers: string[]
   /** Which columns are figures, set right. */
   right: boolean[]
   rows: string[][]
-  /** Rows that are a product's subtotal, set in bold. */
+  /** Rows that are a subtotal, set in bold. */
   subtotals?: number[]
+  /**
+   * Rows that open a group, drawn as a band across the table — Zeoniq's
+   * "Outlet:" and "Item:". Such a row has one cell.
+   */
+  bands?: { row: number; level: 'outlet' | 'item' }[]
+  /** How far in each row sits, 0 to 2: an item under its outlet, its dates under it. */
+  indents?: number[]
   total?: string[]
 }
 
@@ -81,6 +90,11 @@ export const reportHtml = (spec: ReportSpec, logoUrl: string, printedAt: string)
   .r { text-align: right; }
   tfoot td { font-weight: 700; border-top: 1.5px solid #94a3b8; border-bottom: none; background: #eef2ff !important; }
   tr.sub td { font-weight: 700; background: #f1f5f9 !important; border-bottom: 1.5px solid #cbd5e1; }
+  tr.band { break-after: avoid; page-break-after: avoid; }
+  tr.band td { font-weight: 600; }
+  tr.band.outlet td { background: #c7d2fe !important; color: #312e81; border-bottom: 1px solid #a5b4fc; }
+  tr.band.item td { background: #e0e7ff !important; color: #3730a3; border-bottom: 1px solid #c7d2fe; }
+  .note { color: #64748b; font-size: 11.5px; margin: -4px 0 6px; }
   section { break-inside: auto; }
   thead { display: table-header-group; }
   footer { margin-top: 22px; color: #94a3b8; font-size: 10.5px; }
@@ -123,15 +137,27 @@ ${(spec.sections ?? []).map((sec) => tableHtml(sec, cell)).join('')}
 </body></html>`
 }
 
-/** One titled table, with its subtotal rows in bold and its total at the foot. */
+/**
+ * One titled table, with its subtotal rows in bold, its bands across it, its
+ * rows set in as far as their group, and its total at the foot.
+ */
 const tableHtml = (sec: ReportSection, cell: (v: string, right: boolean, tag?: string) => string): string => {
   const subs = new Set(sec.subtotals ?? [])
+  const bands = new Map((sec.bands ?? []).map((b) => [b.row, b.level]))
+  const inset = (n: number) => 8 + (sec.indents?.[n] ?? 0) * 14
+  const row = (r: string[], n: number) => {
+    const band = bands.get(n)
+    if (band) return `<tr class="band ${band}"><td colspan="${sec.headers.length}" style="padding-left:${inset(n)}px">${esc(r[0] ?? '')}</td></tr>`
+    const cells = r.map((v, i) =>
+      i === 0 && sec.indents?.[n] ? `<td${sec.right[0] ? ' class="r"' : ''} style="padding-left:${inset(n)}px">${esc(v)}</td>` : cell(v, sec.right[i]),
+    )
+    return `<tr${subs.has(n) ? ' class="sub"' : ''}>${cells.join('')}</tr>`
+  }
   return `<section><h2>${esc(sec.title)}</h2>
+${sec.note ? `<p class="note">${esc(sec.note)}</p>` : ''}
 <table>
 <thead><tr>${sec.headers.map((h, i) => cell(h, sec.right[i], 'th')).join('')}</tr></thead>
-<tbody>${sec.rows
-    .map((r, n) => `<tr${subs.has(n) ? ' class="sub"' : ''}>${r.map((v, i) => cell(v, sec.right[i])).join('')}</tr>`)
-    .join('')}</tbody>
+<tbody>${sec.rows.map(row).join('')}</tbody>
 ${sec.total ? `<tfoot><tr>${sec.total.map((v, i) => cell(v, sec.right[i])).join('')}</tr></tfoot>` : ''}
 </table></section>`
 }

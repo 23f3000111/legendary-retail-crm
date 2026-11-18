@@ -120,7 +120,7 @@ export function Analytics() {
   }
   const printAnalytics = () => {
     const ok = openPrintReport(
-      detailPrintSpec(report(), { title: oneStore ? `Analytics · ${oneStore.name}` : 'Analytics', subtitle: period, rules, perStore: false }),
+      detailPrintSpec(report(), { title: oneStore ? `Analytics · ${oneStore.name}` : 'Analytics', subtitle: period, rules }),
     )
     if (!ok) push('The report could not open: allow pop-ups for this site, then try again.', 'critical')
   }

@@ -70,7 +70,6 @@ export function StoreDay({ locationId, day }: { locationId: string; day: string 
             ? 'Today, as it stands — the shelf is counted at closing'
             : 'Not filed',
         rules: [],
-        perStore: false,
       }),
     )
     if (!ok) push('The report could not open: allow pop-ups for this site, then try again.', 'critical')
