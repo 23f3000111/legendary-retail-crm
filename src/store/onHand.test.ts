@@ -1,0 +1,93 @@
+import { describe, expect, it } from 'vitest'
+import { selectOnHandAtOrder } from './selectors'
+import { isApproverNote } from '../lib/po-machine'
+import type { Closing, CrmData, PoEvent, PurchaseOrder } from '../data/types'
+
+/**
+ * Revision 10, "Davy, Kelly & Chloe Page (Purchase Order)": "In PO page to be
+ * approved, show the store on hand quantity for each SKU, on the day PO
+ * placed." The meeting of 16 November: Kelly's notes in green, for the
+ * warehouse to follow; nobody changes anybody's notes.
+ */
+
+const closing = (period: string, submittedAt: string, counts: Record<string, number>): Closing => ({
+  id: `melaka-${period}`,
+  locationId: 'melaka',
+  channel: 'main',
+  period,
+  periodType: 'day',
+  revenueMYR: 0,
+  lines: [],
+  staffSales: { qty: 0, revenueMYR: 0 },
+  stockCount: Object.entries(counts).map(([skuId, counted]) => ({ skuId, opening: counted, counted })),
+  writeOffs: [],
+  submittedBy: 'Khoo Kwok Tsu',
+  submittedAt,
+})
+
+const order = (events: PoEvent[], createdAt = '2026-11-09T03:49:00.000Z'): PurchaseOrder => ({
+  id: 'PO-261109-TEST',
+  locationId: 'melaka',
+  createdBy: 'Khoo Kwok Tsu',
+  createdAt,
+  priority: 'standard',
+  notes: '',
+  status: 'submitted',
+  lines: [{ skuId: 'orchid-retail', qtyRequested: 24, qtyApproved: null, qtyShipped: null }],
+  events,
+})
+
+const data = (closings: Closing[], po: PurchaseOrder): CrmData => ({
+  today: '2026-11-10',
+  closings,
+  purchaseOrders: [po],
+  alerts: [],
+  targets: [],
+  promotions: [],
+  audit: [],
+  users: [],
+  liveLines: {},
+  partnerSales: [],
+})
+
+const eighth = closing('2026-11-08', '2026-11-08T22:05:00+08:00', { 'orchid-retail': 30 })
+const ninth = closing('2026-11-09', '2026-11-09T22:00:00+08:00', { 'orchid-retail': 26 })
+const sent = (at: string): PoEvent => ({ status: 'submitted', actor: 'Khoo Kwok Tsu', role: 'promoter', at })
+
+describe('the store’s stock when the order was placed', () => {
+  it('reads the last count filed before the order was sent', () => {
+    // Sent at 11:49 on the 9th, Malaysian time: the 8th's count is the latest.
+    const po = order([sent('2026-11-09T03:49:00.000Z')])
+    const at = selectOnHandAtOrder(data([eighth, ninth], po), po)
+    expect(at?.day).toBe('2026-11-08')
+    expect(at?.counts.get('orchid-retail')).toBe(30)
+  })
+
+  it('reads the day’s own count when the order went with the closing', () => {
+    // Sent at 22:10 on the 9th, after that day was filed at 22:00.
+    const po = order([sent('2026-11-09T14:10:00.000Z')])
+    expect(selectOnHandAtOrder(data([eighth, ninth], po), po)?.day).toBe('2026-11-09')
+  })
+
+  it('goes by when it was first sent, not when it was sent again', () => {
+    const po = order([sent('2026-11-09T03:49:00.000Z'), sent('2026-11-10T03:00:00.000Z')])
+    expect(selectOnHandAtOrder(data([eighth, ninth], po), po)?.day).toBe('2026-11-08')
+  })
+
+  it('has nothing to show for a store that has never filed', () => {
+    const po = order([sent('2026-11-09T03:49:00.000Z')])
+    expect(selectOnHandAtOrder(data([], po), po)).toBeNull()
+  })
+})
+
+describe('whose notes the warehouse follows', () => {
+  const note = (role: PoEvent['role']): PoEvent => ({ status: 'approved', actor: 'x', role, at: 'x', note: 'n' })
+
+  it('is the approvers’: Kelly’s, and Davy’s', () => {
+    expect(isApproverNote(note('ops'))).toBe(true)
+    expect(isApproverNote(note('md'))).toBe(true)
+    for (const role of ['promoter', 'warehouse', 'finance', 'pa'] as const) expect(isApproverNote(note(role))).toBe(false)
+    // A step with nothing written is no note at all.
+    expect(isApproverNote({ ...note('ops'), note: undefined })).toBe(false)
+  })
+})

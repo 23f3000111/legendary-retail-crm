@@ -16,7 +16,7 @@
  * Screens never assign `status` directly — they ask for a transition and this
  * module decides whether it is legal and who may make it.
  */
-import type { PoStatus, PurchaseOrder } from '../data/types'
+import type { PoEvent, PoStatus, PurchaseOrder } from '../data/types'
 import type { Role } from '../data/people'
 
 interface Transition {
@@ -145,6 +145,13 @@ export const availableTransitions = (po: PurchaseOrder, role: Role): Transition[
   TRANSITIONS[po.status].filter((t) => t.by.includes(role))
 
 /** On its way: sent, and not yet received or turned down. A draft has not been sent. */
+/**
+ * A note from whoever approves orders — Kelly, or Davy (16 November): shown
+ * in green, the instruction the warehouse follows. Nobody's note is ever
+ * changed by anybody else; this only says whose it is.
+ */
+export const isApproverNote = (e: PoEvent): boolean => Boolean(e.note?.trim()) && (e.role === 'ops' || e.role === 'md')
+
 export const isOpen = (po: Pick<PurchaseOrder, 'status'>): boolean =>
   po.status !== 'received' && po.status !== 'rejected' && po.status !== 'draft'
 

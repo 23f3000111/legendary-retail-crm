@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Panel, PanelBody, PanelHeader, Rule } from '../../components/ui/Panel'
 import { Button } from '../../components/ui/Button'
@@ -13,12 +13,12 @@ import { OrderEditor } from '../../components/po/OrderEditor'
 import { useData } from '../../store/useData'
 import { useCan, useCurrentUser } from '../../store/useAuth'
 import { useToasts } from '../../components/ui/Toast'
-import { poUnits, poValue } from '../../store/selectors'
-import { availableTransitions, canClearAccounts, STATUS_LABEL, STATUS_OWNER } from '../../lib/po-machine'
+import { poUnits, poValue, selectOnHandAtOrder } from '../../store/selectors'
+import { availableTransitions, canClearAccounts, isApproverNote, STATUS_LABEL, STATUS_OWNER } from '../../lib/po-machine'
 import { orderEditMode } from '../../lib/editing'
 import { locationById, CHANNEL_LABEL } from '../../data/locations'
 import { skuById } from '../../data/products'
-import { formatTimestamp } from '../../lib/dates'
+import { formatDateShort, formatTimestamp } from '../../lib/dates'
 import { num, rm } from '../../lib/format'
 import type { PoStatus } from '../../data/types'
 
@@ -40,6 +40,7 @@ export function OrderDetail() {
   const user = useCurrentUser()
   const capability = useCan()
   const po = useData((s) => s.purchaseOrders.find((p) => p.id === id))
+  const closings = useData((s) => s.closings)
   const transitionPo = useData((s) => s.transitionPo)
   const clearAccounts = useData((s) => s.clearAccounts)
   const editPurchaseOrder = useData((s) => s.editPurchaseOrder)
@@ -53,6 +54,31 @@ export function OrderDetail() {
   const [changing, setChanging] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const deleteDraftOrder = useData((s) => s.deleteDraftOrder)
+  // The warehouse folds every note but Kelly's away, and the choice stays on
+  // the device (16 November).
+  const [hideOthers, setHideOthers] = useState(() => {
+    try {
+      return localStorage.getItem('lgd.hideOtherNotes') === '1'
+    } catch {
+      return false
+    }
+  })
+  const toggleNotes = () =>
+    setHideOthers((v) => {
+      try {
+        localStorage.setItem('lgd.hideOtherNotes', v ? '0' : '1')
+      } catch {
+        // Nothing to keep it in: it lasts as long as the page.
+      }
+      return !v
+    })
+  // What the store had of each line when it sent the order: for Davy, Kelly,
+  // Chloe and the founder (Revision 10).
+  const seesStock = Boolean(user && ['md', 'ops', 'pa', 'director'].includes(user.role))
+  const onHand = useMemo(
+    () => (po && seesStock ? selectOnHandAtOrder({ closings }, po) : null),
+    [po, closings, seesStock],
+  )
 
   if (!po || !user) {
     return (
@@ -69,6 +95,8 @@ export function OrderDetail() {
 
   const location = locationById(po.locationId)
   const moves = capability.canEdit ? availableTransitions(po, user.role) : []
+  const hasApproverNote = po.events.some(isApproverNote)
+  const hasOtherNotes = Boolean(po.notes?.trim()) || po.events.some((e) => e.note?.trim() && !isApproverNote(e))
   // Finance's move sits beside the chain: it is offered whenever the order has
   // been approved and not yet cleared, whatever the warehouse has done since.
   const canClear = capability.canEdit && canClearAccounts(po, user.role)
@@ -179,7 +207,7 @@ export function OrderDetail() {
             </Button>
           )}
           {po.financeClearedAt && (
-            <Badge tone="good" icon="check">
+            <Badge tone="active" icon="check">
               Cleared by Finance
             </Badge>
           )}
@@ -203,17 +231,31 @@ export function OrderDetail() {
             />
             <Rule />
             <PanelBody>
-              <PoLines po={po} />
+              <PoLines po={po} onHand={seesStock ? onHand : undefined} />
             </PanelBody>
           </Panel>
 
           {po.notes && (
             <Panel>
-              <PanelHeader eyebrow="Note from the store" title="Why they asked" />
-              <Rule />
-              <PanelBody>
-                <p className="whitespace-pre-line text-[13px] leading-relaxed text-ink-2">{po.notes}</p>
-              </PanelBody>
+              <PanelHeader
+                eyebrow="Note from the store"
+                title="Why they asked"
+                action={
+                  hideOthers ? (
+                    <Button size="sm" variant="ghost" onClick={toggleNotes}>
+                      Show
+                    </Button>
+                  ) : undefined
+                }
+              />
+              {!hideOthers && (
+                <>
+                  <Rule />
+                  <PanelBody>
+                    <p className="whitespace-pre-line text-[13px] leading-relaxed text-ink-2">{po.notes}</p>
+                  </PanelBody>
+                </>
+              )}
             </Panel>
           )}
 
@@ -237,10 +279,21 @@ export function OrderDetail() {
         </div>
 
         <Panel className="h-fit">
-          <PanelHeader eyebrow="Lifecycle" title="Where this order has been" />
+          <PanelHeader
+            eyebrow="Lifecycle"
+            title="Where this order has been"
+            meta={hasApproverNote ? 'Notes from Kelly or Davy are in green: the ones to follow.' : undefined}
+            action={
+              hasOtherNotes ? (
+                <Button size="sm" variant={hideOthers ? 'secondary' : 'ghost'} onClick={toggleNotes}>
+                  {hideOthers ? 'Show every note' : 'Hide other notes'}
+                </Button>
+              ) : undefined
+            }
+          />
           <Rule />
           <PanelBody>
-            <PoTimeline po={po} />
+            <PoTimeline po={po} hideOthers={hideOthers} />
           </PanelBody>
         </Panel>
       </div>
@@ -332,6 +385,9 @@ export function OrderDetail() {
                   <p className="text-[11px] text-ink-3">
                     requested {num(l.qtyRequested)}
                     {pending?.to === 'packed' && l.qtyApproved !== null ? ` · approved ${num(l.qtyApproved)}` : ''}
+                    {pending?.to === 'approved' && seesStock && onHand
+                      ? ` · ${onHand.counts.has(l.skuId) ? num(onHand.counts.get(l.skuId)!) : 'none counted'} on hand ${formatDateShort(onHand.day)}`
+                      : ''}
                   </p>
                 </div>
                 <div className="w-24 shrink-0">

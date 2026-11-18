@@ -1,5 +1,5 @@
 import { Icon } from '../ui/icons'
-import { STATUS_CHAIN, STATUS_LABEL } from '../../lib/po-machine'
+import { isApproverNote, STATUS_CHAIN, STATUS_LABEL } from '../../lib/po-machine'
 import { formatTimestamp } from '../../lib/dates'
 import type { PurchaseOrder } from '../../data/types'
 
@@ -10,8 +10,12 @@ import type { PurchaseOrder } from '../../data/types'
  *
  * Finance's clearance is shown beside the chain, under the approval, since the
  * warehouse no longer waits for it.
+ *
+ * Kelly's notes — the approvers', Davy's too — are in green, the instruction
+ * the warehouse follows; with `hideOthers` every other note folds away
+ * (16 November). Nobody's note is changed: each stays as its writer left it.
  */
-export function PoTimeline({ po }: { po: PurchaseOrder }) {
+export function PoTimeline({ po, hideOthers = false }: { po: PurchaseOrder; hideOthers?: boolean }) {
   const rejected = po.status === 'rejected'
   const reachedAt = new Map(po.events.map((e) => [e.status, e]))
   const steps = rejected
@@ -76,16 +80,31 @@ export function PoTimeline({ po }: { po: PurchaseOrder }) {
                   <p className="mt-0.5 text-[11.5px] text-ink-3">
                     {event.actor} · {formatTimestamp(event.at)}
                   </p>
-                  {event.note && (
-                    <p
-                      className={`mt-1.5 whitespace-pre-line rounded-md border px-2.5 py-1.5 text-[11.5px] leading-relaxed ${
-                        isRejection
-                          ? 'border-critical/25 bg-critical/8 text-ink'
-                          : 'border-line bg-sunken text-ink-2'
+                  {event.note && isApproverNote(event) ? (
+                    <div
+                      className={`mt-1.5 rounded-md border-2 px-2.5 py-1.5 ${
+                        isRejection ? 'border-critical/40 bg-critical/8' : 'border-good/55 bg-good/10'
                       }`}
                     >
-                      {event.note}
-                    </p>
+                      <p className={`text-[10.5px] font-semibold uppercase tracking-wide2 ${isRejection ? 'text-critical' : 'text-good'}`}>
+                        {event.actor}’s note
+                      </p>
+                      <p className="mt-0.5 whitespace-pre-line text-[12px] leading-relaxed text-ink">{event.note}</p>
+                    </div>
+                  ) : event.note && hideOthers ? (
+                    <p className="mt-1 text-[11px] italic text-ink-3">Note hidden</p>
+                  ) : (
+                    event.note && (
+                      <p
+                        className={`mt-1.5 whitespace-pre-line rounded-md border px-2.5 py-1.5 text-[11.5px] leading-relaxed ${
+                          isRejection
+                            ? 'border-critical/25 bg-critical/8 text-ink'
+                            : 'border-line bg-sunken text-ink-2'
+                        }`}
+                      >
+                        {event.note}
+                      </p>
+                    )
                   )}
                 </>
               ) : (
@@ -94,7 +113,7 @@ export function PoTimeline({ po }: { po: PurchaseOrder }) {
               {status === 'approved' && approved && !rejected && (
                 <p
                   className={`mt-1.5 flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11.5px] ${
-                    cleared ? 'border-good/30 bg-good/8 text-ink' : 'border-line bg-sunken text-ink-3'
+                    cleared ? 'border-primary/30 bg-primary/8 text-ink' : 'border-line bg-sunken text-ink-3'
                   }`}
                 >
                   <Icon name={cleared ? 'check' : 'wallet'} className="h-3 w-3 shrink-0" strokeWidth={2.4} />

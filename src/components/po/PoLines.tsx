@@ -2,8 +2,12 @@ import { Badge } from '../ui/Badge'
 import { priceOf, skuById } from '../../data/products'
 import { basisOf } from '../../data/locations'
 import { num, rm } from '../../lib/format'
+import { formatDateShort } from '../../lib/dates'
 import { effectiveQty } from '../../lib/po-machine'
-import type { PoLine, PurchaseOrder } from '../../data/types'
+import type { DateStr, PoLine, PurchaseOrder } from '../../data/types'
+
+/** The store's count when it sent the order, for Davy, Kelly and Chloe (Revision 10). */
+export type OnHandAtOrder = { day: DateStr; counts: Map<string, number> } | null
 
 /**
  * Order lines. Requested, approved and shipped sit side by side so a trimmed
@@ -14,8 +18,17 @@ import type { PoLine, PurchaseOrder } from '../../data/types'
  * was unusable — but a five-column table on a 390px screen is the wrong shape
  * even when the swipe works. Below `sm` each line gets its own card and there
  * is nothing to swipe; from `sm` up it is the table it always was.
+ *
+ * With `onHand`, an On hand column shows what the store had of each line when
+ * it sent the order (Revision 10), for whoever approves it.
  */
-export function PoLines({ po }: { po: PurchaseOrder }) {
+export function PoLines({ po, onHand }: { po: PurchaseOrder; onHand?: OnHandAtOrder }) {
+  const showOnHand = onHand !== undefined
+  const had = (skuId: string) => {
+    const n = onHand?.counts.get(skuId)
+    return n === undefined ? '—' : num(n)
+  }
+  const onHandHeader = onHand ? `On hand · ${formatDateShort(onHand.day)}` : 'On hand'
   const showApproved = po.lines.some((l) => l.qtyApproved !== null)
   const showShipped = po.lines.some((l) => l.qtyShipped !== null)
   const trimmedAny = po.lines.some(
@@ -40,6 +53,12 @@ export function PoLines({ po }: { po: PurchaseOrder }) {
               <p className="readout text-[10.5px] text-ink-3">{sku?.code}</p>
 
               <dl className="mt-2.5 flex flex-wrap gap-x-5 gap-y-1.5">
+                {showOnHand && (
+                  <div>
+                    <dt className="eyebrow">{onHandHeader}</dt>
+                    <dd className="readout text-[13px] text-ink-2">{had(l.skuId)}</dd>
+                  </div>
+                )}
                 <div>
                   <dt className="eyebrow">Requested</dt>
                   <dd className="readout text-[13px] text-ink-2">{num(l.qtyRequested)}</dd>
@@ -87,6 +106,15 @@ export function PoLines({ po }: { po: PurchaseOrder }) {
                 <th scope="col" className="pb-2 text-left text-[10px] uppercase tracking-wide2 text-ink-3">
                   SKU
                 </th>
+                {showOnHand && (
+                  <th
+                    scope="col"
+                    className="pb-2 text-right text-[10px] uppercase tracking-wide2 text-ink-3"
+                    title="What the store had on its shelf when it sent the order: its last count before then."
+                  >
+                    {onHandHeader}
+                  </th>
+                )}
                 <th scope="col" className="pb-2 text-right text-[10px] uppercase tracking-wide2 text-ink-3">
                   Requested
                 </th>
@@ -115,6 +143,9 @@ export function PoLines({ po }: { po: PurchaseOrder }) {
                       <p className="text-[13px] leading-tight text-ink">{sku?.label ?? l.skuId}</p>
                       <p className="font-mono text-[10.5px] text-ink-3">{sku?.code}</p>
                     </td>
+                    {showOnHand && (
+                      <td className="tnum py-2.5 text-right font-mono text-[13px] text-ink-2">{had(l.skuId)}</td>
+                    )}
                     <td className="tnum py-2.5 text-right font-mono text-[13px] text-ink-2">
                       {num(l.qtyRequested)}
                     </td>
@@ -148,6 +179,10 @@ export function PoLines({ po }: { po: PurchaseOrder }) {
           </table>
         </div>
       </div>
+
+      {showOnHand && !onHand && (
+        <p className="mt-3 text-[11.5px] text-ink-3">On hand: this store had not filed a count before it sent the order.</p>
+      )}
 
       {trimmedAny && (
         <p className="mt-3">
