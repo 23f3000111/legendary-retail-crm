@@ -40,9 +40,13 @@ import {
 } from '../data/products'
 import { countries } from '../data/countries'
 import { linesDiffer } from '../lib/changes'
+import { rangeIndex } from '../lib/range'
 import { addDays, dateRange, daysBetween, monthKey, shiftMonth, spanDays, startOfMonth, type DateSpan } from '../lib/dates'
 import { effectiveQty, isOpen } from '../lib/po-machine'
 import type { Alert, Closing, CrmData, DateStr, PartnerSales, PurchaseOrder, SaleLine } from '../data/types'
+
+/** Where a line the range does not know sits in a list: at the end. */
+const LAST_IN_RANGE = Number.MAX_SAFE_INTEGER
 
 // ── Filter ─────────────────────────────────────────────────────────────────
 
@@ -1592,6 +1596,7 @@ export interface DayDetail extends SalesFigure {
  * how many of each product went, and which countries the buyers came from.
  */
 export const selectDayDetail = (data: CrmData, day: DateStr, locationId?: string): DayDetail => {
+  const at = rangeIndex()
   const total = blank()
   const stores: DayDetail['stores'] = []
   const products = new Map<string, { units: number; revenue: number; countries: Map<string, number> }>()
@@ -1632,7 +1637,8 @@ export const selectDayDetail = (data: CrmData, day: DateStr, locationId?: string
           .map(([countryCode, units]) => ({ countryCode, units }))
           .sort((a, b) => b.units - a.units || a.countryCode.localeCompare(b.countryCode)),
       }))
-      .sort((a, b) => b.revenue - a.revenue || b.units - a.units),
+      // In the range's order, as every list of products is (Revision 10).
+      .sort((a, b) => (at.get(a.skuId) ?? LAST_IN_RANGE) - (at.get(b.skuId) ?? LAST_IN_RANGE)),
     countries: [...nations.entries()]
       .map(([countryCode, t]) => ({ countryCode, customers: t.baskets.size, units: t.units, revenue: sen(t.revenue) }))
       .sort((a, b) => b.customers - a.customers || b.units - a.units || a.countryCode.localeCompare(b.countryCode)),

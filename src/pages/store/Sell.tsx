@@ -22,7 +22,7 @@ import { locationById } from '../../data/locations'
 import {
   lineUnitPrice,
   priceAtTier,
-  products,
+  productById,
   skuById,
   sellableSkus,
   tiersFor,
@@ -37,6 +37,7 @@ import {
   type MalaysiaSegment,
 } from '../../data/countries'
 import { formatDate } from '../../lib/dates'
+import { pickerGroups } from '../../lib/range'
 import { clock } from '../../lib/changes'
 import { num, rm } from '../../lib/format'
 import type { SaleLine } from '../../data/types'
@@ -323,12 +324,12 @@ export function Sell() {
         <Rule />
         <PanelBody>
           <div className="space-y-4">
-            {products.map((p) => {
-              const variants = sellableSkus.filter((s) => s.productId === p.id)
-              if (!variants.length) return null
+            {/* In the range's order, the vials together after the bottles (Revision 10). */}
+            {pickerGroups(sellableSkus).map((g) => {
+              const variants = g.skus
               return (
-                <div key={p.id}>
-                  <p className="eyebrow mb-2">{p.name}</p>
+                <div key={g.key}>
+                  <p className="eyebrow mb-2">{g.label}</p>
                   <div className="space-y-2">
                     {variants.map((v) => {
                       const tiers = tiersFor(v, basis)
@@ -344,7 +345,8 @@ export function Sell() {
                         >
                           <div className="mb-2 flex items-center justify-between gap-2 px-1 sm:mb-0 sm:w-[112px] sm:shrink-0">
                             <span className="text-[13.5px] font-medium text-ink">
-                              {variantName(v)}
+                              {/* Among the vials, which fragrance; under a fragrance, which size. */}
+                              {g.key === 'vials' ? (productById(v.productId)?.name ?? v.label) : variantName(v)}
                             </span>
                             {taken > 0 && (
                               <span className="readout flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-semibold text-white">

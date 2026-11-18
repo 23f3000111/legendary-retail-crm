@@ -451,6 +451,12 @@ const rangeSort = (list: Sku[], saved: string[] = []): Sku[] => {
     .map((x) => x.s)
 }
 
+/**
+ * Lines in the client's own order, whatever order head office saved: for
+ * "Back to the client's order" on Products.
+ */
+export const inClientOrder = (list: Sku[]): Sku[] => rangeSort(list)
+
 /** The fragrances in the order of their first line, for every list grouped by fragrance. */
 const byFirstLine = (list: Product[], lines: Sku[]): Product[] => {
   const first = new Map<string, number>()

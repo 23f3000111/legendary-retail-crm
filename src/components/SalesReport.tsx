@@ -14,7 +14,8 @@ import { selectSalesReport, type ReportRow, type ReportRule } from '../store/sel
 import { CHANNEL_PLURAL, locationById, tradingLocations } from '../data/locations'
 import { openPrintReport } from '../lib/printReport'
 import { countriesAlphabetical, countryByCode } from '../data/countries'
-import { products, skuLabel, skus } from '../data/products'
+import { skuLabel, skus } from '../data/products'
+import { pickerGroups } from '../lib/range'
 import { addDays, formatDate, spanLabel } from '../lib/dates'
 import { downloadCsv } from '../lib/exportCsv'
 import { newId } from '../lib/ids'
@@ -213,21 +214,17 @@ export function SalesReport({ locationId }: { locationId?: string } = {}) {
                     label={(id) => skuLabel(id)}
                     options={
                       <>
-                        {products.map((p) => {
-                          // Taken-off products too: their sales are still in the report.
-                          const variants = skus.filter((s) => s.sellable && s.productId === p.id)
-                          if (!variants.length) return null
-                          return (
-                            <optgroup key={p.id} label={p.name}>
-                              {variants.map((s) => (
-                                <option key={s.id} value={s.id} disabled={rule.skuIds.includes(s.id)}>
-                                  {s.label}
-                                  {s.removed ? ' (taken off)' : ''}
-                                </option>
-                              ))}
-                            </optgroup>
-                          )
-                        })}
+                        {/* Taken-off products too: their sales are still in the report. */}
+                        {pickerGroups(skus.filter((s) => s.sellable)).map((g) => (
+                          <optgroup key={g.key} label={g.label}>
+                            {g.skus.map((s) => (
+                              <option key={s.id} value={s.id} disabled={rule.skuIds.includes(s.id)}>
+                                {s.label}
+                                {s.removed ? ' (taken off)' : ''}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ))}
                       </>
                     }
                   />

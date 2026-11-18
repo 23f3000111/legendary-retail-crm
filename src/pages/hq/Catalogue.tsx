@@ -4,6 +4,7 @@ import { Button, IconButton } from '../../components/ui/Button'
 import { Modal } from '../../components/ui/Modal'
 import { useToasts } from '../../components/ui/Toast'
 import { ProductEditor } from '../../components/ProductEditor'
+import { ArrangeRange } from '../../components/ArrangeRange'
 import { useData } from '../../store/useData'
 import { Badge } from '../../components/ui/Badge'
 import { StatTile } from '../../components/ui/StatTile'
@@ -32,6 +33,9 @@ import { num, rm } from '../../lib/format'
  * and take them off, with no approval needed (Q56; client, 20 October). A
  * product taken off leaves the counter, the count and ordering, and is listed
  * at the foot of the page, where it can be put back.
+ *
+ * The lines are listed in the range's own order, the order every page uses
+ * (Revision 10), and the same three can arrange it (16 November).
  */
 export function Catalogue() {
   // Re-read whenever the records change: the range is rebuilt from them.
@@ -43,6 +47,7 @@ export function Catalogue() {
   const keeps = capability.canEdit && capability.manageCatalogue
   const [editing, setEditing] = useState<Sku | 'new' | null>(null)
   const [takingOff, setTakingOff] = useState<Sku | null>(null)
+  const [arranging, setArranging] = useState(false)
 
   const onRange = skus.filter((s) => !s.removed)
   const takenOff = skus.filter((s) => s.removed)
@@ -185,6 +190,11 @@ export function Catalogue() {
             Export
           </Button>
           {keeps && (
+            <Button variant="secondary" icon="grip" onClick={() => setArranging(true)} disabled={arranging}>
+              Arrange
+            </Button>
+          )}
+          {keeps && (
             <Button variant="primary" icon="plus" onClick={() => setEditing('new')}>
               Add a product
             </Button>
@@ -228,17 +238,23 @@ export function Catalogue() {
         />
       </div>
 
-      <Panel>
-        <PanelHeader
-          eyebrow="Catalogue"
-          title={`${onRange.length} lines`}
-          meta="Only revenue is held against a product — cost and profit stay in SQL Accounting."
-        />
-        <Rule />
-        <PanelBody>
-          <DataTable columns={columns} rows={onRange} rowKey={(s) => s.id} dense />
-        </PanelBody>
-      </Panel>
+      {arranging ? (
+        <ArrangeRange onDone={() => setArranging(false)} />
+      ) : (
+        <Panel>
+          <PanelHeader
+            eyebrow="Catalogue"
+            title={`${onRange.length} lines`}
+            meta={`In the order every page lists them: the bottles, sets and kits, then the vials, then the testers. Only revenue is held against a product — cost and profit stay in SQL Accounting.${
+              keeps ? ' Arrange changes the order for everyone.' : ''
+            }`}
+          />
+          <Rule />
+          <PanelBody>
+            <DataTable columns={columns} rows={onRange} rowKey={(s) => s.id} dense />
+          </PanelBody>
+        </Panel>
+      )}
 
       {takenOff.length > 0 && (
         <Panel>

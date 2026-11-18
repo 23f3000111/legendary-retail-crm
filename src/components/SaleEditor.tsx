@@ -9,7 +9,6 @@ import { countryByCode, MALAYSIA_SEGMENT_LABEL, type MalaysiaSegment } from '../
 import {
   lineUnitPrice,
   priceAtTier,
-  products,
   sellableSkus,
   skuById,
   tiersFor,
@@ -18,6 +17,7 @@ import {
   type PriceTier,
 } from '../data/products'
 import { money, toSen } from '../lib/changes'
+import { pickerGroups } from '../lib/range'
 import { moneyInput } from '../lib/format'
 import type { Result } from '../api/backend'
 import type { SaleLine } from '../data/types'
@@ -212,19 +212,15 @@ export function SaleEditor({
                       {r.skuId && skuById(r.skuId)?.removed && (
                         <option value={r.skuId}>{skuById(r.skuId)?.label} (taken off the range)</option>
                       )}
-                      {products.map((p) => {
-                        const variants = sellableSkus.filter((s) => s.productId === p.id)
-                        if (!variants.length) return null
-                        return (
-                          <optgroup key={p.id} label={p.name}>
-                            {variants.map((v) => (
-                              <option key={v.id} value={v.id}>
-                                {v.label}
-                              </option>
-                            ))}
-                          </optgroup>
-                        )
-                      })}
+                      {pickerGroups(sellableSkus).map((g) => (
+                        <optgroup key={g.key} label={g.label}>
+                          {g.skus.map((v) => (
+                            <option key={v.id} value={v.id}>
+                              {v.label}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
                     </Select>
                   </div>
                   <IconButton

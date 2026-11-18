@@ -4,6 +4,7 @@ import {
   countedSkus,
   hasListPrice,
   inBuiltInOrder,
+  inClientOrder,
   newCodeFor,
   orderableSkus,
   type CatalogueEntry,
@@ -479,6 +480,18 @@ describe('the order of the range (Revision 10)', () => {
   it('orders the fragrances by their first line', () => {
     applyCatalogue([])
     expect(products.slice(0, 4).map((p) => p.id)).toEqual(['orchid', 'violet', 'spirit-1', 'three-wishes'])
+  })
+
+  it("gives back the client's order, whatever order was saved", () => {
+    applyCatalogue([], ['dream-retail'])
+    expect(skus[0].id).toBe('dream-retail')
+    expect(inClientOrder(skus)[0].id).toBe('orchid-retail')
+    expect(inClientOrder(skus).filter((s) => s.variant !== 'vial' && s.variant !== 'tester').map((s) => s.id).slice(-4)).toEqual([
+      'spirit-2-set',
+      'dream-retail',
+      'three-wishes-travel',
+      'nyonya-travel',
+    ])
   })
 
   it('keeps the built-in order for the sample history', () => {
