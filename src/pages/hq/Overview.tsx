@@ -21,7 +21,7 @@ import { useCan, useCurrentUser } from '../../store/useAuth'
 import { canOpen } from '../../components/layout/nav'
 import {
   emptyFilter,
-  latestCompleteMonth,
+  latestPartnerMonth,
   partnersIn,
   partnersKeyed,
   poValue,
@@ -50,6 +50,10 @@ import type { CrmData } from '../../data/types'
  * and the main stores split the money, the best sellers, where customers come
  * from, and who is selling — main stores today, dealers and consignment by
  * their latest full month, since those report monthly.
+ *
+ * Dealers and consignment show as soon as any of them is keyed in, with how
+ * many are in so far, and consignment has its own chart beside the dealers
+ * and the main stores, above the best sellers (16 November).
  *
  * **The founder keeps his shorter version.** Vins asked for his own screen to
  * lose the charts: the three stores checked first, anything genuinely his to
@@ -114,18 +118,7 @@ export function Overview() {
 
   const mainRows = rows.filter((r) => r.channel === 'main')
 
-  // ── The two splits ──────────────────────────────────────────────────────
-  const dealerMonth = useMemo(() => latestCompleteMonth(data, 'dealer'), [data])
-  const dealerRows = useMemo(
-    () => (dealerMonth ? selectPartnerMonth(data, 'dealer', dealerMonth) : []),
-    [data, dealerMonth],
-  )
-  const dealerSlices = toSlices(
-    dealerRows.map((r) => ({ key: r.locationId, label: r.shortName, value: r.revenue })),
-    (n) => `${n} other dealers`,
-  )
-  const dealerTotal = dealerRows.reduce((a, r) => a + r.revenue, 0)
-  const lastMonth = shiftMonth(monthKey(data.today), -1)
+  // ── The three splits: dealers, main stores, consignment ─────────────────
 
   const mainMtd = useMemo(() => {
     const byStore = new Map(monthToDate.byStore.map((s) => [s.locationId, s]))
@@ -244,45 +237,8 @@ export function Overview() {
 
       {/* ── How the money splits: dealers, and the main stores ────────── */}
       {!executive && (
-        <div className="grid gap-5 lg:grid-cols-2">
-          <ChartFrame
-            title={dealerMonth ? `Dealers · ${monthLabel(dealerMonth)}` : 'Dealers'}
-            meta={
-              dealerMonth
-                ? dealerMonth === lastMonth
-                  ? 'Last month, with every dealer keyed in.'
-                  : `The latest month with every dealer keyed in — ${monthLabel(lastMonth)} is not complete yet.`
-                : 'Shown once a month has every dealer keyed in.'
-            }
-            height={230}
-            grow
-            table={
-              dealerMonth ? (
-                <DonutTable
-                  slices={dealerRows.map((r) => ({ key: r.locationId, label: r.shortName, value: r.revenue }))}
-                  format={rm}
-                  unitHeader="Revenue"
-                  href={storePage}
-                  page={PAGE}
-                />
-              ) : undefined
-            }
-          >
-            {dealerMonth ? (
-              <div className="flex h-full items-center justify-center">
-                <Donut
-                  slices={dealerSlices}
-                  centreLabel={monthLabel(dealerMonth)}
-                  centreValue={rmCompact(dealerTotal)}
-                  format={rm}
-                  size={186}
-                  href={storePage}
-                />
-              </div>
-            ) : (
-              <WaitingForMonth data={data} channel="dealer" month={lastMonth} canKey={Boolean(open('/partners'))} />
-            )}
-          </ChartFrame>
+        <div className="grid gap-5 lg:grid-cols-2 xl:grid-cols-3">
+          <PartnerSplit data={data} channel="dealer" storePage={storePage} canKey={Boolean(open('/partners'))} />
 
           <ChartFrame
             title="Main stores · month to date"
@@ -302,6 +258,9 @@ export function Overview() {
               />
             </div>
           </ChartFrame>
+
+          {/* Consignment beside the dealers and main stores, above the best sellers (16 November). */}
+          <PartnerSplit data={data} channel="consignment" storePage={storePage} canKey={Boolean(open('/partners'))} />
         </div>
       )}
 
@@ -339,7 +298,7 @@ export function Overview() {
           <PanelHeader
             eyebrow="Sales"
             title="Who is selling"
-            meta="Main stores today, live. Consignment and dealers by their latest full month — they report monthly."
+            meta="Main stores today, live. Consignment and dealers by their latest month, as far as it has been keyed in — they report monthly."
             action={
               <Link to="/locations">
                 <Button size="sm" variant="ghost" iconRight="chevronRight">
@@ -357,6 +316,8 @@ export function Overview() {
                 .map((l) => {
                   const s = today.byStore.find((x) => x.locationId === l.id)
                   // Yesterday's closing, on top of the box (client, 1 November).
+                  // A store that has never filed has not started, so it is not
+                  // missing a day — Sogo 118 the week it opened (Revision 10).
                   const filed = selectClosingFor(data, l.id, yesterday)
                   return {
                     locationId: l.id,
@@ -365,7 +326,9 @@ export function Overview() {
                     revenue: s?.revenue ?? 0,
                     above: filed
                       ? { label: `Yesterday · ${rm(filed.revenueMYR)}`, warn: false }
-                      : { label: 'Yesterday · not filed', warn: true },
+                      : notFiled.includes(l.id)
+                        ? { label: 'Yesterday · not filed', warn: true }
+                        : { label: 'Yesterday · nothing filed yet', warn: false },
                     tiebreak: filed?.revenueMYR ?? 0,
                     detail: s
                       ? `Today · ${num(s.units)} ${s.units === 1 ? 'unit' : 'units'} · ${num(s.customers)} ${s.customers === 1 ? 'customer' : 'customers'}`
@@ -531,7 +494,78 @@ const CHANNEL_WORD: Record<PartnerChannel, { one: string; many: string }> = {
   consignment: { one: 'consignment partner', many: 'consignment partners' },
 }
 
-/** Until a month is complete, say how far the keying-in has got, and where to finish it. */
+/**
+ * A channel's latest month on the overview, shown as soon as any partner of
+ * the kind is keyed in (16 November): the partners keyed in so far, best
+ * first, with how many that is; a waiting card until there are any.
+ */
+function PartnerSplit({
+  data,
+  channel,
+  storePage,
+  canKey,
+}: {
+  data: CrmData
+  channel: PartnerChannel
+  storePage: (id: string) => string
+  canKey: boolean
+}) {
+  const month = latestPartnerMonth(data, channel)
+  const rows = month ? selectPartnerMonth(data, channel, month).filter((r) => r.has) : []
+  const total = partnersIn(channel).length
+  const word = CHANNEL_WORD[channel]
+  const title = channel === 'dealer' ? 'Dealers' : 'Consignment'
+  const slices = rows.map((r) => ({ key: r.locationId, label: r.shortName, value: r.revenue }))
+  const sum = rows.reduce((a, r) => a + r.revenue, 0)
+  return (
+    <ChartFrame
+      title={month ? `${title} · ${monthLabel(month)}` : title}
+      meta={
+        month ? (
+          <>
+            {rows.length === total
+              ? `Every ${word.one} keyed in for ${monthLabel(month)}.`
+              : `${rows.length} of ${total} ${word.many} keyed in for ${monthLabel(month)}.`}
+            {canKey && rows.length < total && (
+              <>
+                {' '}
+                <Link to="/partners" className="text-primary hover:underline">
+                  Key in the rest
+                </Link>
+              </>
+            )}
+          </>
+        ) : (
+          `Shown as soon as a ${word.one} is keyed in.`
+        )
+      }
+      height={230}
+      grow
+      table={
+        month ? (
+          <DonutTable slices={slices} format={rm} unitHeader="Revenue" href={storePage} page={PAGE} />
+        ) : undefined
+      }
+    >
+      {month ? (
+        <div className="flex h-full items-center justify-center">
+          <Donut
+            slices={toSlices(slices, (n) => `${n} other ${word.many}`)}
+            centreLabel={monthLabel(month)}
+            centreValue={rmCompact(sum)}
+            format={rm}
+            size={186}
+            href={storePage}
+          />
+        </div>
+      ) : (
+        <WaitingForMonth data={data} channel={channel} month={shiftMonth(monthKey(data.today), -1)} canKey={canKey} />
+      )}
+    </ChartFrame>
+  )
+}
+
+/** Until a month has a figure, say how far the keying-in has got, and where to start it. */
 function WaitingForMonth({
   data,
   channel,
@@ -551,7 +585,7 @@ function WaitingForMonth({
         {done} of {total} {CHANNEL_WORD[channel].many} keyed in for {monthLabel(month)}
       </p>
       <p className="max-w-[340px] text-[12px] text-ink-3">
-        A month shows once every {CHANNEL_WORD[channel].one} has a figure — 0 counts, for one that sold nothing.
+        A month shows as soon as a {CHANNEL_WORD[channel].one} has a figure — 0 counts, for one that sold nothing.
       </p>
       {canKey && (
         <Link to="/partners" className="mt-1 text-[12.5px] font-medium text-primary hover:underline">
@@ -562,9 +596,9 @@ function WaitingForMonth({
   )
 }
 
-/** Dealers or consignment, best first, for their latest complete month. */
+/** Dealers or consignment, best first, for their latest month: those keyed in so far. */
 function PartnerRanking({ data, channel, canKey }: { data: CrmData; channel: PartnerChannel; canKey: boolean }) {
-  const month = latestCompleteMonth(data, channel)
+  const month = latestPartnerMonth(data, channel)
   const label = channel === 'dealer' ? 'Dealers' : 'Consignment'
   if (!month) {
     return (
@@ -581,10 +615,12 @@ function PartnerRanking({ data, channel, canKey }: { data: CrmData; channel: Par
       </div>
     )
   }
+  const keyedIn = selectPartnerMonth(data, channel, month).filter((r) => r.has)
+  const total = partnersIn(channel).length
   return (
     <Ranking
-      title={`${label} · ${monthLabel(month)}`}
-      rows={selectPartnerMonth(data, channel, month).map((r) => ({
+      title={`${label} · ${monthLabel(month)}${keyedIn.length < total ? ` · ${keyedIn.length} of ${total} keyed in` : ''}`}
+      rows={keyedIn.map((r) => ({
         locationId: r.locationId,
         name: r.shortName,
         place: channel === 'dealer' ? 'Dealer' : 'Consignment',

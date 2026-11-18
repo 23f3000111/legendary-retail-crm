@@ -5,6 +5,7 @@ import {
   emptyFilter,
   latestCompleteMonth,
   latestMonthWithFigures,
+  latestPartnerMonth,
   partnersIn,
   partnersKeyed,
   selectMonthToDate,
@@ -73,6 +74,34 @@ describe('the month the overview shows for a channel', () => {
     expect(latestCompleteMonth(d, 'consignment')).toBe('2026-09')
     expect(latestCompleteMonth(d, 'dealer')).toBeNull()
     expect(latestMonthWithFigures(d, 'consignment')).toBe('2026-09')
+  })
+})
+
+describe('the month the overview shows, as soon as any are keyed in (16 November)', () => {
+  const dealers = partnersIn('dealer')
+
+  it('is last month as soon as any dealer is in, even only some', () => {
+    // "Even only three key in, you should show me the three dealers."
+    const three = dealers.slice(0, 3).map((l) => keyed(l.id, '2026-09', 500))
+    const d = data({ partnerSales: [...everyDealer('2026-08'), ...three] })
+    expect(latestPartnerMonth(d, 'dealer')).toBe('2026-09')
+    expect(partnersKeyed(d, 'dealer', '2026-09')).toBe(3)
+  })
+
+  it('goes back to the latest month with any figure', () => {
+    const d = data({ partnerSales: [keyed(dealers[0].id, '2026-07', 100)] })
+    expect(latestPartnerMonth(d, 'dealer')).toBe('2026-07')
+  })
+
+  it('takes this month only when nothing before it has a figure', () => {
+    expect(latestPartnerMonth(data({ partnerSales: [keyed(dealers[0].id, '2026-10', 100)] }), 'dealer')).toBe('2026-10')
+    const both = data({ partnerSales: [keyed(dealers[0].id, '2026-10', 100), keyed(dealers[1].id, '2026-08', 100)] })
+    expect(latestPartnerMonth(both, 'dealer')).toBe('2026-08')
+  })
+
+  it('is nothing at all until something is keyed in', () => {
+    expect(latestPartnerMonth(data(), 'dealer')).toBeNull()
+    expect(latestPartnerMonth(data(), 'consignment')).toBeNull()
   })
 })
 

@@ -1835,6 +1835,23 @@ export const latestCompleteMonth = (data: CrmData, channel: PartnerChannel, look
   return null
 }
 
+/**
+ * The month the overview shows a channel for, as soon as any partner of the
+ * kind is keyed in (16 November: "even only three key in, you should show me
+ * the three dealers"): the latest month up to last month with any figure, or
+ * this month where nothing earlier has one. Null until something is in.
+ */
+export const latestPartnerMonth = (data: CrmData, channel: PartnerChannel): string | null => {
+  const ids = new Set(partnersIn(channel).map((l) => l.id))
+  const thisMonth = monthKey(data.today)
+  const months = new Set<string>()
+  for (const p of data.partnerSales) if (ids.has(p.locationId)) months.add(p.month)
+  for (const c of data.closings) if (ids.has(c.locationId)) months.add(monthKey(c.period))
+  const sorted = [...months].filter((m) => m <= thisMonth).sort()
+  const finished = sorted.filter((m) => m < thisMonth)
+  return finished.length ? finished[finished.length - 1] : (sorted[sorted.length - 1] ?? null)
+}
+
 /** The latest month, up to this one, in which any partner of the kind has a figure. */
 export const latestMonthWithFigures = (data: CrmData, channel: PartnerChannel): string | null => {
   const ids = new Set(partnersIn(channel).map((l) => l.id))
