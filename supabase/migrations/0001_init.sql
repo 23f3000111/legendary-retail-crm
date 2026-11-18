@@ -220,6 +220,8 @@ language sql immutable as $$
     when 'partner_sales' then r in ('md','ops','pa','finance')
     -- A line of the range, added, changed or taken off by Davy, Kelly or Chloe.
     when 'product'    then r in ('md','ops','pa')
+    -- The order the range is listed in, arranged by the same three (16 November).
+    when 'product_order' then r in ('md','ops','pa')
     else false end
 $$;
 
@@ -672,6 +674,31 @@ begin
   return null;
 end $$;
 
+-- The order the range is listed in (Revision 10, 16 November): one record for
+-- the whole range, its line ids in order. Mirrors `productOrderRefusal` in
+-- src/lib/catalogue.ts; keep the two in step. Who may send it is
+-- `_may_write`'s question.
+create or replace function _product_order_refusal(d jsonb) returns text
+language plpgsql immutable as $$
+declare
+  ids jsonb := d->'doc'->'skuIds';
+begin
+  if d->>'location_id' is not null then return 'The order belongs to the whole range, not to one store.'; end if;
+  if d->>'id' is distinct from 'range' or jsonb_typeof(ids) is distinct from 'array' or jsonb_array_length(ids) > 500 then
+    return 'That is not an order of the range.';
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(ids) e
+    where jsonb_typeof(e) <> 'string' or (e #>> '{}') !~ '^[a-z0-9][a-z0-9-]{0,80}$'
+  ) then
+    return 'That is not an order of the range.';
+  end if;
+  if (select count(distinct e #>> '{}') from jsonb_array_elements(ids) e) <> jsonb_array_length(ids) then
+    return 'Each product goes in the order once.';
+  end if;
+  return null;
+end $$;
+
 -- A dealer's or consignment partner's month, keyed in at head office. Mirrors
 -- `partnerSalesRefusal` in src/lib/partner-sales.ts; keep the two in step.
 --
@@ -730,6 +757,9 @@ begin
     if refused is null and d->>'kind' = 'product' then
       refused := _catalogue_refusal(d);
     end if;
+    if refused is null and d->>'kind' = 'product_order' then
+      refused := _product_order_refusal(d);
+    end if;
     if refused is null and d->>'kind' = 'po' then
       select * into filed from docs where kind = 'po' and id = d->>'id';
       refused := _po_refusal(s.role, filed, d->'doc');
@@ -754,8 +784,8 @@ begin
         -- As with the log, who keyed a figure in is the session's to say.
         body := body || jsonb_build_object('enteredBy', s.name, 'enteredAt', _now_text());
       end if;
-      if d->>'kind' = 'product' then
-        -- And who changed a product.
+      if d->>'kind' in ('product', 'product_order') then
+        -- And who changed a product, or the order of the range.
         body := body || jsonb_build_object('changedBy', s.name, 'changedAt', _now_text());
       end if;
       insert into docs(kind, id, location_id, day, doc, updated_by, updated_at, deleted)

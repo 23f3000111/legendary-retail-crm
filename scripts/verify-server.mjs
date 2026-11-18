@@ -294,6 +294,35 @@ try {
   const goneProduct = await one('select remove_docs($1, $2, $3::text[]) r', [kelly, 'product', ['verify-orchid-retail-75ml']])
   check('a product is taken off, never deleted', goneProduct.r.ok === false, goneProduct.r.error)
 
+  // The order the range is listed in, arranged by Davy, Kelly or Chloe
+  // (Revision 10, 16 November). One record for the whole range.
+  const orderDoc = (over = {}) => [
+    {
+      kind: 'product_order',
+      id: 'range',
+      doc: { skuIds: ['dream-retail', 'orchid-retail', 'orchid-vial'], changedBy: 'Somebody Else' },
+      ...over,
+    },
+  ]
+  const arranged = await put(kelly, orderDoc())
+  check('Kelly can arrange the range', arranged.r.ok === true, arranged.r.error)
+  const orderSigned = await one(`select doc->>'changedBy' as changed_by from docs where kind = 'product_order' and id = 'range'`)
+  check('and the order is signed by whoever sent it', orderSigned?.changed_by === kellyName, orderSigned?.changed_by)
+  const orderByFinance = await put(finance, orderDoc())
+  check('Finance cannot arrange it', orderByFinance.r.ok === false, orderByFinance.r.error)
+  const orderByStore = await put(solo, orderDoc())
+  check('nor can a promoter', orderByStore.r.ok === false, orderByStore.r.error)
+  const twice = await put(kelly, orderDoc({ doc: { skuIds: ['orchid-retail', 'orchid-retail'] } }))
+  check('a product listed twice is refused', twice.r.ok === false, twice.r.error)
+  const notIds = await put(kelly, orderDoc({ doc: { skuIds: ['Not An Id'] } }))
+  check('something that is not a product is refused', notIds.r.ok === false, notIds.r.error)
+  const noList = await put(kelly, orderDoc({ doc: {} }))
+  check('an order with no list is refused', noList.r.ok === false, noList.r.error)
+  const otherId = await put(kelly, orderDoc({ id: 'elsewhere' }))
+  check('an order filed under another name is refused', otherId.r.ok === false, otherId.r.error)
+  const forAStore = await put(kelly, orderDoc({ location_id: 'bsas' }))
+  check('an order for one store is refused', forAStore.r.ok === false, forAStore.r.error)
+
   // An order saved as a draft, without closing the day (20 October): the
   // store may delete its draft, and nobody may delete an order once sent.
   const order = (id, status) => [
