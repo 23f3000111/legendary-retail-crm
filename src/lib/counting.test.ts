@@ -129,3 +129,13 @@ describe('turning the boxes into counts', () => {
     expect(counts.has('love-vial')).toBe(false)
   })
 })
+
+describe('a three after a delivery', () => {
+  it('shares the count by what each should hold with what arrived, so a vial that had none gets its own back', () => {
+    // Passion 49 and Life 58 on the shelf, Dream none, and 24 Dream arrived.
+    const rows = shelfRows(stock())
+    const weights: Record<string, number> = { 'passion-vial': 49, 'dream-vial': 24, 'life-vial': 58 }
+    const counts = countsFromBoxes(rows, { 'group:spirit-2-vials': '131' }, (id) => weights[id] ?? 0)
+    expect(['passion-vial', 'dream-vial', 'life-vial'].map((id) => counts.get(id))).toEqual([49, 24, 58])
+  })
+})

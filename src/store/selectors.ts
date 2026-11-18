@@ -41,7 +41,7 @@ import {
 import { countries } from '../data/countries'
 import { linesDiffer } from '../lib/changes'
 import { rangeIndex } from '../lib/range'
-import { addDays, dateRange, daysBetween, monthKey, shiftMonth, spanDays, startOfMonth, type DateSpan } from '../lib/dates'
+import { addDays, dateRange, daysBetween, monthKey, shiftMonth, spanDays, startOfMonth, todayInMalaysia, type DateSpan } from '../lib/dates'
 import { effectiveQty, isOpen } from '../lib/po-machine'
 import type { Alert, Closing, CrmData, DateStr, PartnerSales, PurchaseOrder, SaleLine } from '../data/types'
 
@@ -976,9 +976,10 @@ export const selectOpenPos = (data: CrmData, locationId?: string): PurchaseOrder
 /**
  * What the store had on its shelf when it sent the order (Revision 10: "show
  * the store on hand quantity for each SKU, on the day PO placed"): the count
- * from its last closing filed before the order was first sent — the day
- * before, for an order sent during the day; that day's own, for one sent with
- * the closing. Null for a store that has never filed.
+ * from its last closing before the day the order was first sent — or that
+ * day's own, where the order went with the closing, filed before it. A day
+ * filed late still counts for its own day. Null for a store that has never
+ * filed.
  */
 export const selectOnHandAtOrder = (
   data: Pick<CrmData, 'closings'>,
@@ -986,14 +987,58 @@ export const selectOnHandAtOrder = (
 ): { day: DateStr; counts: Map<string, number> } | null => {
   const sentAt = po.events.find((e) => e.status === 'submitted')?.at ?? po.createdAt
   const placed = Date.parse(sentAt)
+  const placedDay = Number.isNaN(placed) ? sentAt.slice(0, 10) : todayInMalaysia(new Date(placed))
   const latest = data.closings
     .filter((c) => c.locationId === po.locationId && c.periodType === 'day' && c.stockCount.length > 0)
     .filter((c) => {
+      if (c.period < placedDay) return true
+      if (c.period > placedDay) return false
       const filed = Date.parse(c.submittedAt)
-      return Number.isNaN(filed) || Number.isNaN(placed) ? c.period < sentAt.slice(0, 10) : filed <= placed
+      return !Number.isNaN(filed) && !Number.isNaN(placed) && filed <= placed
     })
     .reduce<Closing | undefined>((a, c) => (!a || c.period > a.period ? c : a), undefined)
   return latest ? { day: latest.period, counts: new Map(latest.stockCount.map((s) => [s.skuId, s.counted])) } : null
+}
+
+/**
+ * What a store confirmed receiving after one count and up to the close of a
+ * day, line by line: on the shelf, but in neither count's figures until the
+ * second. An arrival on the day of the first count was in that count. Days
+ * are Malaysian.
+ */
+export const selectArrivals = (
+  data: Pick<CrmData, 'purchaseOrders'>,
+  locationId: string,
+  after: DateStr | undefined,
+  upTo: DateStr,
+): Map<string, number> => {
+  const out = new Map<string, number>()
+  for (const po of data.purchaseOrders) {
+    if (po.locationId !== locationId || po.status !== 'received') continue
+    const at = po.events.find((e) => e.status === 'received')?.at
+    if (!at || Number.isNaN(Date.parse(at))) continue
+    const day = todayInMalaysia(new Date(at))
+    if ((after && day <= after) || day > upTo) continue
+    for (const l of po.lines) out.set(l.skuId, (out.get(l.skuId) ?? 0) + effectiveQty(l))
+  }
+  return out
+}
+
+/**
+ * What arrived since a store's last count before `day`, for that day's
+ * closing: a three of vials counted together is shared out by what each
+ * should hold and what arrived of each, so a vial the store had run out of
+ * gets its own back when it comes in (Revision 10).
+ */
+export const selectArrivalsForClosing = (
+  data: Pick<CrmData, 'purchaseOrders' | 'closings'>,
+  locationId: string,
+  day: DateStr,
+): Map<string, number> => {
+  const last = data.closings
+    .filter((c) => c.locationId === locationId && c.period < day && c.stockCount.length > 0)
+    .reduce<DateStr | undefined>((a, c) => (!a || c.period > a ? c.period : a), undefined)
+  return selectArrivals(data, locationId, last, day)
 }
 
 /** What an order is worth, on the basis the destination store is counted on. */

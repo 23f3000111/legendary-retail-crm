@@ -13,6 +13,7 @@ import { useData } from '../../store/useData'
 import { useCan, useCurrentUser } from '../../store/useAuth'
 import { useToasts } from '../../components/ui/Toast'
 import {
+  selectArrivalsForClosing,
   selectClosingFor,
   selectClosingOutOfStep,
   selectStock,
@@ -462,12 +463,14 @@ function ClosingForm({
   const orderLines = useMemo(() => linesToSend(poRows), [poRows])
 
   // What each box says, line by line: a three's count shared across its
-  // vials by what each should hold, or, on a change, by what was filed.
+  // vials by what each should hold with what arrived of each since the last
+  // count, or, on a change, by what was filed.
   const boxKey = new Map(rows.flatMap((row) => row.skus.map((s): [string, string] => [s.skuId, row.key])))
+  const arrivals = useMemo(() => selectArrivalsForClosing(data, locationId, day), [data, locationId, day])
   const boxCounts = countsFromBoxes(
     rows,
     counted,
-    (skuId) => expectedOf(skuId, stock.find((s) => s.skuId === skuId)?.onHand ?? 0),
+    (skuId) => expectedOf(skuId, stock.find((s) => s.skuId === skuId)?.onHand ?? 0) + (arrivals.get(skuId) ?? 0),
     mode === 'new' ? undefined : new Map((start?.stockCount ?? []).map((c) => [c.skuId, c.counted])),
   )
   const stockCount: StockCount[] = [

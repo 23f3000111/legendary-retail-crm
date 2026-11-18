@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { selectOnHandAtOrder } from './selectors'
+import { selectArrivals, selectArrivalsForClosing, selectOnHandAtOrder } from './selectors'
 import { isApproverNote } from '../lib/po-machine'
 import type { Closing, CrmData, PoEvent, PurchaseOrder } from '../data/types'
 
@@ -74,6 +74,15 @@ describe('the store’s stock when the order was placed', () => {
     expect(selectOnHandAtOrder(data([eighth, ninth], po), po)?.day).toBe('2026-11-08')
   })
 
+  it('takes a day before the order even when it was filed late, after the order', () => {
+    const seventh = closing('2026-11-07', '2026-11-07T22:00:00+08:00', { 'orchid-retail': 34 })
+    const eighthLate = closing('2026-11-08', '2026-11-10T09:00:00+08:00', { 'orchid-retail': 31 })
+    const po = order([sent('2026-11-09T03:49:00.000Z')])
+    const at = selectOnHandAtOrder(data([seventh, eighthLate], po), po)
+    expect(at?.day).toBe('2026-11-08')
+    expect(at?.counts.get('orchid-retail')).toBe(31)
+  })
+
   it('has nothing to show for a store that has never filed', () => {
     const po = order([sent('2026-11-09T03:49:00.000Z')])
     expect(selectOnHandAtOrder(data([], po), po)).toBeNull()
@@ -89,5 +98,31 @@ describe('whose notes the warehouse follows', () => {
     for (const role of ['promoter', 'warehouse', 'finance', 'pa'] as const) expect(isApproverNote(note(role))).toBe(false)
     // A step with nothing written is no note at all.
     expect(isApproverNote({ ...note('ops'), note: undefined })).toBe(false)
+  })
+})
+
+describe('what arrived at a store between two counts', () => {
+  const received = (id: string, at: string, qty: number): PurchaseOrder => ({
+    ...order([sent('2026-11-05T03:00:00.000Z')]),
+    id,
+    status: 'received',
+    lines: [{ skuId: 'dream-vial', qtyRequested: qty, qtyApproved: qty, qtyShipped: qty }],
+    events: [sent('2026-11-05T03:00:00.000Z'), { status: 'received', actor: 'x', role: 'promoter', at }],
+  })
+
+  it('counts what the store confirmed receiving after the one count, up to the day of the next', () => {
+    const d: CrmData = {
+      ...data([eighth], order([sent('2026-11-09T03:49:00.000Z')])),
+      purchaseOrders: [
+        received('PO-A', '2026-11-08T05:00:00.000Z', 6), // the 8th: in the 8th's own count already
+        received('PO-B', '2026-11-09T05:00:00.000Z', 24), // the 9th: after it
+        received('PO-C', '2026-11-11T05:00:00.000Z', 12), // after the day being closed
+      ],
+    }
+    expect(selectArrivals(d, 'melaka', '2026-11-08', '2026-11-09').get('dream-vial')).toBe(24)
+    // Never counted before: everything up to the day.
+    expect(selectArrivals(d, 'melaka', undefined, '2026-11-09').get('dream-vial')).toBe(30)
+    // The closing of the 9th: since the store's last count before it, the 8th's.
+    expect(selectArrivalsForClosing(d, 'melaka', '2026-11-09').get('dream-vial')).toBe(24)
   })
 })
