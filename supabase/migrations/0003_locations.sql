@@ -15,7 +15,7 @@ select seed_locations($$[
 {"id":"parkson-imago","name":"Parkson KK Imago","channel":"main","city":"Kota Kinabalu","status":"open"},
 {"id":"klcc-isetan","name":"KLCC Isetan","channel":"main","city":"Kuala Lumpur","status":"open"},
 {"id":"sogo-118","name":"Sogo 118","channel":"main","city":"Kuala Lumpur","status":"open"},
-{"id":"trx","name":"TRX","channel":"main","city":"Kuala Lumpur","status":"coming"},
+{"id":"trx","name":"TRX","channel":"main","city":"Kuala Lumpur","status":"open"},
 {"id":"melaka-parkland","name":"Melaka Parkland Mall","channel":"main","city":"Melaka","status":"coming"},
 {"id":"cons-sas","name":"Sasa","channel":"consignment","city":null,"status":"open"},
 {"id":"cons-air","name":"Airasia","channel":"consignment","city":null,"status":"open"},

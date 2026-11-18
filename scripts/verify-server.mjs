@@ -120,12 +120,15 @@ try {
   // Where a promoter may be rostered.
   check('the outlets are loaded', (await one("select count(*)::int n from locations")).n > 0)
   const kl = await session('danzeltan')
+  // Sogo 118 and TRX are open (18 November): any Kuala Lumpur promoter may pick them.
+  for (const [id, name] of [['sogo-118', 'Sogo 118'], ['trx', 'TRX']]) {
+    const opened = await one('select choose_store($1, $2, $3) r', [kl, id, name])
+    check(`a Kuala Lumpur promoter can pick ${name}, now open`, opened.r.ok === true, opened.r.error)
+  }
   const klPick = await one("select choose_store($1, 'klcc-isetan', 'KLCC Isetan') r", [kl])
   check('a promoter can pick another outlet in their town', klPick.r.ok === true, klPick.r.error)
   const klWrong = await one("select choose_store($1, 'klia-t2', 'KLIA T2') r", [kl])
   check('but not one in another town', klWrong.r.ok === false, klWrong.r.error)
-  const klClosed = await one("select choose_store($1, 'trx', 'TRX') r", [kl])
-  check('nor one that has not opened', klClosed.r.ok === false, klClosed.r.error)
   const klWrite = await put(kl, [
     { kind: 'sale_line', id: 'sl-kl', location_id: 'klcc-isetan', doc: { skuId: 'x', qty: 1 } },
   ])
@@ -138,6 +141,8 @@ try {
     { kind: 'sale_line', id: 'sl-solo', location_id: 'melaka', doc: { skuId: 'x', qty: 1 } },
   ])
   check('a promoter must pick an outlet before recording', soloBefore.r.ok === false, soloBefore.r.error)
+  const soloClosed = await one("select choose_store($1, 'melaka-parkland', 'Melaka Parkland Mall') r", [solo])
+  check('nor one in their town that has not opened', soloClosed.r.ok === false, soloClosed.r.error)
   const soloPick = await one("select choose_store($1, 'melaka', 'Melaka') r", [solo])
   check('a one-outlet town still offers its outlet', soloPick.r.ok === true, soloPick.r.error)
   const soloAfter = await put(solo, [

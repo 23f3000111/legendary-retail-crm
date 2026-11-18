@@ -127,7 +127,10 @@ const mainSeeds: MainSeed[] = [
   // trading, and every Kuala Lumpur promoter may pick it. No opening date was
   // given, and it has no sample history (no footfall weight).
   { id: 'sogo-118', code: 'SG1', name: 'Sogo 118', shortName: 'Sogo 118', region: 'Kuala Lumpur', city: 'Kuala Lumpur', basis: 'promotion', traffic: 0, target: 70_000, origins: ['MY', 'CN', 'ID', 'SG', 'IN'] },
-  { id: 'trx', code: 'TRX', name: 'TRX', shortName: 'TRX', region: 'Kuala Lumpur', city: 'Kuala Lumpur', basis: 'promotion', status: 'coming', traffic: 0, target: 85_000, origins: ['MY', 'CN', 'SG', 'IN', 'AE'] },
+  // Open too since 18 November ("add Sogo 118 and TRX outlets to the KL
+  // promoters lists ... and open the stores"), on the same terms: no opening
+  // date given, no sample history.
+  { id: 'trx', code: 'TRX', name: 'TRX', shortName: 'TRX', region: 'Kuala Lumpur', city: 'Kuala Lumpur', basis: 'promotion', traffic: 0, target: 85_000, origins: ['MY', 'CN', 'SG', 'IN', 'AE'] },
   { id: 'melaka-parkland', code: 'MPM', name: 'Melaka Parkland Mall', shortName: 'Parkland Melaka', region: 'Melaka', city: 'Melaka', basis: 'promotion', status: 'coming', traffic: 0, target: 55_000, origins: ['SG', 'ID', 'MY', 'CN', 'NL'] },
 ]
 
