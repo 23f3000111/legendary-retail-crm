@@ -117,6 +117,14 @@ describe('the detailed report', () => {
     expect(orchid.totals).toMatchObject({ units: 3, revenue: 574 })
   })
 
+  it('totals each store that sold, the best first, with the partners’ months (16 November)', () => {
+    const r = buildDetailReport(data, emptyFilter('2026-11-01', day))
+    expect(r.stores.map((s) => [s.locationId, s.units, s.revenue, s.customers])).toEqual([
+      [dealer, 0, 1000, 0],
+      ['bsas', 5, 762, 3],
+    ])
+  })
+
   it('agrees with the calendar’s day, on the sample history', () => {
     startFixture('siew-fang')
     const state = useData.getState()
@@ -141,6 +149,10 @@ describe('the CSV and the PDF of it', () => {
     expect(lines).toContain('CLOSING STOCK (AS COUNTED AT EACH CLOSE)')
     expect(lines).toContain('CUSTOMERS')
     expect(lines).toContain('Store,BSAS')
+    // One store: no by-store part.
+    expect(lines).not.toContain('SALES BY STORE')
+    const month = toCsvSections(detailCsvBlocks(buildDetailReport(data, emptyFilter('2026-11-01', day))))
+    expect(month.split(/\r\n/)).toContain('SALES BY STORE')
   })
 
   it('draws up the same report to print', () => {

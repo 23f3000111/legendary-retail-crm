@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Icon } from './ui/icons'
 import { Button } from './ui/Button'
 import { Badge } from './ui/Badge'
-import { ChipToggle, SegmentedControl } from './ui/Field'
+import { ChipToggle, SegmentedControl, TextInput } from './ui/Field'
 import { Flag } from './ui/Flag'
 import {
   locations,
@@ -13,7 +13,8 @@ import {
 } from '../data/locations'
 import { collections, products, skus, VARIANT_LABEL, type CollectionId, type Variant } from '../data/products'
 import { countries } from '../data/countries'
-import { addDays, formatDate, startOfMonth } from '../lib/dates'
+import { formatDate } from '../lib/dates'
+import { activeRange, chooseDates, rangeDates, RANGES, type RangeKey } from '../lib/periods'
 import {
   activeFilterCount,
   isDimensionless,
@@ -22,15 +23,6 @@ import {
   type Metric,
 } from '../store/selectors'
 import type { DateStr } from '../data/types'
-
-type RangeKey = '7' | '30' | '90' | 'mtd'
-
-const RANGES: { value: RangeKey; label: string }[] = [
-  { value: '7', label: '7 days' },
-  { value: '30', label: '30 days' },
-  { value: '90', label: '90 days' },
-  { value: 'mtd', label: 'This month' },
-]
 
 const VARIANTS: Variant[] = ['retail', 'set', 'travel', 'vial', 'tester']
 
@@ -62,7 +54,9 @@ export const filterInWords = (filter: Filter): string[] => {
 /**
  * One control surface for the whole page. Every panel below reads the same
  * filter, so a change here moves everything at once rather than leaving one
- * chart disagreeing with its neighbour.
+ * chart disagreeing with its neighbour — the dates included: the usual
+ * periods, last month, or any dates chosen, From and To (16 November: "when
+ * I want to go analytics I'm supposed to choose the date here").
  *
  * The nationality row carries a warning, because only main stores record it —
  * choosing a country silently drops dealers and consignment from the answer,
@@ -85,24 +79,15 @@ export function FilterBar({
   coverage?: { capableLocations: number; totalLocations: number; partial: boolean }
 }) {
   const [expanded, setExpanded] = useState(false)
+  /** "Dates" chosen, so the two boxes show even while they hold a preset's dates. */
+  const [custom, setCustom] = useState(false)
 
   const setRange = (key: RangeKey) => {
-    const from = key === 'mtd' ? startOfMonth(today) : addDays(today, -(Number(key) - 1))
-    onChange({ ...filter, from, to: today })
+    if (key === 'dates') return setCustom(true)
+    setCustom(false)
+    onChange({ ...filter, ...rangeDates(key, today) })
   }
-
-  const activeRange: RangeKey | null =
-    filter.to !== today
-      ? null
-      : filter.from === startOfMonth(today)
-        ? 'mtd'
-        : filter.from === addDays(today, -6)
-          ? '7'
-          : filter.from === addDays(today, -29)
-            ? '30'
-            : filter.from === addDays(today, -89)
-              ? '90'
-              : null
+  const range: RangeKey = custom ? 'dates' : activeRange(filter.from, filter.to, today)
 
   const toggle = <K extends keyof Filter>(key: K, value: string) => {
     const list = filter[key] as unknown as string[]
@@ -132,12 +117,35 @@ export function FilterBar({
       <div className="flex flex-wrap items-center gap-3 px-5 py-3.5">
         <div>
           <p className="eyebrow mb-1.5">Period</p>
-          <SegmentedControl<RangeKey>
-            value={activeRange ?? '30'}
-            onChange={setRange}
-            options={RANGES}
-          />
+          <SegmentedControl<RangeKey> value={range} onChange={setRange} options={RANGES} />
         </div>
+
+        {range === 'dates' && (
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="block">
+              <span className="eyebrow mb-1.5 block">From</span>
+              <TextInput
+                type="date"
+                aria-label="From"
+                value={filter.from}
+                max={today}
+                onChange={(e) => onChange({ ...filter, ...chooseDates(e.target.value, filter.to, today) })}
+                className="h-9 w-[156px] text-[12.5px]"
+              />
+            </label>
+            <label className="block">
+              <span className="eyebrow mb-1.5 block">To</span>
+              <TextInput
+                type="date"
+                aria-label="To"
+                value={filter.to}
+                max={today}
+                onChange={(e) => onChange({ ...filter, ...chooseDates(filter.from, e.target.value, today) })}
+                className="h-9 w-[156px] text-[12.5px]"
+              />
+            </label>
+          </div>
+        )}
 
         <div className="hidden h-9 w-px bg-line sm:block" />
 

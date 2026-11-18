@@ -15,6 +15,7 @@ import {
   keyedMonths,
   locationMatches,
   narrowsByProduct,
+  selectStoreTotals,
   skuIdsFor,
   type Filter,
 } from '../store/selectors'
@@ -83,6 +84,13 @@ export interface CustomerRow {
   revenue: number
 }
 
+export interface StoreLine {
+  locationId: string
+  units: number
+  revenue: number
+  customers: number
+}
+
 export interface DetailReport {
   from: DateStr
   to: DateStr
@@ -96,6 +104,8 @@ export interface DetailReport {
   partners: PartnerMonthLine[]
   /** Every country, most customers first. */
   customers: CustomerRow[]
+  /** Each store that sold in the dates, its total, the best first (16 November: "the total amount of each store"). */
+  stores: StoreLine[]
   /** Units and sales of the lines; revenue also takes in the partners' months. Customers: one a sale. */
   totals: { units: number; revenue: number; linesRevenue: number; customers: number }
 }
@@ -211,6 +221,10 @@ export function buildDetailReport(data: CrmData, f: Filter): DetailReport {
     }))
     .sort((a, b) => b.customers - a.customers || b.units - a.units || a.name.localeCompare(b.name))
 
+  const stores: StoreLine[] = selectStoreTotals(data, f)
+    .filter((s) => s.revenue > 0 || s.units > 0)
+    .map((s) => ({ locationId: s.locationId, units: s.units, revenue: s.revenue, customers: s.customers }))
+
   const linesRevenue = sen(products.reduce((a, p) => a + p.revenue, 0))
   return {
     from: f.from,
@@ -221,6 +235,7 @@ export function buildDetailReport(data: CrmData, f: Filter): DetailReport {
     stock,
     partners,
     customers,
+    stores,
     totals: {
       units: products.reduce((a, p) => a + p.units, 0),
       linesRevenue,
@@ -250,6 +265,22 @@ export function detailCsvBlocks(r: DetailReport, heading: (string | number)[][] 
       ],
     },
   ]
+  if (r.stores.length > 1) {
+    blocks.push({
+      title: 'SALES BY STORE',
+      headers: ['Store', 'Store code', 'Units', 'Customers', 'Net sales MYR'],
+      rows: [
+        ...r.stores.map((s) => [storeName(s.locationId), code(s.locationId), s.units, s.customers, s.revenue]),
+        [
+          'Total',
+          '',
+          r.stores.reduce((a, s) => a + s.units, 0),
+          r.stores.reduce((a, s) => a + s.customers, 0),
+          sen(r.stores.reduce((a, s) => a + s.revenue, 0)),
+        ],
+      ],
+    })
+  }
   const salesRows: (string | number)[][] = []
   for (const p of r.products) {
     for (const s of r.sales.filter((x) => x.skuId === p.skuId)) {
@@ -325,6 +356,22 @@ export function detailPrintSpec(
   opts: { title: string; subtitle: string; rules: string[]; perStore: boolean },
 ): ReportSpec {
   const sections: ReportSection[] = []
+
+  // Every store's total, where there is more than one.
+  if (r.stores.length > 1) {
+    sections.push({
+      title: 'Sales by store',
+      headers: ['Store', 'Units', 'Customers', 'Net sales'],
+      right: [false, true, true, true],
+      rows: r.stores.map((s) => [storeName(s.locationId), num(s.units), num(s.customers), rm(s.revenue)]),
+      total: [
+        'Total',
+        num(r.stores.reduce((a, s) => a + s.units, 0)),
+        num(r.stores.reduce((a, s) => a + s.customers, 0)),
+        rm(r.stores.reduce((a, s) => a + s.revenue, 0)),
+      ],
+    })
+  }
 
   // Sales by product, with a subtotal under each.
   const rows: string[][] = []

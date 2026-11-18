@@ -1340,6 +1340,142 @@ export const selectStoreSales = (data: CrmData): StoreSalesRow[] => {
   }))
 }
 
+// ── A period, on Analytics (16 November) ───────────────────────────────────
+//
+// "If I chose one week, from 1st to 7th of November, of course I want to see
+// the total": every figure on Analytics reads the dates chosen at the top and
+// nothing else, by the rules of the four boxes — the days that have ended as
+// filed, today live from the counter, and a dealer's keyed-in month where
+// nothing narrows the view to products or countries.
+
+/** Each store's sales in a window, with its customers. */
+const storeTally = (data: CrmData, f: Filter): Map<string, ReturnType<typeof blank>> => {
+  const out = new Map<string, ReturnType<typeof blank>>()
+  const at = (id: string) => {
+    const t = out.get(id) ?? blank()
+    out.set(id, t)
+    return t
+  }
+  eachLineIn(data, f, (l, value, basket, locationId) => {
+    const t = at(locationId)
+    t.revenue += value
+    t.units += l.qty
+    t.baskets.add(basket)
+  })
+  if (!narrowsByProduct(f)) {
+    for (const p of data.partnerSales) {
+      if (inWindow(`${p.month}-01`, f) && locationMatches(p.locationId, f)) at(p.locationId).revenue += p.revenueMYR
+    }
+  }
+  return out
+}
+
+/** The period's sales, customers and units; how many stores sold; and the same days before it. */
+export const selectPeriodTotals = (data: CrmData, f: Filter): SalesFigure & { stores: number; previous: number } => {
+  const stores = [...storeTally(data, f).values()].filter((t) => t.revenue || t.units).length
+  return { ...salesIn(data, f), stores, previous: salesIn(data, previousWindow(f)).revenue }
+}
+
+export interface StoreTotal extends SalesFigure {
+  locationId: string
+  /** Its sales over the same number of days before. */
+  previous: number
+  /** And its units then. */
+  previousUnits: number
+}
+
+/** Every store the filter takes in, with its total for the period, the best first. */
+export const selectStoreTotals = (data: CrmData, f: Filter): StoreTotal[] => {
+  const now = storeTally(data, f)
+  const before = storeTally(data, previousWindow(f))
+  const name = (id: string) => locationById(id)?.shortName ?? id
+  return tradingLocations
+    .filter((l) => locationMatches(l.id, f))
+    .map((l) => ({
+      locationId: l.id,
+      ...finish(now.get(l.id) ?? blank()),
+      previous: Math.round((before.get(l.id)?.revenue ?? 0) * 100) / 100,
+      previousUnits: before.get(l.id)?.units ?? 0,
+    }))
+    .sort((a, b) => b.revenue - a.revenue || b.units - a.units || name(a.locationId).localeCompare(name(b.locationId)))
+}
+
+/** Every product sold in the period, its units and sales, in the range's order. */
+export const selectSkuTotals = (data: CrmData, f: Filter): { skuId: string; label: string; units: number; revenue: number }[] => {
+  const at = rangeIndex()
+  return [...skuSalesIn(data, f)]
+    .map(([skuId, v]) => ({ skuId, label: skuById(skuId)?.label ?? skuId, units: v.units, revenue: v.revenue }))
+    .filter((r) => r.units > 0 || r.revenue > 0)
+    .sort((a, b) => (at.get(a.skuId) ?? LAST_IN_RANGE) - (at.get(b.skuId) ?? LAST_IN_RANGE))
+}
+
+/**
+ * The ribbon's slices: the first `top` countries, and the rest as one "Other"
+ * — the chart only; the table lists every country (16 November).
+ */
+export const foldOrigins = (slices: OriginSlice[], top = 6): OriginSlice[] => {
+  if (slices.length <= top) return slices
+  const tail = slices.slice(top)
+  const sum = (k: 'customers' | 'units' | 'revenue' | 'share') => tail.reduce((a, s) => a + s[k], 0)
+  return [
+    ...slices.slice(0, top),
+    {
+      countryCode: 'OTHER',
+      name: 'Other',
+      flag: '🌍',
+      customers: sum('customers'),
+      units: sum('units'),
+      revenue: Math.round(sum('revenue') * 100) / 100,
+      share: sum('share'),
+    },
+  ]
+}
+
+/** Every country that bought in the period, none folded into "Other" (16 November). */
+export const selectCountryTotals = (data: CrmData, f: Filter): OriginSlice[] =>
+  originSlicesFrom(originsIn(data, f), Number.MAX_SAFE_INTEGER)
+
+/** The period's sales by channel, in the channels' own order. */
+export const selectChannelTotals = (data: CrmData, f: Filter): { channel: Channel; revenue: number; units: number }[] => {
+  const by = new Map<Channel, { revenue: number; units: number }>()
+  for (const [id, t] of storeTally(data, f)) {
+    const channel = locationById(id)?.channel
+    if (!channel) continue
+    const c = by.get(channel) ?? { revenue: 0, units: 0 }
+    c.revenue += t.revenue
+    c.units += t.units
+    by.set(channel, c)
+  }
+  return CHANNELS.map((channel) => ({ channel, ...(by.get(channel) ?? { revenue: 0, units: 0 }) }))
+    .map((c) => ({ ...c, revenue: Math.round(c.revenue * 100) / 100 }))
+    .filter((c) => c.revenue > 0 || c.units > 0)
+}
+
+/** The period day by day, today live. A dealer's month counts on its 1st. */
+export const selectDailySeries = (data: CrmData, f: Filter, metric: Metric): SeriesPoint[] => {
+  const by = new Map<DateStr, { revenue: number; units: number }>()
+  const at = (day: DateStr) => {
+    const b = by.get(day) ?? { revenue: 0, units: 0 }
+    by.set(day, b)
+    return b
+  }
+  eachLineIn(data, f, (l, value, _basket, _locationId, day) => {
+    const b = at(day)
+    b.revenue += value
+    b.units += l.qty
+  })
+  if (!narrowsByProduct(f)) {
+    for (const p of data.partnerSales) {
+      const day = `${p.month}-01`
+      if (inWindow(day, f) && locationMatches(p.locationId, f)) at(day).revenue += p.revenueMYR
+    }
+  }
+  return dateRange(f.from, f.to).map((date) => {
+    const b = by.get(date)
+    return { date, value: b ? (metric === 'revenue' ? Math.round(b.revenue) : b.units) : 0 }
+  })
+}
+
 // ── By the four windows (asked on 1 November, after Revision 9) ──────────────
 
 /** The four boxes' windows, then the dates chosen on a page of its own: a table's columns. */
