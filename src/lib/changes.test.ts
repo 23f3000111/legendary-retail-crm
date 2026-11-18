@@ -112,6 +112,24 @@ describe('a closing changed', () => {
     expect(describeClosingChanges(figures(), figures({ revenueMYR: 376.0000001 }), 'promotion')).toEqual([])
   })
 
+  it('names a three of vials once, the way it was counted (Revision 10)', () => {
+    const vials = (love: number, hope: number, confidence: number) => [
+      { skuId: 'love-vial', opening: 80, counted: love },
+      { skuId: 'hope-vial', opening: 60, counted: hope },
+      { skuId: 'confidence-vial', opening: 50, counted: confidence },
+    ]
+    const said = describeClosingChanges(
+      figures({ stockCount: vials(77, 54, 45) }),
+      figures({ stockCount: vials(76, 53, 45) }),
+      'promotion',
+    )
+    expect(said).toEqual(['Spirit 1 · 3ml Vials on the shelf: 176 → 174'])
+    // A count kept the same is no change, however it was shared out.
+    expect(
+      describeClosingChanges(figures({ stockCount: vials(77, 54, 45) }), figures({ stockCount: vials(78, 53, 45) }), 'promotion'),
+    ).toEqual([])
+  })
+
   it('gives lines from before the shared server a steady id, so they can be matched', () => {
     const old = { ...figures(), id: 'klia-t2-2026-08-20', lines: [{ skuId: 'orchid-retail', qty: 1 }] } as unknown as Closing
     const a = figuresOf(old)

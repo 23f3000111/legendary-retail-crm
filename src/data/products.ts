@@ -677,6 +677,48 @@ export const newCodeFor = (productId: string, variant: Variant, size: string): s
   for (let n = 2; ; n++) if (!skus.some((s) => s.code === `${base}-${n}`)) return `${base}-${n}`
 }
 
+// ── Vials counted in threes at closing (Revision 10) ────────────────────────
+
+/**
+ * "Combine these 3 to Spirit 1" (Love, Hope, Confidence), "to Spirit 2"
+ * (Passion, Dream, Life) and "to 3 Wishes" (Wish 1, 2, 3) — the 3ml vials
+ * only, and "ONLY for stock counting at the end of the day, others remain
+ * untouched": a busy counter counts each three as one figure. Sales, orders
+ * and every stock screen still see each vial.
+ */
+export interface CountGroup {
+  id: 'spirit-1-vials' | 'spirit-2-vials' | 'three-wishes-vials'
+  /** "Spirit 1 · 3ml Vials". */
+  label: string
+  /** "Love, Hope, Confidence", in the client's order. */
+  members: string
+  skuIds: string[]
+}
+
+export const COUNT_GROUPS: CountGroup[] = [
+  {
+    id: 'spirit-1-vials',
+    label: 'Spirit 1 · 3ml Vials',
+    members: 'Love, Hope, Confidence',
+    skuIds: ['love-vial', 'hope-vial', 'confidence-vial'],
+  },
+  {
+    id: 'spirit-2-vials',
+    label: 'Spirit 2 · 3ml Vials',
+    members: 'Passion, Dream, Life',
+    skuIds: ['passion-vial', 'dream-vial', 'life-vial'],
+  },
+  {
+    id: 'three-wishes-vials',
+    label: '3 Wishes · 3ml Vials',
+    members: 'Wish 1, Wish 2, Wish 3',
+    skuIds: ['wish-1-vial', 'wish-2-vial', 'wish-3-vial'],
+  },
+]
+
+/** The three a vial is counted with at closing, if it is one of them. */
+export const groupOf = (skuId: string): CountGroup | undefined => COUNT_GROUPS.find((g) => g.skuIds.includes(skuId))
+
 /** An item with no list price — a vial — is only ever rung up at a typed price. */
 export const hasListPrice = (sku: Sku | undefined): boolean =>
   Boolean(sku && (sku.retailPriceMYR > 0 || sku.promotionPriceMYR > 0))

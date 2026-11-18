@@ -26,6 +26,7 @@ import { formatDate, formatTimestamp } from '../../lib/dates'
 import { moneyInput, num } from '../../lib/format'
 import { newId, newOrderId } from '../../lib/ids'
 import { closingEditMode, CORRECTION_WINDOW_DAYS, type ClosingEditMode } from '../../lib/editing'
+import { countsFromBoxes, shelfRows } from '../../lib/counting'
 import { clock, describeLineChanges, describeClosingChanges, figuresOf, money, toSen } from '../../lib/changes'
 import type { Result } from '../../api/backend'
 import type {
@@ -385,6 +386,13 @@ function ClosingForm({
   const expectedOf = (skuId: string, onHand: number) => Math.max(0, onHand - (soldToday.get(skuId) ?? 0))
 
   /**
+   * The boxes to fill in: one a line, except the 3ml vials of Spirit 1,
+   * Spirit 2 and 3 Wishes, counted three at a time (Revision 10). Each
+   * three's count is shared back across its vials when the day is saved.
+   */
+  const rows = useMemo(() => shelfRows(stock), [stock])
+
+  /**
    * The store's very first closing, where nothing is known about the shelf.
    *
    * The whole page is built on "we know what should be there, change only
@@ -404,18 +412,17 @@ function ClosingForm({
   )
 
   // A first filing starts every box at what the shelf should hold; a change
-  // starts every box at what was counted.
+  // starts every box at what was counted. A three's box holds the three's
+  // total.
   const [counted, setCounted] = useState<Record<string, string>>(() => {
     const was = new Map((start?.stockCount ?? []).map((s) => [s.skuId, s.counted]))
     return Object.fromEntries(
-      stock.map((s) => [
-        s.skuId,
-        was.has(s.skuId)
-          ? String(was.get(s.skuId))
-          : firstCount || !s.counted || mode !== 'new'
-            ? ''
-            : String(expectedOf(s.skuId, s.onHand)),
-      ]),
+      rows.map((row) => {
+        const ids = row.skus.map((s) => s.skuId)
+        if (ids.every((id) => was.has(id))) return [row.key, String(ids.reduce((a, id) => a + was.get(id)!, 0))]
+        const blank = firstCount || row.skus.some((s) => !s.counted) || mode !== 'new'
+        return [row.key, blank ? '' : String(row.skus.reduce((a, s) => a + expectedOf(s.skuId, s.onHand), 0))]
+      }),
     )
   })
 
@@ -454,13 +461,22 @@ function ClosingForm({
   /** The ones that will actually be sent, in the store's order: those with a quantity against them. */
   const orderLines = useMemo(() => linesToSend(poRows), [poRows])
 
+  // What each box says, line by line: a three's count shared across its
+  // vials by what each should hold, or, on a change, by what was filed.
+  const boxKey = new Map(rows.flatMap((row) => row.skus.map((s): [string, string] => [s.skuId, row.key])))
+  const boxCounts = countsFromBoxes(
+    rows,
+    counted,
+    (skuId) => expectedOf(skuId, stock.find((s) => s.skuId === skuId)?.onHand ?? 0),
+    mode === 'new' ? undefined : new Map((start?.stockCount ?? []).map((c) => [c.skuId, c.counted])),
+  )
   const stockCount: StockCount[] = [
     ...stock
-      .filter((s) => mode === 'new' || (counted[s.skuId] ?? '') !== '' || countOnRecord.has(s.skuId))
+      .filter((s) => mode === 'new' || (counted[boxKey.get(s.skuId)!] ?? '') !== '' || countOnRecord.has(s.skuId))
       .map((s) => ({
         skuId: s.skuId,
         opening: s.onHand,
-        counted: Number(counted[s.skuId]) || 0,
+        counted: boxCounts.get(s.skuId) ?? 0,
       })),
     // A count filed for something no longer counted on the shelf is kept as
     // it was, rather than dropped by an edit that never showed it.
@@ -486,21 +502,22 @@ function ClosingForm({
         : `Cash cannot be more than the day's sales of ${money(revenue)}.`,
     )
   }
-  for (const s of stock) {
-    const value = counted[s.skuId]
+  for (const row of rows) {
+    const value = counted[row.key]
+    const label = row.group?.label ?? row.skus[0].label
     // Changing a day: a product that was not counted then may stay uncounted.
-    if (mode !== 'new' && !countOnRecord.has(s.skuId) && !value) continue
+    if (mode !== 'new' && !row.skus.some((s) => countOnRecord.has(s.skuId)) && !value) continue
     if (value === undefined || value === '') {
-      const blanks = stock.filter((x) => !counted[x.skuId]).length
+      const blanks = rows.filter((x) => !counted[x.key]).length
       problems.push(
         firstCount && mode === 'new'
-          ? `${blanks} ${blanks === 1 ? 'product has' : 'products have'} not been counted yet — start with ${s.label}.`
-          : `${s.label} has no count.`,
+          ? `${blanks} ${blanks === 1 ? 'product has' : 'products have'} not been counted yet — start with ${label}.`
+          : `${label} has no count.`,
       )
       break
     }
     if (Number(value) < 0) {
-      problems.push(`${s.label} cannot be a negative number.`)
+      problems.push(`${label} cannot be a negative number.`)
       break
     }
   }
@@ -635,24 +652,32 @@ function ClosingForm({
     return { ok: true }
   }
 
-  const shelf = stock.map((s) => {
-    const expected = expectedOf(s.skuId, s.onHand)
-    const value = counted[s.skuId] ?? ''
-    const was = countOnRecord.get(s.skuId)
+  const shelf = rows.map((row) => {
+    const ids = row.skus.map((s) => s.skuId)
+    const expected = row.skus.reduce((a, s) => a + expectedOf(s.skuId, s.onHand), 0)
+    const value = counted[row.key] ?? ''
+    const was = ids.every((id) => countOnRecord.has(id))
+      ? ids.reduce((a, id) => a + countOnRecord.get(id)!, 0)
+      : undefined
+    const allCounted = row.skus.every((s) => s.counted)
     return {
-      ...s,
-      sold: soldToday.get(s.skuId) ?? 0,
+      key: row.key,
+      label: row.group?.label ?? row.skus[0].label,
+      // A three says which vials it is; a line, its shelf code.
+      code: row.group ? row.group.members : row.skus[0].code,
+      group: Boolean(row.group),
+      sold: row.skus.reduce((a, s) => a + (soldToday.get(s.skuId) ?? 0), 0),
       expected,
       value,
       was,
       // Never counted at this store, though others have been: new to the range.
-      fresh: !firstCount && !s.counted,
+      fresh: !firstCount && !allCounted,
       // Filing: flag a count that differs from what the shelf should hold.
       // Changing: flag a count that differs from what was filed.
       changed:
         value !== '' &&
         (mode === 'new'
-          ? !firstCount && s.counted && Number(value) !== expected
+          ? !firstCount && allCounted && Number(value) !== expected
           : was !== undefined && Number(value) !== was),
     }
   })
@@ -904,7 +929,7 @@ function ClosingForm({
           <div className="space-y-2 sm:hidden">
             {shelf.map((s) => (
               <div
-                key={s.skuId}
+                key={s.key}
                 className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 ${
                   s.changed
                     ? mode === 'new'
@@ -915,6 +940,7 @@ function ClosingForm({
               >
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13px] leading-tight text-ink">{s.label}</p>
+                  {s.group && <p className="text-[11px] text-ink-3">{s.code}, counted together</p>}
                   <p className="mt-1 text-[11.5px] text-ink-3">
                     {s.sold > 0 ? `Sold ${num(s.sold)}${firstCount ? '' : ' · '}` : ''}
                     {firstCount ? (
@@ -941,7 +967,7 @@ function ClosingForm({
                     className={`text-right ${s.changed ? (mode === 'new' ? 'border-warn/60 bg-warn/5' : 'border-primary/60 bg-primary/5') : ''}`}
                     min={0}
                     value={s.value}
-                    onChange={(e) => setCount(s.skuId, e.target.value)}
+                    onChange={(e) => setCount(s.key, e.target.value)}
                   />
                 </div>
               </div>
@@ -971,7 +997,7 @@ function ClosingForm({
               </thead>
               <tbody>
                 {shelf.map((s) => (
-                  <tr key={s.skuId} className="border-b border-line/70 last:border-0">
+                  <tr key={s.key} className="border-b border-line/70 last:border-0">
                     <td className="py-2">
                       <p className="text-[13px] leading-tight text-ink">
                         {s.label}
@@ -979,7 +1005,11 @@ function ClosingForm({
                           <span className="ml-2 text-[11px] font-medium text-primary">New — count it</span>
                         )}
                       </p>
-                      <p className="readout text-[10.5px] text-ink-3">{s.code}</p>
+                      {s.group ? (
+                        <p className="text-[11px] text-ink-3">{s.code}, counted together</p>
+                      ) : (
+                        <p className="readout text-[10.5px] text-ink-3">{s.code}</p>
+                      )}
                     </td>
                     <td className={`readout py-2 pr-3 text-right text-[13px] ${s.sold > 0 ? 'text-ink' : 'text-ink-3'}`}>
                       {s.sold > 0 ? num(s.sold) : '—'}
@@ -997,7 +1027,7 @@ function ClosingForm({
                           className={`text-right ${s.changed ? (mode === 'new' ? 'border-warn/60 bg-warn/5' : 'border-primary/60 bg-primary/5') : ''}`}
                           min={0}
                           value={s.value}
-                          onChange={(e) => setCount(s.skuId, e.target.value)}
+                          onChange={(e) => setCount(s.key, e.target.value)}
                         />
                       </div>
                     </td>

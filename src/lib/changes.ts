@@ -7,7 +7,7 @@
  * they can never disagree about what happened.
  */
 import { countryName, MALAYSIA_SEGMENT_LABEL } from '../data/countries'
-import { lineUnitPrice, skuLabel, TIER_LABEL, type PriceBasis } from '../data/products'
+import { groupOf, lineUnitPrice, skuLabel, TIER_LABEL, type PriceBasis } from '../data/products'
 import { num, rm } from './format'
 import type { Closing, ClosingFigures, PurchaseOrder, SaleLine } from '../data/types'
 
@@ -137,11 +137,26 @@ export function describeClosingChanges(
   const counted = (f: ClosingFigures) => new Map(f.stockCount.map((s) => [s.skuId, s.counted]))
   const was = counted(before)
   const now = counted(after)
+  const say = (n: number | undefined) => (n === undefined ? 'not counted' : num(n))
+  // The vials of Spirit 1, Spirit 2 and 3 Wishes are counted three at a time
+  // (Revision 10), so a three's count is said once, as it was typed.
+  const groupsSaid = new Set<string>()
   for (const skuId of new Set([...was.keys(), ...now.keys()])) {
+    const group = groupOf(skuId)
+    if (group) {
+      if (groupsSaid.has(group.id)) continue
+      groupsSaid.add(group.id)
+      const ids = group.skuIds.filter((id) => was.has(id) || now.has(id))
+      const total = (m: Map<string, number>) =>
+        ids.every((id) => m.has(id)) ? ids.reduce((a, id) => a + m.get(id)!, 0) : undefined
+      const a = total(was)
+      const b = total(now)
+      if (a !== b) out.push(`${group.label} on the shelf: ${say(a)} → ${say(b)}`)
+      continue
+    }
     const a = was.get(skuId)
     const b = now.get(skuId)
     if (a === b) continue
-    const say = (n: number | undefined) => (n === undefined ? 'not counted' : num(n))
     out.push(`${skuLabel(skuId)} on the shelf: ${say(a)} → ${say(b)}`)
   }
   return out
