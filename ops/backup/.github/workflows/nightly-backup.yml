@@ -41,6 +41,9 @@ jobs:
       SOURCE: ${{ secrets.BACKUP_DATABASE_URL }}
       SCRATCH: postgresql://postgres:scratch@localhost:5432/postgres
       TABLES: people docs locations settings
+      # Whether the Backups page's Cloudflare copy is set up. A step's `if`
+      # cannot read a secret directly, so the answer is carried here.
+      HAS_CLOUDFLARE: ${{ secrets.CF_KV_TOKEN != '' }}
       # The server's certificate is checked against Supabase's own root, so
       # the backup cannot be quietly pointed somewhere else.
       PGSSLMODE: verify-full
@@ -74,6 +77,7 @@ jobs:
           mkdir -p out
           stamp=$(TZ=Asia/Kuala_Lumpur date +%Y-%m-%d_%H%M)
           echo "STAMP=$stamp" >> "$GITHUB_ENV"
+          echo "TAKEN_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
           args=(); for t in $TABLES; do args+=(--table="public.$t"); done
 
           count() { for t in $TABLES; do psql "$SOURCE" -Atc "select '$t', count(*) from public.$t"; done; }
@@ -125,6 +129,14 @@ jobs:
           done
           [ "$ok" = 1 ]
 
+      # What the Backups page lists beside each backup: when it was taken and
+      # the job's own counts. Worked out now; Encrypt shreds the counts.
+      - name: Describe it
+        run: |
+          set -euo pipefail
+          counts=$(awk -F'|' 'NF == 2 { printf "%s\"%s\":%s", (n++ ? "," : ""), $1, $2 }' out/counts-before.txt)
+          echo "META={\"takenAt\":\"$TAKEN_AT\",\"counts\":{$counts}}" >> "$GITHUB_ENV"
+
       - name: Encrypt
         env:
           PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
@@ -165,3 +177,36 @@ jobs:
               || gh release upload "$tag" "$NAME.tar.gz.gpg" --clobber
             echo "Kept permanently as release $tag." >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      # A second copy, in Cloudflare: what crm.legendary.com.my/backups lists
+      # and opens. Last, so a Cloudflare outage never costs the GitHub copy.
+      # Skipped until scripts/backup-page-setup.mjs has set its secrets.
+      - name: Copy to Cloudflare
+        if: env.HAS_CLOUDFLARE == 'true'
+        env:
+          CF_KV_TOKEN: ${{ secrets.CF_KV_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_KV_NAMESPACE: ${{ secrets.CF_KV_NAMESPACE }}
+          KEEP: ${{ inputs.keep }}
+        run: |
+          set -euo pipefail
+          size=$(stat -c%s "$NAME.tar.gz.gpg")
+          # One KV value holds 25 MiB at most; stop well before, loudly.
+          if [ "$size" -gt 25165824 ]; then
+            echo "::error::The encrypted backup is $size bytes, over the 24 MiB a KV value may safely hold. Split it, or move the copy to R2."
+            exit 1
+          fi
+          meta=$(jq -c --argjson size "$size" '. + {sizeBytes: $size}' <<<"$META")
+          put() {
+            curl -fsS -X PUT \
+              "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/storage/kv/namespaces/$CF_KV_NAMESPACE/values/$1" \
+              -H "Authorization: Bearer $CF_KV_TOKEN" \
+              -F "value=@$NAME.tar.gz.gpg" -F "metadata=$meta" > /dev/null
+          }
+          # Thirty-one nights, then KV deletes it by itself.
+          put "nightly%2F$STAMP?expiration_ttl=2678400"
+          day=$(TZ=Asia/Kuala_Lumpur date +%d)
+          if [ "$day" = "01" ] || [ "$KEEP" = "true" ]; then
+            put "monthly%2F${STAMP%%_*}"
+          fi
+          echo "Copied to Cloudflare for the Backups page." >> "$GITHUB_STEP_SUMMARY"

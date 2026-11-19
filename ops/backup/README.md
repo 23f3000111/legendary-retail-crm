@@ -30,12 +30,13 @@ and cannot call anything the app calls.
 
 ---
 
-## The two secrets
+## The secrets
 
 | Secret | What it is |
 |---|---|
 | `BACKUP_DATABASE_URL` | `backup_reader`'s connection string. Made by `scripts/backup-reader.mjs` in the CRM repository; running that again changes the password. |
 | `BACKUP_PASSPHRASE` | What every backup is encrypted with. |
+| `CF_KV_TOKEN`, `CF_ACCOUNT_ID`, `CF_KV_NAMESPACE` | Where each backup is copied for the Backups page (below). Set by `scripts/backup-page-setup.mjs` in the CRM repository. Without them that one step is skipped. |
 
 **Keep the passphrase somewhere other than GitHub** — a password manager. A
 backup nobody can decrypt is not a backup, and GitHub will never show the
@@ -99,3 +100,35 @@ account that owns this repository.
 
 A failed night is worth reading the next morning. A run of them means there
 is no backup.
+
+---
+
+## The Backups page, and the copy in Cloudflare
+
+After each night's backup has been restored, counted and encrypted, the job
+copies it — still encrypted — into Cloudflare (the KV namespace
+`legendary-crm-backups`, in the account that holds legendary.com.my):
+`nightly/<stamp>` for 31 days, and on the 1st `monthly/<day>` for good.
+
+**https://crm.legendary.com.my/backups/** lists those copies and opens any of
+them on any phone or computer, behind one password. The page unlocks the
+backup on the device itself and shows every table, each downloadable as a
+spreadsheet; nothing unlocked is sent anywhere or kept. Every sign-in, and
+any lock-out after wrong passwords, emails the alert list.
+
+| To | Run, in the CRM repository |
+|---|---|
+| Set it up (once) | `node scripts/backup-page-setup.mjs --alert-emails a@…,b@… --reply-to a@… --passphrase-file docs/backup-passphrase.txt` |
+| Change the password | `node scripts/backup-page-setup.mjs --rotate-password`, then redeploy the CRM. Everybody is signed out. |
+
+Both write the page password to `docs/backup-page-password.txt`: put it in a
+password manager, give it to whoever should open backups, and delete the
+file.
+
+A small Cloudflare Worker, `legendary-crm-backup-watch` (in the CRM
+repository under `workers/`), checks the copies at 11:00 every morning and
+emails the alert list if the newest is more than 30 hours old — it runs on
+Cloudflare, so a night GitHub never starts this job is still noticed.
+
+One KV value holds at most 25 MiB. The copy step stops, and the run fails,
+if a backup ever passes 24 MiB: then split it, or move the copy to R2.
