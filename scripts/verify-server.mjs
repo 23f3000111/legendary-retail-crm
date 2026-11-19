@@ -359,6 +359,35 @@ try {
   check('and the look-up is recorded',
     (await one(`select count(*)::int n from docs where doc->>'action'='password.revealed'`)).n > 0)
 
+  // The open copy's login (19 November) reads what a backup holds, and from
+  // the logins only what is not a password. Acting as it needs a membership
+  // the admin login does not have; the grant is rolled back with the rest.
+  const openReader = await (async () => {
+    await client.query('savepoint open_reader')
+    try {
+      await client.query('grant backup_open_reader to postgres with set true')
+      await client.query('set local role backup_open_reader')
+      const docs = (await one('select count(*)::int n from docs')).n
+      const people = (await refuses('select id, username, role, active, doc, updated_at from people limit 1'))
+        ? 0
+        : (await one('select count(*)::int n from people')).n
+      const password = await refuses('select password_hash from people limit 1')
+      const write = await refuses(`insert into docs(kind, id, doc) values ('target', 'open-reader-verify', '{}'::jsonb)`)
+      const call = await refuses('select load_state(null)')
+      await client.query('reset role')
+      await client.query('release savepoint open_reader')
+      return { docs, people, password, write, call }
+    } catch (e) {
+      await client.query('rollback to savepoint open_reader')
+      return { error: e.message }
+    }
+  })()
+  check("the open copy's login reads the documents", openReader.docs > 0, openReader.error)
+  check('and the logins without their passwords', openReader.people > 0, openReader.error)
+  check('but never a password', openReader.password === true, openReader.error)
+  check('nor writes anything', openReader.write === true, openReader.error)
+  check("nor calls the app's functions", openReader.call === true, openReader.error)
+
   // Sign-in never says which half was wrong.
   const noUser = await one("select sign_in('nobody-here', 'whatever-123') r")
   const badPw = await one("select sign_in('kellytew', 'whatever-123') r")
