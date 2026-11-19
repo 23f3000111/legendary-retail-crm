@@ -272,7 +272,9 @@ protection.
   password, opened by the page's own code path. A second run uses a real
   `gpg --symmetric` file made the same way the nightly job makes them, so the
   format matches.
-- **The open-copy export** runs against the local twin's sample data in CI.
+- **The open-copy export** is tested on synthetic dumps in CI. Its own
+  nightly run then restores the real dump into a scratch Postgres and checks
+  the counts, as the encrypted job does.
 - **Live checks after deploying:**
   - sign in with the real password;
   - open tonight's backup;
