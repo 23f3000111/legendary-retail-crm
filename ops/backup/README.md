@@ -1,8 +1,8 @@
 # Legendary CRM — backups
 
 Every night at 02:30 Malaysia time this repository copies the CRM's database,
-restores the copy into a throwaway database to prove it opens, encrypts it,
-and keeps it.
+encrypts the copy and keeps it — then unlocks it again and restores it into a
+throwaway database, to prove it opens.
 
 | Kept | For |
 |---|---|
@@ -62,10 +62,13 @@ tar -xzf backup.tar.gz          # schema.sql, data.sql, and the row counts
 **3. See what it would do** — nothing changes yet:
 
 ```bash
-npm install
+npm ci --ignore-scripts
 DATABASE_URL='postgresql://postgres.xxxx:…@…pooler.supabase.com:6543/postgres' \
   node restore.mjs data.sql
 ```
+
+(`npm ci` installs exactly the versions in `package-lock.json`, the ones the
+job tests with every night.)
 
 It prints each table's row count now and in the backup.
 
@@ -93,10 +96,16 @@ carry. `scripts/issue-passwords.mjs` sets everyone's at once.
 
 ## Every night, the backup is tested
 
-After taking a copy, the job builds an empty Postgres 17, restores the copy
-into it with the same `restore.mjs` a person would use, and counts every
-table. If a table came back short, the run fails and GitHub e-mails the
+After keeping the encrypted copy, the job unlocks that very file again with
+the passphrase, builds an empty Postgres 17, restores it with the same
+`restore.mjs` a person would use, and counts every table. If the file would
+not unlock, or a table came back short, the run fails and GitHub e-mails the
 account that owns this repository.
+
+The test comes last on purpose. It is the only part that runs code from npm
+(the `pg` package, at the versions in `package-lock.json`, with no install
+scripts), and by then every step that holds a secret has finished: no step
+after it holds the passphrase, the database login, or a token.
 
 A failed night is worth reading the next morning. A run of them means there
 is no backup.
@@ -105,7 +114,7 @@ is no backup.
 
 ## The Backups page, and the copy in Cloudflare
 
-After each night's backup has been restored, counted and encrypted, the job
+After each night's backup has been encrypted and kept on GitHub, the job
 copies it — still encrypted — into Cloudflare (the KV namespace
 `legendary-crm-backups`, in the account that holds legendary.com.my):
 `nightly/<stamp>` for 31 days, and on the 1st `monthly/<day>` for good.
