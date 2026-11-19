@@ -1,0 +1,8 @@
+# What a restore produces on your own machine. The dumps live in Actions and
+# Releases; only the readable tables are committed.
+node_modules/
+out/
+*.tar.gz
+/schema.sql
+/data.sql
+/counts-*.txt

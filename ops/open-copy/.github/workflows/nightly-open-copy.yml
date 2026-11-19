@@ -1,0 +1,201 @@
+name: Nightly open copy
+
+# 03:00 in Malaysia, half an hour after the encrypted backup is due. Its own
+# schedule on purpose: a night GitHub starts one job late or not at all, the
+# other still runs.
+on:
+  schedule:
+    - cron: '0 19 * * *'
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: 'Also keep this one permanently, as a monthly copy would be'
+        type: boolean
+        default: false
+
+permissions:
+  # To commit the night's tables, and to attach the monthly copy to a release.
+  contents: write
+
+concurrency:
+  group: open-copy
+  cancel-in-progress: false
+
+jobs:
+  copy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # A throwaway database, gone when the job ends. Every copy is restored into
+    # it and counted, so one that could not be put back fails tonight.
+    services:
+      scratch:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: scratch
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+
+    env:
+      # The open login: reads every document, and the logins without their
+      # passwords. It cannot read a password column, write, or call anything.
+      SOURCE: ${{ secrets.OPEN_BACKUP_DATABASE_URL }}
+      SCRATCH: postgresql://postgres:scratch@localhost:5432/postgres
+      TABLES: people docs locations settings
+      PGSSLMODE: verify-full
+      PGSSLROOTCERT: ${{ github.workspace }}/crm/scripts/supabase-ca.crt
+
+    steps:
+      # This repository, where the readable tables are committed.
+      - uses: actions/checkout@v4
+        with:
+          path: data
+
+      # The CRM itself, which is public: the export and the restore script
+      # live there, so the code that reads a dump is written once.
+      - uses: actions/checkout@v4
+        with:
+          repository: 23f3000111/legendary-retail-crm
+          ref: ${{ vars.CRM_REF || 'main' }}
+          path: crm
+
+      - name: Check the secret is set
+        run: |
+          [ -n "$SOURCE" ] || { echo "::error::OPEN_BACKUP_DATABASE_URL is not set"; exit 1; }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: crm/package-lock.json
+
+      - name: Install the export's packages
+        run: |
+          npm ci --no-audit --no-fund --prefix crm
+          npm install --silent --no-audit --no-fund --prefix crm/ops/backup
+
+      # The server is Postgres 17, and pg_dump refuses a newer server than itself.
+      - name: Install the Postgres 17 client
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17 > /dev/null
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+
+      - name: Take the copy
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          stamp=$(TZ=Asia/Kuala_Lumpur date +%Y-%m-%d_%H%M)
+          echo "STAMP=$stamp" >> "$GITHUB_ENV"
+          count() { for t in $TABLES; do psql "$SOURCE" -Atc "select '$t', count(*) from public.$t"; done; }
+          count > out/counts-before.txt
+
+          # pg_dump for the three tables this login may read whole. The logins'
+          # definition and rows come from the export, passwords left out.
+          three=(--table=public.docs --table=public.locations --table=public.settings)
+          pg_dump "$SOURCE" --schema-only --no-owner --no-privileges "${three[@]}" > out/schema.sql
+          npm run --silent --prefix crm open-copy -- schema-people "$PWD/out/schema-people.sql"
+          cat out/schema-people.sql >> out/schema.sql
+          pg_dump "$SOURCE" --data-only --enable-row-security --column-inserts \
+            --rows-per-insert=200 "${three[@]}" > out/data.sql
+          DATABASE_URL="$SOURCE" npm run --silent --prefix crm open-copy -- people "$PWD/out/people.sql"
+          cat out/people.sql >> out/data.sql
+          rm out/schema-people.sql out/people.sql
+
+          count > out/counts-after.txt
+          echo "Dump: $(du -h out/data.sql | cut -f1) of data."
+
+      - name: Restore it into the scratch database
+        env:
+          PGSSLMODE: disable
+        run: |
+          set -euo pipefail
+          psql "$SCRATCH" -v ON_ERROR_STOP=1 -q -f crm/ops/backup/scratch-setup.sql
+          psql "$SCRATCH" -v ON_ERROR_STOP=1 -q -f out/schema.sql
+          DATABASE_URL="$SCRATCH" node crm/ops/backup/restore.mjs out/data.sql --yes
+
+      - name: Check nothing went missing
+        env:
+          PGSSLMODE: disable
+        run: |
+          set -euo pipefail
+          # Rows are only ever added between the two counts, so the restored
+          # count must sit between the count before the dump and the one after.
+          ok=1
+          {
+            echo "### Open copy $STAMP"
+            echo
+            echo "| Table | Before | Restored | After |"
+            echo "|---|---:|---:|---:|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for t in $TABLES; do
+            before=$(grep "^$t|" out/counts-before.txt | cut -d'|' -f2)
+            after=$(grep "^$t|" out/counts-after.txt | cut -d'|' -f2)
+            got=$(psql "$SCRATCH" -Atc "select count(*) from public.$t")
+            echo "| $t | $before | $got | $after |" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$got" -lt "$before" ] || [ "$got" -gt "$after" ]; then
+              echo "::error::$t restored $got rows; expected between $before and $after"
+              ok=0
+            fi
+          done
+          [ "$ok" = 1 ]
+
+      # Every kind of record as CSV, committed: each night's commit is that
+      # night's snapshot, readable on GitHub's website and app.
+      - name: Write the readable tables
+        run: |
+          set -euo pipefail
+          npm run --silent --prefix crm open-copy -- tables "$PWD/out/data.sql" "$PWD/out/tables"
+          rm -rf data/tables
+          mv out/tables data/tables
+          cd data
+          git config user.name "Legendary CRM open copy"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A tables
+          if git diff --cached --quiet; then
+            echo "Nothing changed since the last copy."
+          else
+            git commit -q -m "Data as of $STAMP"
+            git push -q
+          fi
+
+      - name: Pack the dump
+        run: |
+          set -euo pipefail
+          name="legendary-crm-open-$STAMP"
+          echo "NAME=$name" >> "$GITHUB_ENV"
+          tar -C out -czf "$name.tar.gz" schema.sql data.sql counts-before.txt counts-after.txt
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Dump: $(du -h "$name.tar.gz" | cut -f1), not encrypted." >> "$GITHUB_STEP_SUMMARY"
+
+      # Thirty nights, kept by GitHub and deleted after.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.NAME }}
+          path: ${{ env.NAME }}.tar.gz
+          retention-days: 30
+          if-no-files-found: error
+
+      # The first night of each month is also kept for good, as a release.
+      - name: Keep the monthly one
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEEP: ${{ inputs.keep }}
+        run: |
+          set -euo pipefail
+          day=$(TZ=Asia/Kuala_Lumpur date +%d)
+          if [ "$day" = "01" ] || [ "$KEEP" = "true" ]; then
+            tag="open-${STAMP%%_*}"
+            gh release create "$tag" "$NAME.tar.gz" -R "$GITHUB_REPOSITORY" \
+              --title "Open copy ${STAMP%%_*}" \
+              --notes "Not encrypted. See README.md to restore." \
+              || gh release upload "$tag" "$NAME.tar.gz" -R "$GITHUB_REPOSITORY" --clobber
+            echo "Kept permanently as release $tag." >> "$GITHUB_STEP_SUMMARY"
+          fi
