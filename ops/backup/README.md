@@ -6,8 +6,11 @@ throwaway database, to prove it opens.
 
 | Kept | For |
 |---|---|
-| Every night | 30 days — under **Actions**, on each run |
-| The 1st of each month | Permanently — under **Releases** |
+| Every night | Permanently — under **Releases**, one release a month: `nightly-YYYY-MM` |
+| The 1st of each month | Permanently — under **Releases**, a release of its own: `backup-YYYY-MM-01` |
+
+Each copy is made even when another one fails; a failed one fails the run,
+and GitHub emails the account that owns this repository.
 
 **This repository must stay private.** The backups are encrypted, but they are
 still the whole business in one file.
@@ -49,8 +52,9 @@ secret back to you.
 You need: the passphrase, the admin connection string (Supabase → Settings →
 Database → Connection string), and Node.js.
 
-**1. Download.** Actions → a run of *Nightly backup* → Artifacts, or Releases
-for a monthly one. You get `legendary-crm-YYYY-MM-DD_HHMM.tar.gz.gpg`.
+**1. Download.** Releases → `nightly-YYYY-MM` for any night, or
+`backup-YYYY-MM-01` for a monthly one. You get
+`legendary-crm-YYYY-MM-DD_HHMM.tar.gz.gpg`.
 
 **2. Decrypt and unpack.**
 

@@ -38,6 +38,11 @@ const code = (s: Step) => s.text.replace(/#.*$/gm, '')
 const runsNpmCode = (s: Step) => /\bnpm\b|\bnode\b/.test(code(s))
 const holdsSecret = (s: Step) => /secrets\.|github\.token/.test(code(s))
 const named = (name: string) => steps.findIndex((s) => s.name === name)
+const step = (name: string) => {
+  const s = steps.find((x) => x.name === name)
+  expect(s, name).toBeDefined()
+  return s!
+}
 
 describe('the encrypted nightly job', () => {
   it('gives no secret to the whole job, and the database login only to the steps that use it', () => {
@@ -79,6 +84,24 @@ describe('the encrypted nightly job', () => {
     expect(copy).toMatch(/printf 'Authorization: Bearer %s\\n' "\$UPLOAD_KEY" \| curl /)
     expect(copy).toMatch(/ -H @- /)
     expect(copy).not.toMatch(/Bearer \$UPLOAD_KEY/)
+  })
+
+  it('keeps every night for good, as a file on that month’s release, not as an artifact GitHub deletes', () => {
+    // Artifacts share the free plan's 500 MB, which these alone would fill by
+    // about June 2027; release files have no total limit (19 November).
+    expect(workflow).not.toMatch(/upload-artifact|retention-days/)
+    const keep = code(step('Keep the nightly one'))
+    expect(keep).toMatch(/tag="nightly-\$\{STAMP:0:7\}"/)
+    expect(keep).toMatch(/gh release upload "\$tag" "\$NAME\.tar\.gz\.gpg" -R "\$GITHUB_REPOSITORY" --clobber/)
+    expect(keep).toMatch(/gh release create "\$tag" "\$NAME\.tar\.gz\.gpg" -R "\$GITHUB_REPOSITORY"[\s\S]*--latest=false/)
+  })
+
+  it('makes every copy whenever there is an encrypted file, even when another copy failed', () => {
+    for (const name of ['Keep the nightly one', 'Keep the monthly one', 'Copy to Cloudflare']) {
+      expect(step(name).text, name).toMatch(/if: \$\{\{ !cancelled\(\) && steps\.encrypt\.outcome == 'success'/)
+    }
+    expect(step('Copy to Cloudflare').text).toMatch(/&& env\.HAS_CLOUDFLARE == 'true' \}\}/)
+    expect(named('Keep the nightly one')).toBeLessThan(named('Keep the monthly one'))
   })
 
   it('leaves no GitHub token on disk for a later step’s code to find', () => {

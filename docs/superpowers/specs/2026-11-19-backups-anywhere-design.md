@@ -191,6 +191,15 @@ protection.
   no Cloudflare key at all. The developer's one Cloudflare token can also
   reach Pages, so a copy of it in GitHub could have changed the site or sent
   mail as legendary.com.my.
+
+  *Changed later on 19 November (the developer's call):* in both
+  repositories, GitHub keeps every night for good, as a file on that month's
+  `nightly-YYYY-MM` release, instead of as a 30-day artifact. The reason is
+  storage: artifacts share the free plan's 500 MB, and at today's growth they
+  would have filled it by about June 2027, while release files have no total
+  limit. Each copy is now made even when another one fails. The 38 artifacts
+  already taken were moved onto those releases. Cloudflare still keeps 31
+  nights and every 1st of the month.
 - **The page:** a second Vite entry, `backups/index.html` with code in
   `src/backups/`. It shares no code with the staff app's bundle, is not
   linked from the CRM, and is marked noindex.

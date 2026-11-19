@@ -15,7 +15,7 @@ account** (Settings → Password and authentication).
 | Where | What | Kept |
 |---|---|---|
 | `tables/` | Every kind of record as CSV, for Excel, Sheets, Numbers or GitHub itself | Every night is a commit, *Data as of …*; a file's History shows any earlier night |
-| Actions → a run of *Nightly open copy* → Artifacts | The whole database dump of that night: `schema.sql`, `data.sql` and the row counts | 30 days |
+| Releases `nightly-YYYY-MM` | The whole database dump of every night: `schema.sql`, `data.sql` and the row counts | For good |
 | Releases `open-YYYY-MM-01` | The first night of each month | For good |
 | Release `history-2026-11-19` | The snapshots taken before this repository existed, back to 24 September | For good |
 
@@ -50,7 +50,7 @@ ones.
 You need the admin connection string (Supabase → Settings → Database →
 Connection string), Node.js, and the CRM repository checked out.
 
-1. **Download** a dump from Actions or Releases, and unpack it:
+1. **Download** a dump from Releases, and unpack it:
    `tar -xzf legendary-crm-open-….tar.gz` gives `schema.sql`, `data.sql` and
    the counts.
 2. **See what it would do** — nothing changes yet:

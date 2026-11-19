@@ -12,7 +12,7 @@ on:
         default: false
 
 permissions:
-  # To attach the monthly backup to a release, which is kept for good.
+  # To keep each backup on a release, which is kept for good.
   contents: write
 
 concurrency:
@@ -128,16 +128,32 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Encrypted: $(du -h "$name.tar.gz.gpg" | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
 
-      # Thirty nights, kept by GitHub and deleted after.
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.NAME }}
-          path: ${{ env.NAME }}.tar.gz.gpg
-          retention-days: 30
-          if-no-files-found: error
+      # Every night is kept for good, as a file on that month's release:
+      # GitHub sets no limit on the total size of release files, only 2 GiB
+      # each. (Thirty-day artifacts would have filled the free plan's 500 MB
+      # by about June 2027.) This and each copy after it runs whenever there
+      # is an encrypted file, even when another copy failed; a failed one
+      # still fails the run, and GitHub emails the account.
+      - name: Keep the nightly one
+        if: ${{ !cancelled() && steps.encrypt.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="nightly-${STAMP:0:7}"
+          if gh release view "$tag" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$tag" "$NAME.tar.gz.gpg" -R "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" "$NAME.tar.gz.gpg" -R "$GITHUB_REPOSITORY" --latest=false \
+              --title "Nightly backups ${STAMP:0:7}" \
+              --notes "Every night of the month, encrypted with the backup passphrase. See README.md to restore."
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Kept for good on release $tag." >> "$GITHUB_STEP_SUMMARY"
 
-      # The first night of each month is also kept for good, as a release.
+      # The first night of each month is also kept as a release of its own.
       - name: Keep the monthly one
+        if: ${{ !cancelled() && steps.encrypt.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
           KEEP: ${{ inputs.keep }}
@@ -155,12 +171,12 @@ jobs:
           fi
 
       # A second copy, in Cloudflare: what crm.legendary.com.my/backups lists
-      # and opens. After the GitHub copies, so a Cloudflare outage never costs
-      # them. Sent through the page itself, with a key that can add a backup
+      # and opens. It runs even when a GitHub copy failed, and they never wait
+      # on it. Sent through the page itself, with a key that can add a backup
       # and do nothing else: this repository holds no Cloudflare key at all.
       # Skipped until scripts/backup-page-setup.mjs has set that key.
       - name: Copy to Cloudflare
-        if: env.HAS_CLOUDFLARE == 'true'
+        if: ${{ !cancelled() && steps.encrypt.outcome == 'success' && env.HAS_CLOUDFLARE == 'true' }}
         env:
           UPLOAD_KEY: ${{ secrets.BACKUP_UPLOAD_KEY }}
           KEEP: ${{ inputs.keep }}

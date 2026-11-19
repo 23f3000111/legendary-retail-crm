@@ -14,7 +14,7 @@ on:
         default: false
 
 permissions:
-  # To commit the night's tables, and to attach the monthly copy to a release.
+  # To commit the night's tables, and to keep each dump on a release.
   contents: write
 
 concurrency:
@@ -41,7 +41,7 @@ jobs:
     # The database login's secret is in no job-wide setting: only the step that
     # reads the server has it, and that step runs nothing but pg_dump and psql.
     # Nothing npm installs ever runs where it could read it, and GitHub's own
-    # token reaches only the two steps that push.
+    # token reaches only the steps that push.
     env:
       SCRATCH: postgresql://postgres:scratch@localhost:5432/postgres
       TABLES: people docs locations settings
@@ -119,6 +119,7 @@ jobs:
 
       # The logins' definition and rows, passwords replaced, from the export.
       - name: Add the logins without their passwords
+        id: logins
         run: |
           set -euo pipefail
           npm run --silent --prefix crm open-copy -- schema-people "$PWD/out/schema-people.sql"
@@ -190,7 +191,11 @@ jobs:
             git -c http.extraheader="AUTHORIZATION: basic $auth" push -q origin HEAD:"${GITHUB_REF_NAME}"
           fi
 
+      # The dump is kept even when the tables could not be written or pushed
+      # (final review M5), as long as it is whole: the logins were added.
       - name: Pack the dump
+        id: pack
+        if: ${{ !cancelled() && steps.logins.outcome == 'success' }}
         run: |
           set -euo pipefail
           name="legendary-crm-open-$STAMP"
@@ -199,16 +204,29 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Dump: $(du -h "$name.tar.gz" | cut -f1), not encrypted." >> "$GITHUB_STEP_SUMMARY"
 
-      # Thirty nights, kept by GitHub and deleted after.
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.NAME }}
-          path: ${{ env.NAME }}.tar.gz
-          retention-days: 30
-          if-no-files-found: error
+      # Every night's dump is kept for good, as a file on that month's
+      # release: GitHub sets no limit on the total size of release files, only
+      # 2 GiB each. (Thirty-day artifacts would have filled the free plan's
+      # 500 MB by about June 2027.)
+      - name: Keep the nightly one
+        if: ${{ !cancelled() && steps.pack.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="nightly-${STAMP:0:7}"
+          if gh release view "$tag" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$tag" "$NAME.tar.gz" -R "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" "$NAME.tar.gz" -R "$GITHUB_REPOSITORY" --latest=false \
+              --title "Nightly open copies ${STAMP:0:7}" \
+              --notes "Every night of the month. Not encrypted. See README.md to restore."
+          fi
+          echo "Kept for good on release $tag." >> "$GITHUB_STEP_SUMMARY"
 
-      # The first night of each month is also kept for good, as a release.
+      # The first night of each month is also kept as a release of its own.
       - name: Keep the monthly one
+        if: ${{ !cancelled() && steps.pack.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
           KEEP: ${{ inputs.keep }}
