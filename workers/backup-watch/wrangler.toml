@@ -17,5 +17,5 @@ crons = ["0 8 * * *"]
 
 [[kv_namespaces]]
 binding = "BACKUPS"
-# The id scripts/backup-page-setup.mjs prints for legendary-crm-backups.
-id = "SET_BY_SETUP"
+# legendary-crm-backups, as scripts/backup-page-setup.mjs made it (19 November).
+id = "84de412cfec54b14a290e6dacf7cd2af"
