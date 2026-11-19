@@ -46,6 +46,24 @@ describe('the open copy of the logins', () => {
     expect(out).not.toContain('c30d0409')
   })
 
+  it("drops a password a login's document should never carry, from the nightly logins and a rewritten dump alike", () => {
+    // The server strips these on every write (0001_init.sql), but the open
+    // copy is unencrypted, so it does not rely on that (security review, 19 November).
+    const doc = '{"name": "Kelly Tew", "password": "hunter2-kelly", "passwordHistory": ["old-kelly"], "passwordSetAt": "2026-11-01"}'
+    const nightly = peopleInserts([
+      { id: 'kelly', username: 'kellytew', role: 'ops', active: true, doc, updated_at: '2026-09-22 04:54:52.651+00' },
+    ])
+    const people =
+      'INSERT INTO public.people (id, username, role, active, doc, password_hash, password_cipher, password_history, updated_at) VALUES\n' +
+      `\t('kelly', 'kellytew', 'ops', true, '${doc}', '${HASH}', '\\x', '{}', '2026-09-22 04:54:52.651+00');`
+    const rewritten = redactDumpText(`SET standard_conforming_strings = on;\n\n${people}\n`)
+    for (const sql of [nightly, rewritten]) {
+      expect(sql).not.toMatch(/hunter2-kelly|old-kelly|"password(History)?"/)
+      const [table] = parseDump(sql).filter((t) => t.name === 'people')
+      expect(JSON.parse(String(table.rows[0][4]))).toEqual({ name: 'Kelly Tew', passwordSetAt: '2026-11-01' })
+    }
+  })
+
   it('PEOPLE_DDL matches the people table in 0001_init.sql', () => {
     const inMigration = /create table if not exists people \(([\s\S]*?)\n\);/.exec(migration)?.[1]
     const inDdl = /create table public\.people \(([\s\S]*?)\n\);/.exec(PEOPLE_DDL)?.[1]

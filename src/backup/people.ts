@@ -63,8 +63,25 @@ export interface OpenPerson {
   updated_at: string
 }
 
+/**
+ * Keys a login's document must never carry. The server strips them on every
+ * write (0001_init.sql) and the spreadsheets drop them too (tables.ts), but
+ * the open copy is unencrypted, so its SQL does not rely on either (security
+ * review, 19 November). A document without them is left byte for byte.
+ */
+const DOC_SECRETS = ['password', 'passwordHistory']
+
+const withoutSecrets = (doc: SqlValue): SqlValue => {
+  if (typeof doc !== 'string') return doc
+  const parsed: unknown = JSON.parse(doc)
+  if (typeof parsed !== 'object' || parsed === null || !DOC_SECRETS.some((k) => k in parsed)) return doc
+  const clean = { ...(parsed as Record<string, unknown>) }
+  for (const k of DOC_SECRETS) delete clean[k]
+  return JSON.stringify(clean)
+}
+
 const withPlaceholders = (p: Record<string, SqlValue>): SqlValue[] =>
-  PEOPLE_COLUMNS.map((c) => (c in PLACEHOLDERS ? PLACEHOLDERS[c] : p[c]))
+  PEOPLE_COLUMNS.map((c) => (c in PLACEHOLDERS ? PLACEHOLDERS[c] : c === 'doc' ? withoutSecrets(p[c]) : p[c]))
 
 /** The logins as INSERT statements, passwords replaced. */
 export function peopleInserts(rows: OpenPerson[], rowsPerInsert = 200): string {
