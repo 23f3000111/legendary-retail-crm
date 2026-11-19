@@ -109,7 +109,9 @@ jobs:
           pg_dump "$SOURCE" --schema-only --no-owner --no-privileges "${three[@]}" > out/schema.sql
           pg_dump "$SOURCE" --data-only --enable-row-security --column-inserts \
             --rows-per-insert=200 "${three[@]}" > out/data.sql
-          psql "$SOURCE" -v ON_ERROR_STOP=1 -Atc "set time zone 'UTC'; select coalesce(json_agg(json_build_object(
+          # One statement only: psql prints every statement's result, a SET's too.
+          # PGTZ makes each moment come out the way pg_dump writes it, in UTC.
+          PGTZ=UTC psql "$SOURCE" -v ON_ERROR_STOP=1 -Atc "select coalesce(json_agg(json_build_object(
             'id', id, 'username', username, 'role', role, 'active', active,
             'doc', doc::text, 'updated_at', updated_at::text) order by id), '[]') from public.people" > out/people.json
 

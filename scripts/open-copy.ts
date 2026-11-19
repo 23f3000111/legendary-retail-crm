@@ -11,9 +11,9 @@
  * cannot dump the logins table, so psql writes its six readable columns to
  * `people.json`:
  *
- *   set time zone 'UTC'; select coalesce(json_agg(json_build_object(
+ *   PGTZ=UTC psql … -Atc "select coalesce(json_agg(json_build_object(
  *     'id', id, 'username', username, 'role', role, 'active', active,
- *     'doc', doc::text, 'updated_at', updated_at::text) order by id), '[]') from people
+ *     'doc', doc::text, 'updated_at', updated_at::text) order by id), '[]') from people"
  *
  * and this turns them into INSERTs, with placeholder passwords.
  */
