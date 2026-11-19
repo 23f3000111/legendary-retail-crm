@@ -11,84 +11,19 @@
  *
  * Needs `gh` signed in as the owner of both repositories, `gpg` and `tar` on
  * the PATH. The passphrase is read from the last line of the file, as kept in
- * `docs/backup-passphrase.txt`. Everything unlocked is written under `--work`
- * and shredded before the script ends, whatever happens.
+ * `docs/backup-passphrase.txt`. Everything unlocked goes into a new folder
+ * made inside `--work` for the run, and that folder alone is shredded before
+ * the script ends, whatever happens; nothing else in `--work` is touched.
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 // (fetch, FormData and Blob are Node 20's own.)
 import { join } from 'node:path'
 import { redactDumpText } from '../src/backup/people'
+import { fetchAndUnlock, freshWorkFolder, gh, listEncryptedBackups, shredAll } from './lib/encrypted-backups'
 
-export const ENCRYPTED = '23f3000111/legendary-crm-backups'
-export const OPEN = '23f3000111/legendary-crm-data'
+const OPEN = '23f3000111/legendary-crm-data'
 const HISTORY_TAG = 'history-2026-11-19'
-
-export interface EncryptedBackup {
-  /** `legendary-crm-YYYY-MM-DD_HHMM` */
-  name: string
-  /** `YYYY-MM-DD_HHMM`, Malaysia time */
-  stamp: string
-  source: 'artifact' | 'release'
-  runId?: number
-  tag?: string
-}
-
-const gh = (args: string[], cwd?: string) => execFileSync('gh', args, { cwd, encoding: 'utf8', maxBuffer: 64 << 20 })
-const stampOf = (name: string) => /^legendary-crm-(\d{4}-\d{2}-\d{2}_\d{4})$/.exec(name)?.[1]
-
-/** Every encrypted backup still on GitHub, oldest first, each once. */
-export function listEncryptedBackups(): EncryptedBackup[] {
-  const found = new Map<string, EncryptedBackup>()
-  const releases = JSON.parse(gh(['api', `repos/${ENCRYPTED}/releases?per_page=100`])) as {
-    tag_name: string
-    assets: { name: string }[]
-  }[]
-  for (const r of releases) {
-    for (const a of r.assets) {
-      const name = a.name.replace(/\.tar\.gz\.gpg$/, '')
-      const stamp = stampOf(name)
-      if (stamp) found.set(name, { name, stamp, source: 'release', tag: r.tag_name })
-    }
-  }
-  const pages = JSON.parse(
-    gh(['api', '--paginate', '--slurp', `repos/${ENCRYPTED}/actions/artifacts?per_page=100`]),
-  ) as { artifacts: { name: string; expired: boolean; workflow_run: { id: number } }[] }[]
-  for (const a of pages.flatMap((p) => p.artifacts)) {
-    const stamp = stampOf(a.name)
-    // A monthly release is the same night as its artifact: kept once, from the release.
-    if (stamp && !a.expired && !found.has(a.name)) {
-      found.set(a.name, { name: a.name, stamp, source: 'artifact', runId: a.workflow_run.id })
-    }
-  }
-  return [...found.values()].sort((a, b) => (a.stamp < b.stamp ? -1 : 1))
-}
-
-/** Downloads one backup and unlocks it into `<work>/<name>/`. Returns that folder. */
-export function fetchAndUnlock(b: EncryptedBackup, work: string, passphrase: string): string {
-  const folder = join(work, b.name)
-  mkdirSync(folder, { recursive: true })
-  if (b.source === 'artifact') gh(['run', 'download', String(b.runId), '-R', ENCRYPTED, '-n', b.name, '-D', folder])
-  else gh(['release', 'download', b.tag!, '-R', ENCRYPTED, '-p', `${b.name}.tar.gz.gpg`, '-D', folder])
-  execFileSync(
-    'gpg',
-    ['--batch', '--yes', '--quiet', '--pinentry-mode', 'loopback', '--passphrase-fd', '0', '--decrypt',
-      '--output', `${b.name}.tar.gz`, `${b.name}.tar.gz.gpg`],
-    { cwd: folder, input: passphrase },
-  )
-  // Relative names and a working folder: Windows tar takes "C:" for a remote host.
-  execFileSync('tar', ['-xzf', `${b.name}.tar.gz`], { cwd: folder })
-  return folder
-}
-
-/** Overwrites and deletes every file under `dir`. */
-export function shredAll(dir: string) {
-  if (!existsSync(dir)) return
-  for (const entry of readdirSync(dir, { withFileTypes: true, recursive: true })) {
-    if (entry.isFile()) execFileSync('shred', ['-u', join(entry.parentPath ?? entry.path, entry.name)])
-  }
-  rmSync(dir, { recursive: true, force: true })
-}
 
 const arg = (name: string) => {
   const i = process.argv.indexOf(name)
@@ -102,9 +37,10 @@ async function openCopy(dryRun: boolean) {
   if (dryRun) return
 
   const passphraseFile = arg('--passphrase-file')
-  const work = arg('--work')
-  if (!passphraseFile || !work) throw new Error('Give --passphrase-file and --work.')
+  const base = arg('--work')
+  if (!passphraseFile || !base) throw new Error('Give --passphrase-file and --work.')
   const passphrase = readFileSync(passphraseFile, 'utf8').split(/\r?\n/).filter(Boolean).pop()!
+  const work = freshWorkFolder(base)
   const out = join(work, 'open')
   mkdirSync(out, { recursive: true })
   try {
@@ -162,11 +98,12 @@ async function cloudflare(dryRun: boolean) {
   const account = process.env.CLOUDFLARE_ACCOUNT_ID
   const namespace = arg('--namespace')
   const passphraseFile = arg('--passphrase-file')
-  const work = arg('--work')
-  if (!token || !account || !namespace || !passphraseFile || !work) {
+  const base = arg('--work')
+  if (!token || !account || !namespace || !passphraseFile || !base) {
     throw new Error('Set CLOUDFLARE_BACKUP_TOKEN and CLOUDFLARE_ACCOUNT_ID; give --namespace, --passphrase-file and --work.')
   }
   const passphrase = readFileSync(passphraseFile, 'utf8').split(/\r?\n/).filter(Boolean).pop()!
+  const work = freshWorkFolder(base)
   try {
     for (const b of backups) {
       const takenAt = isoOfStamp(b.stamp)
