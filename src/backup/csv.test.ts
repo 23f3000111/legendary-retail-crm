@@ -14,6 +14,24 @@ describe('toCsv', () => {
     expect(csv).toBe('﻿a,b\r\n"x,y","say ""hi"""\r\n"two\nlines",\r\ntrue,3\r\n')
   })
 
+  it('writes a cell Excel would run as a formula as plain text', () => {
+    const csv = toCsv({
+      columns: ['note'],
+      rows: [['=HYPERLINK("http://x","y")'], ['+60 12'], ['-two'], ['@SUM(A1)'], ['\tx'], [-3.5], ['a=b']],
+    })
+    expect(csv.slice(1).split('\r\n')).toEqual([
+      'note',
+      `"'=HYPERLINK(""http://x"",""y"")"`,
+      "'+60 12",
+      "'-two",
+      "'@SUM(A1)",
+      "'\tx",
+      '-3.5',
+      'a=b',
+      '',
+    ])
+  })
+
   it('starts with a byte-order mark and ends lines with CRLF', () => {
     const csv = toCsv({ columns: ['name'], rows: [['Zhōng 中 🇲🇾']] })
     expect(csv.charCodeAt(0)).toBe(0xfeff)
@@ -52,5 +70,9 @@ describe('monthOf', () => {
     expect(monthOf('2026-10-31T17:30:00.000Z')).toBe('2026-11')
     expect(monthOf('2026-10-31T15:59:59.000Z')).toBe('2026-10')
     expect(monthOf('not a date')).toBe('undated')
+  })
+
+  it('gives a moment too far ahead to date no month, rather than failing the export', () => {
+    expect(monthOf('+275760-09-13T00:00:00.000Z')).toBe('undated')
   })
 })
