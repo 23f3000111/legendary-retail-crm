@@ -36,7 +36,7 @@ and cannot call anything the app calls.
 |---|---|
 | `BACKUP_DATABASE_URL` | `backup_reader`'s connection string. Made by `scripts/backup-reader.mjs` in the CRM repository; running that again changes the password. |
 | `BACKUP_PASSPHRASE` | What every backup is encrypted with. |
-| `CF_KV_TOKEN`, `CF_ACCOUNT_ID`, `CF_KV_NAMESPACE` | Where each backup is copied for the Backups page (below). Set by `scripts/backup-page-setup.mjs` in the CRM repository. Without them that one step is skipped. |
+| `CF_KV_TOKEN`, `CF_ACCOUNT_ID`, `CF_KV_NAMESPACE` | Where each backup is copied for the Backups page (below). Set by `scripts/backup-page-setup.mjs` in the CRM repository. `CF_KV_TOKEN` can write Workers KV and nothing else. Without them that one step is skipped. |
 
 **Keep the passphrase somewhere other than GitHub** — a password manager. A
 backup nobody can decrypt is not a backup, and GitHub will never show the

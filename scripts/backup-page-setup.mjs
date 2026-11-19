@@ -7,10 +7,15 @@
  *   node scripts/backup-page-setup.mjs --rotate-password [--dry-run]
  *
  * Reads from the environment, or from `.env` in the current folder:
- *   CLOUDFLARE_API_TOKEN     the Pages token the deploy uses (Pages: Edit)
+ *   CLOUDFLARE_API_TOKEN      the Pages token the deploy uses (Pages: Edit)
  *   CLOUDFLARE_ACCOUNT_ID
- *   CLOUDFLARE_BACKUP_TOKEN  Workers KV Storage: Edit, Workers Scripts: Edit
- *   RESEND_API_KEY           the full-access key, to make a sending-only one
+ *   CLOUDFLARE_BACKUP_TOKEN   Workers KV Storage: Edit and Workers Scripts: Edit.
+ *                             Stays on this machine: it makes the namespace and
+ *                             deploys the morning check.
+ *   CLOUDFLARE_KV_JOB_TOKEN   Workers KV Storage: Edit, nothing else. The only
+ *                             Cloudflare key that leaves this machine: the
+ *                             nightly job copies each backup with it.
+ *   RESEND_API_KEY            the full-access key, to make a sending-only one
  *
  * The first form:
  *   1. finds or makes the KV namespace `legendary-crm-backups`;
@@ -127,6 +132,12 @@ async function setup() {
   }
   const account = env('CLOUDFLARE_ACCOUNT_ID')
   const kvToken = env('CLOUDFLARE_BACKUP_TOKEN')
+  // GitHub gets a key that can do one thing: write KV. Never the one that can
+  // also deploy Workers (19 November security review).
+  const jobToken = env('CLOUDFLARE_KV_JOB_TOKEN')
+  if (jobToken === kvToken) {
+    throw new Error('CLOUDFLARE_KV_JOB_TOKEN must be its own key, with Workers KV Storage: Edit and nothing else.')
+  }
 
   // 1. The KV namespace.
   const namespaces = await cf(`/accounts/${account}/storage/kv/namespaces?per_page=100`, kvToken)
@@ -169,7 +180,7 @@ async function setup() {
 
   // 5. What the encrypted backup's nightly job needs to copy each backup to KV.
   for (const [name, v] of [
-    ['CF_KV_TOKEN', kvToken],
+    ['CF_KV_TOKEN', jobToken],
     ['CF_ACCOUNT_ID', account],
     ['CF_KV_NAMESPACE', namespace?.id ?? 'dry-run'],
   ]) {
