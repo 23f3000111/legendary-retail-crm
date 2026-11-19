@@ -22,6 +22,10 @@ const sizes: Record<Size, string> = {
   md: 'h-10 px-4 text-[13.5px]',
 }
 
+/** A button's look, for a link that must be a link (a download) but read as a button. */
+export const buttonClasses = (variant: Variant = 'secondary', size: Size = 'md') =>
+  `${base} ${variants[variant]} ${sizes[size]}`
+
 export function Button({
   children,
   variant = 'secondary',

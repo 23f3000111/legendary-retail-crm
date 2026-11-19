@@ -37,15 +37,23 @@ const countsOf = (text: string) =>
       }),
   )
 
-export async function openBackup(encrypted: Uint8Array, passphrase: string): Promise<OpenedBackup> {
-  let plain: Uint8Array
+/** The backup's gzip'd tar, or CannotUnlock. The slow half: 65 million rounds of SHA-512. */
+export async function unlockBackup(encrypted: Uint8Array, passphrase: string): Promise<Uint8Array> {
   try {
     const message = await readMessage({ binaryMessage: encrypted })
     const { data } = await decrypt({ message, passwords: [passphrase], format: 'binary' })
-    plain = data as Uint8Array
+    return data as Uint8Array
   } catch {
     throw new CannotUnlock()
   }
+}
+
+export async function openBackup(encrypted: Uint8Array, passphrase: string): Promise<OpenedBackup> {
+  return readBackup(await unlockBackup(encrypted, passphrase))
+}
+
+/** An unlocked backup's tables and the job's counts. */
+export function readBackup(plain: Uint8Array): OpenedBackup {
   const files = readTar(gunzipSync(plain))
   const dataSql = files.get('data.sql')
   if (!dataSql) throw new Error('This backup has no data.sql in it.')

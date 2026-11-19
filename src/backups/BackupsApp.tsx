@@ -4,21 +4,22 @@
  *
  * Signing in buys an hour. The list comes from Cloudflare's copy of the
  * nightly backups. Opening one downloads it still encrypted, asks the server
- * for the key, and unlocks it here, in this tab: nothing unlocked is sent
+ * for the key, and unlocks it here, in this tab — in a worker (client.ts),
+ * so a phone's page never freezes while it does. Nothing unlocked is sent
  * anywhere or kept anywhere — no local storage, no cache — and the key lives
- * only in a variable for as long as the opening takes.
+ * only for as long as the opening takes.
  */
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { strToU8, zipSync } from 'fflate'
+import { memo, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Panel, PanelBody, PanelHeader, Rule } from '../components/ui/Panel'
-import { Button } from '../components/ui/Button'
+import { Button, buttonClasses } from '../components/ui/Button'
 import { Field, TextInput } from '../components/ui/Field'
+import { Icon } from '../components/ui/icons'
 import { Notice } from '../components/ui/Notice'
-import { csvFiles, toCsv } from '../backup/csv'
-import type { Table } from '../backup/tables'
+import type { Cell } from '../backup/tables'
 import { fetchBackup, fetchKey, fileUrl, listBackups, signIn, SignedOut, signOut, type BackupEntry } from './api'
-import { CannotUnlock, openBackup, type OpenedBackup } from './open'
-import { formatMyt, hoursOld, visibleRows } from './view'
+import { BackupWorker, type Stage } from './client'
+import { formatMyt, hoursOld } from './view'
+import type { TableSummary } from './worker-core'
 
 const PAGE = 200
 const STALE_HOURS = 30
@@ -28,13 +29,14 @@ type Screen =
   | { at: 'not-here' }
   | { at: 'sign-in'; error?: string }
   | { at: 'list'; now: string; backups: BackupEntry[]; error?: string }
-  | { at: 'opening'; entry: BackupEntry; stage: 'Downloading…' | 'Unlocking…' | 'Reading…' }
-  | { at: 'opened'; entry: BackupEntry; backup: OpenedBackup }
+  | { at: 'opening'; entry: BackupEntry; stage: 'Downloading…' | Stage }
+  | { at: 'opened'; entry: BackupEntry; worker: BackupWorker; counts: Record<string, number>; tables: TableSummary[] }
 
 const stampOf = (key: string) => key.split('/')[1] ?? key
 const clockOf = (iso: string) => formatMyt(iso).split(', ')[1]
 const megabytes = (n?: number) => (n ? `${(n / 1_048_576).toFixed(1)} MB` : '')
 const rowsText = (n: number) => `${n.toLocaleString('en-MY')} ${n === 1 ? 'row' : 'rows'}`
+const messageOf = (e: unknown, otherwise: string) => (e instanceof Error ? e.message : otherwise)
 
 /** Hands the browser a file to save. */
 function save(name: string, data: BlobPart, type: string) {
@@ -50,15 +52,26 @@ function save(name: string, data: BlobPart, type: string) {
 
 export function BackupsApp() {
   const [screen, setScreen] = useState<Screen>({ at: 'checking' })
+  // The open backup's worker, and a count that moves on whenever the page lets
+  // go of it, so an opening that finishes after a sign-out is dropped.
+  const worker = useRef<BackupWorker | undefined>(undefined)
+  const turn = useRef(0)
+
+  const letGo = () => {
+    turn.current++
+    worker.current?.close()
+    worker.current = undefined
+  }
 
   const showList = async (error?: string) => {
+    letGo()
     try {
       const result = await listBackups()
       if (result === 'not-here') return setScreen({ at: 'not-here' })
       if (result === 'signed-out') return setScreen({ at: 'sign-in' })
       setScreen({ at: 'list', ...result, error })
     } catch (e) {
-      setScreen({ at: 'sign-in', error: e instanceof Error ? e.message : 'Something went wrong.' })
+      setScreen({ at: 'sign-in', error: messageOf(e, 'Something went wrong.') })
     }
   }
 
@@ -67,17 +80,32 @@ export function BackupsApp() {
   }, [])
 
   const open = async (entry: BackupEntry) => {
+    letGo()
+    const mine = turn.current
+    const stillMine = () => turn.current === mine
     try {
       setScreen({ at: 'opening', entry, stage: 'Downloading…' })
-      const bytes = await fetchBackup(entry.key)
-      setScreen({ at: 'opening', entry, stage: 'Unlocking…' })
-      const backup = await openBackup(bytes, await fetchKey())
-      setScreen({ at: 'opening', entry, stage: 'Reading…' })
-      setScreen({ at: 'opened', entry, backup })
+      const encrypted = await fetchBackup(entry.key)
+      const passphrase = await fetchKey()
+      if (!stillMine()) return
+      const opening = (worker.current = new BackupWorker())
+      const { counts, tables } = await opening.open(encrypted, passphrase, (stage) => {
+        if (stillMine()) setScreen({ at: 'opening', entry, stage })
+      })
+      if (stillMine()) setScreen({ at: 'opened', entry, worker: opening, counts, tables })
     } catch (e) {
-      if (e instanceof SignedOut) return setScreen({ at: 'sign-in', error: 'Your hour is up. Sign in again.' })
-      void showList(e instanceof CannotUnlock ? e.message : e instanceof Error ? e.message : 'That backup did not open.')
+      if (!stillMine()) return
+      if (e instanceof SignedOut) {
+        letGo()
+        return setScreen({ at: 'sign-in', error: 'Your hour is up. Sign in again.' })
+      }
+      void showList(messageOf(e, 'That backup did not open.'))
     }
+  }
+
+  const leave = () => {
+    letGo()
+    void signOut().finally(() => setScreen({ at: 'sign-in' }))
   }
 
   return (
@@ -89,12 +117,7 @@ export function BackupsApp() {
           <h1 className="font-display text-[20px] font-semibold tracking-tight text-ink">CRM backups</h1>
         </div>
         {(screen.at === 'list' || screen.at === 'opened' || screen.at === 'opening') && (
-          <Button
-            size="sm"
-            variant="ghost"
-            icon="logout"
-            onClick={() => void signOut().finally(() => setScreen({ at: 'sign-in' }))}
-          >
+          <Button size="sm" variant="ghost" icon="logout" onClick={leave}>
             Sign out
           </Button>
         )}
@@ -125,7 +148,13 @@ export function BackupsApp() {
       )}
 
       {screen.at === 'opened' && (
-        <Opened entry={screen.entry} backup={screen.backup} onBack={() => void showList()} />
+        <Opened
+          entry={screen.entry}
+          worker={screen.worker}
+          counts={screen.counts}
+          tables={screen.tables}
+          onBack={() => void showList()}
+        />
       )}
 
       <footer className="mt-auto pt-4 text-[11.5px] leading-relaxed text-ink-3">
@@ -238,10 +267,10 @@ function BackupList({
                 <Button variant="primary" size="sm" onClick={() => onOpen(b)}>
                   Open
                 </Button>
-                <a href={fileUrl(b.key)} download>
-                  <Button size="sm" icon="download" tabIndex={-1}>
-                    Download the encrypted file
-                  </Button>
+                {/* A link, not a button inside one: Firefox follows no link that holds a button. */}
+                <a href={fileUrl(b.key)} download className={buttonClasses('secondary', 'sm')}>
+                  <Icon name="download" className="h-4 w-4 shrink-0" />
+                  Download the encrypted file
                 </a>
               </div>
             </li>
@@ -252,13 +281,83 @@ function BackupList({
   )
 }
 
-function Opened({ entry, backup, onBack }: { entry: BackupEntry; backup: OpenedBackup; onBack: () => void }) {
-  const [chosen, setChosen] = useState(backup.tables[0]?.name ?? '')
+/**
+ * One page of rows, drawn again only when the rows change — not on every key
+ * pressed in the search, which cost a phone ~0.1 s a key for 200 rows of 16
+ * columns.
+ */
+const RowsTable = memo(function RowsTable({ columns, rows }: { columns: string[]; rows: Cell[][] }) {
+  return (
+    <div className="scroll-panel overflow-x-auto">
+      <table className="min-w-full text-left text-[12px]">
+        <thead>
+          <tr>
+            {columns.map((c) => (
+              <th key={c} className="whitespace-nowrap border-b border-line px-3 py-2 font-medium text-ink-2">
+                {c}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={i} className="odd:bg-surface-2/50">
+              {row.map((cell, j) => (
+                <td key={j} className="max-w-[28rem] truncate whitespace-nowrap px-3 py-1.5 text-ink" title={cell === null ? '' : String(cell)}>
+                  {cell === null ? '' : String(cell)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+})
+
+/** One page of one table's rows, and the search that found them. */
+interface Shown {
+  table: string
+  query: string
+  rows: Cell[][]
+  matched: number
+}
+
+function Opened({
+  entry,
+  worker,
+  counts,
+  tables,
+  onBack,
+}: {
+  entry: BackupEntry
+  worker: BackupWorker
+  counts: Record<string, number>
+  tables: TableSummary[]
+  onBack: () => void
+}) {
+  const [chosen, setChosen] = useState(tables[0]?.name ?? '')
   const [query, setQuery] = useState('')
   const [limit, setLimit] = useState(PAGE)
-  const table: Table | undefined = backup.tables.find((t) => t.name === chosen)
-  const shown = useMemo(() => (table ? visibleRows(table, query, limit) : { rows: [], matched: 0 }), [table, query, limit])
+  const [shown, setShown] = useState<Shown | undefined>()
+  const [busy, setBusy] = useState<'zip' | 'csv' | undefined>()
+  const [problem, setProblem] = useState<string | undefined>()
+  const table = tables.find((t) => t.name === chosen)
   const stamp = stampOf(entry.key)
+
+  // The worker searches; the page draws the page of rows it sends back. Only
+  // the answer to the latest search is drawn.
+  useEffect(() => {
+    if (!chosen) return
+    let wanted = true
+    worker.rows(chosen, query, limit).then(
+      (r) => wanted && setShown({ table: chosen, query, ...r }),
+      (e) => wanted && setProblem(messageOf(e, 'Those rows did not load.')),
+    )
+    return () => {
+      wanted = false
+    }
+  }, [worker, chosen, query, limit])
 
   const choose = (name: string) => {
     setChosen(name)
@@ -266,24 +365,39 @@ function Opened({ entry, backup, onBack }: { entry: BackupEntry; backup: OpenedB
     setLimit(PAGE)
   }
 
-  const downloadEverything = () => {
-    const files = csvFiles(backup.tables)
-    const zip = zipSync(Object.fromEntries([...files].map(([path, csv]) => [path, strToU8(csv)])))
-    save(`legendary-crm-${stamp}-tables.zip`, zip, 'application/zip')
+  const download = async (what: 'zip' | 'csv') => {
+    if (busy) return
+    setBusy(what)
+    setProblem(undefined)
+    try {
+      if (what === 'zip') save(`legendary-crm-${stamp}-tables.zip`, await worker.zip(), 'application/zip')
+      else if (table) save(`${table.name}-${stamp}.csv`, await worker.csv(table.name), 'text/csv;charset=utf-8')
+    } catch (e) {
+      setProblem(messageOf(e, 'That download did not work.'))
+    } finally {
+      setBusy(undefined)
+    }
   }
+
+  const page = shown && shown.table === chosen ? shown : undefined
 
   return (
     <div className="flex flex-col gap-4">
+      {problem && (
+        <Notice tone="warn" icon="alert">
+          {problem}
+        </Notice>
+      )}
       <Panel>
         <PanelHeader
           title={`Taken ${entry.takenAt ? formatMyt(entry.takenAt) : stamp}`}
-          meta={Object.entries(backup.counts)
+          meta={Object.entries(counts)
             .map(([name, n]) => `${n.toLocaleString('en-MY')} ${name}`)
             .join(' · ')}
           action={
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" icon="download" onClick={downloadEverything}>
-                Download everything
+              <Button size="sm" icon="download" disabled={busy !== undefined} onClick={() => void download('zip')}>
+                {busy === 'zip' ? 'Preparing…' : 'Download everything'}
               </Button>
               <Button size="sm" variant="ghost" icon="chevronLeft" onClick={onBack}>
                 Back to the list
@@ -293,9 +407,9 @@ function Opened({ entry, backup, onBack }: { entry: BackupEntry; backup: OpenedB
         />
         <Rule />
         <PanelBody className="flex flex-wrap gap-2">
-          {backup.tables.map((t) => (
+          {tables.map((t) => (
             <Button key={t.name} size="sm" variant={t.name === chosen ? 'primary' : 'secondary'} onClick={() => choose(t.name)}>
-              {t.name} · {t.rows.length.toLocaleString('en-MY')}
+              {t.name} · {t.rowCount.toLocaleString('en-MY')}
             </Button>
           ))}
         </PanelBody>
@@ -306,9 +420,9 @@ function Opened({ entry, backup, onBack }: { entry: BackupEntry; backup: OpenedB
           <PanelHeader
             title={table.name}
             meta={
-              query.trim()
-                ? `${shown.matched.toLocaleString('en-MY')} of ${rowsText(table.rows.length)} match`
-                : rowsText(table.rows.length)
+              page && page.query.trim()
+                ? `${page.matched.toLocaleString('en-MY')} of ${rowsText(table.rowCount)} match`
+                : rowsText(table.rowCount)
             }
             action={
               <div className="flex flex-wrap items-center gap-2">
@@ -322,41 +436,24 @@ function Opened({ entry, backup, onBack }: { entry: BackupEntry; backup: OpenedB
                   }}
                   className="!h-8 !text-[12.5px] sm:!w-56"
                 />
-                <Button size="sm" icon="download" onClick={() => save(`${table.name}-${stamp}.csv`, toCsv(table), 'text/csv;charset=utf-8')}>
-                  Download as spreadsheet
+                <Button size="sm" icon="download" disabled={busy !== undefined} onClick={() => void download('csv')}>
+                  {busy === 'csv' ? 'Preparing…' : 'Download as spreadsheet'}
                 </Button>
               </div>
             }
           />
           <Rule />
-          <div className="scroll-panel overflow-x-auto">
-            <table className="min-w-full text-left text-[12px]">
-              <thead>
-                <tr>
-                  {table.columns.map((c) => (
-                    <th key={c} className="whitespace-nowrap border-b border-line px-3 py-2 font-medium text-ink-2">
-                      {c}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {shown.rows.map((row, i) => (
-                  <tr key={i} className="odd:bg-surface-2/50">
-                    {row.map((cell, j) => (
-                      <td key={j} className="max-w-[28rem] truncate whitespace-nowrap px-3 py-1.5 text-ink" title={cell === null ? '' : String(cell)}>
-                        {cell === null ? '' : String(cell)}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {shown.matched > shown.rows.length && (
+          {page ? (
+            <RowsTable columns={table.columns} rows={page.rows} />
+          ) : (
+            <PanelBody>
+              <p className="readout text-[12px] text-ink-3">Loading…</p>
+            </PanelBody>
+          )}
+          {page && page.matched > page.rows.length && (
             <PanelBody>
               <Button size="sm" onClick={() => setLimit((n) => n + PAGE)}>
-                Load more ({(shown.matched - shown.rows.length).toLocaleString('en-MY')} left)
+                Load more ({(page.matched - page.rows.length).toLocaleString('en-MY')} left)
               </Button>
             </PanelBody>
           )}
