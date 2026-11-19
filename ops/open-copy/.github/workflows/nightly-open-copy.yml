@@ -38,10 +38,11 @@ jobs:
           --health-cmd "pg_isready -U postgres"
           --health-interval 5s --health-timeout 5s --health-retries 12
 
+    # The database login's secret is in no job-wide setting: only the step that
+    # reads the server has it, and that step runs nothing but pg_dump and psql.
+    # Nothing npm installs ever runs where it could read it, and GitHub's own
+    # token reaches only the two steps that push.
     env:
-      # The open login: reads every document, and the logins without their
-      # passwords. It cannot read a password column, write, or call anything.
-      SOURCE: ${{ secrets.OPEN_BACKUP_DATABASE_URL }}
       SCRATCH: postgresql://postgres:scratch@localhost:5432/postgres
       TABLES: people docs locations settings
       PGSSLMODE: verify-full
@@ -52,6 +53,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: data
+          persist-credentials: false
 
       # The CRM itself, which is public: the export and the restore script
       # live there, so the code that reads a dump is written once.
@@ -60,10 +62,7 @@ jobs:
           repository: 23f3000111/legendary-retail-crm
           ref: ${{ vars.CRM_REF || 'main' }}
           path: crm
-
-      - name: Check the secret is set
-        run: |
-          [ -n "$SOURCE" ] || { echo "::error::OPEN_BACKUP_DATABASE_URL is not set"; exit 1; }
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
@@ -71,10 +70,11 @@ jobs:
           cache: npm
           cache-dependency-path: crm/package-lock.json
 
+      # Exactly the CRM's locked versions, and no package's install script runs.
       - name: Install the export's packages
         run: |
-          npm ci --no-audit --no-fund --prefix crm
-          npm install --silent --no-audit --no-fund --prefix crm/ops/backup
+          npm ci --ignore-scripts --no-audit --no-fund --prefix crm
+          npm install --ignore-scripts --silent --no-audit --no-fund --prefix crm/ops/backup
 
       # The server is Postgres 17, and pg_dump refuses a newer server than itself.
       - name: Install the Postgres 17 client
@@ -88,28 +88,42 @@ jobs:
           sudo apt-get install -y -qq postgresql-client-17 > /dev/null
           echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
 
+      # The only step that can reach the database: pg_dump and psql, nothing else.
       - name: Take the copy
+        env:
+          # The open login: reads every document, and the logins without their
+          # passwords. It cannot read a password column, write, or call anything.
+          SOURCE: ${{ secrets.OPEN_BACKUP_DATABASE_URL }}
         run: |
           set -euo pipefail
+          [ -n "$SOURCE" ] || { echo "::error::OPEN_BACKUP_DATABASE_URL is not set"; exit 1; }
           mkdir -p out
           stamp=$(TZ=Asia/Kuala_Lumpur date +%Y-%m-%d_%H%M)
           echo "STAMP=$stamp" >> "$GITHUB_ENV"
           count() { for t in $TABLES; do psql "$SOURCE" -Atc "select '$t', count(*) from public.$t"; done; }
           count > out/counts-before.txt
 
-          # pg_dump for the three tables this login may read whole. The logins'
-          # definition and rows come from the export, passwords left out.
+          # pg_dump for the three tables this login may read whole. It cannot
+          # dump the logins, so psql writes their six readable columns.
           three=(--table=public.docs --table=public.locations --table=public.settings)
           pg_dump "$SOURCE" --schema-only --no-owner --no-privileges "${three[@]}" > out/schema.sql
-          npm run --silent --prefix crm open-copy -- schema-people "$PWD/out/schema-people.sql"
-          cat out/schema-people.sql >> out/schema.sql
           pg_dump "$SOURCE" --data-only --enable-row-security --column-inserts \
             --rows-per-insert=200 "${three[@]}" > out/data.sql
-          DATABASE_URL="$SOURCE" npm run --silent --prefix crm open-copy -- people "$PWD/out/people.sql"
-          cat out/people.sql >> out/data.sql
-          rm out/schema-people.sql out/people.sql
+          psql "$SOURCE" -v ON_ERROR_STOP=1 -Atc "set time zone 'UTC'; select coalesce(json_agg(json_build_object(
+            'id', id, 'username', username, 'role', role, 'active', active,
+            'doc', doc::text, 'updated_at', updated_at::text) order by id), '[]') from public.people" > out/people.json
 
           count > out/counts-after.txt
+
+      # The logins' definition and rows, passwords replaced, from the export.
+      - name: Add the logins without their passwords
+        run: |
+          set -euo pipefail
+          npm run --silent --prefix crm open-copy -- schema-people "$PWD/out/schema-people.sql"
+          npm run --silent --prefix crm open-copy -- people "$PWD/out/people.json" "$PWD/out/people.sql"
+          cat out/schema-people.sql >> out/schema.sql
+          cat out/people.sql >> out/data.sql
+          rm out/schema-people.sql out/people.sql out/people.json
           echo "Dump: $(du -h out/data.sql | cut -f1) of data."
 
       - name: Restore it into the scratch database
@@ -155,6 +169,13 @@ jobs:
           npm run --silent --prefix crm open-copy -- tables "$PWD/out/data.sql" "$PWD/out/tables"
           rm -rf data/tables
           mv out/tables data/tables
+
+      # The push gets GitHub's token for this one command; no other step has it.
+      - name: Commit them
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
           cd data
           git config user.name "Legendary CRM open copy"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -163,7 +184,8 @@ jobs:
             echo "Nothing changed since the last copy."
           else
             git commit -q -m "Data as of $STAMP"
-            git push -q
+            auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+            git -c http.extraheader="AUTHORIZATION: basic $auth" push -q origin HEAD:"${GITHUB_REF_NAME}"
           fi
 
       - name: Pack the dump
