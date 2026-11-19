@@ -126,7 +126,7 @@ password manager, give it to whoever should open backups, and delete the
 file.
 
 A small Cloudflare Worker, `legendary-crm-backup-watch` (in the CRM
-repository under `workers/`), checks the copies at 11:00 every morning and
+repository under `workers/`), checks the copies at 16:00 every afternoon and
 emails the alert list if the newest is more than 30 hours old — it runs on
 Cloudflare, so a night GitHub never starts this job is still noticed.
 

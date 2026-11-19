@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeKV } from '../../../functions/_lib/fake-kv'
-import { check, hoursSince, newestTakenAt } from './index'
+import { check, hoursSince, newestTakenAt, STALE_HOURS } from './index'
+import wrangler from '../wrangler.toml?raw'
 
 const HOUR = 3_600_000
 const TAKEN = '2026-11-19T01:06:00.000Z'
@@ -50,6 +51,21 @@ describe('the morning check', () => {
     expect(mails[0].subject).toBe('No CRM backup for 30 hours')
     expect(mails[0].text).toContain('09:06 on 19 Nov 2026')
     expect(mails[0].text).toContain('https://github.com/23f3000111/legendary-crm-backups/actions')
+  })
+
+  it('reports the first missed night at the next check, whenever GitHub started the night before', () => {
+    // GitHub started the "02:30" job between 05:00 and 09:45 Malaysia time so far (spec).
+    const EARLIEST = 5
+    const LATEST = 9.75
+    const cron = /crons\s*=\s*\["(\d+) (\d+) \* \* \*"\]/.exec(wrangler)
+    expect(cron).not.toBeNull()
+    const checkAt = (Number(cron![2]) + Number(cron![1]) / 60 + 8) % 24 // hours, Malaysia time
+    // Last night's backup came as late as it ever has, and tonight's never came:
+    // by the check it must be past the line.
+    expect(24 - LATEST + checkAt).toBeGreaterThan(STALE_HOURS)
+    // A backup that did come, however late, is in before the check and inside the line.
+    expect(checkAt).toBeGreaterThan(LATEST)
+    expect(checkAt - EARLIEST).toBeLessThanOrEqual(STALE_HOURS)
   })
 
   it('treats an empty store as stale', async () => {

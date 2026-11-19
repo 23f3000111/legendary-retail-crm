@@ -1,5 +1,5 @@
 /**
- * legendary-crm-backup-watch — every morning at 11:00 in Malaysia, the
+ * legendary-crm-backup-watch — every afternoon at 16:00 in Malaysia, the
  * newest backup in the Backups page's KV namespace must be under 30 hours
  * old, or the alert list hears about it (design, 19 November).
  *

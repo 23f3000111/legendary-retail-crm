@@ -9,8 +9,11 @@ compatibility_date = "2025-01-01"
 workers_dev = false
 
 [triggers]
-# 03:00 UTC is 11:00 in Malaysia: after GitHub's latest start so far (09:45).
-crons = ["0 3 * * *"]
+# 08:00 UTC is 16:00 in Malaysia. GitHub has started the nightly job as late as
+# 09:45, so at 11:00 a backup missed after such a night was only 25 hours old
+# and passed; at 16:00 it is past 30 hours and reported the same day, while a
+# backup that did come in is at most 11 hours old (final review, 19 November).
+crons = ["0 8 * * *"]
 
 [[kv_namespaces]]
 binding = "BACKUPS"
