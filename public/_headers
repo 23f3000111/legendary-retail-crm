@@ -1,0 +1,9 @@
+# Cloudflare Pages response headers. The Backups page loads nothing but its
+# own scripts and Google's fonts, can never be framed, keeps no copy in any
+# cache, and asks search engines to stay away.
+/backups/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
+  Referrer-Policy: no-referrer
+  X-Robots-Tag: noindex, nofollow
+  X-Content-Type-Options: nosniff
+  Cache-Control: no-store

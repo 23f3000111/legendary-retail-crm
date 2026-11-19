@@ -19,3 +19,9 @@ docs/.env
 passwords*.txt
 backup-url*.txt
 backup-passphrase*.txt
+
+# Wrangler's local settings and state, for trying the Backups page on this machine.
+.dev.vars
+.wrangler/
+# The Backups page password, written by scripts/backup-page-setup.mjs: move it to a password manager, then delete it.
+backup-page-password*.txt
