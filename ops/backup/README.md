@@ -119,7 +119,7 @@ any lock-out after wrong passwords, emails the alert list.
 | To | Run, in the CRM repository |
 |---|---|
 | Set it up (once) | `node scripts/backup-page-setup.mjs --alert-emails a@…,b@… --reply-to a@… --passphrase-file docs/backup-passphrase.txt` |
-| Change the password | `node scripts/backup-page-setup.mjs --rotate-password`, then redeploy the CRM. Everybody is signed out. |
+| Change the password | `node scripts/backup-page-setup.mjs --rotate-password`. It redeploys the CRM and checks the new password works; everybody is signed out. |
 
 Both write the page password to `docs/backup-page-password.txt`: put it in a
 password manager, give it to whoever should open backups, and delete the

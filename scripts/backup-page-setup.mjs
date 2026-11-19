@@ -29,7 +29,8 @@
  *      a password manager and delete the file.
  *
  * `--rotate-password` changes the password and signs everybody out; nothing
- * else. Settings take effect at the next deployment of the CRM.
+ * else. Both redeploy the CRM, since Cloudflare applies settings only to new
+ * deployments, and then sign in with the new password to prove it took.
  *
  * Prints names, never values. `--dry-run` only reads.
  */
@@ -38,6 +39,8 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 
 const PROJECT = 'legendary-crm'
+const CRM_REPO = '23f3000111/legendary-retail-crm'
+const SITE = 'https://crm.legendary.com.my'
 const NAMESPACE = 'legendary-crm-backups'
 const ENCRYPTED_REPO = '23f3000111/legendary-crm-backups'
 const DOMAIN = 'legendary.com.my'
@@ -191,6 +194,44 @@ async function setup() {
   // 6.
   writePassword(password)
   console.log(`KV namespace id: ${namespace?.id ?? '(dry run)'} — workers/backup-watch/wrangler.toml needs it.`)
+  await redeployAndConfirm(password)
+}
+
+/**
+ * Cloudflare applies new settings only to new deployments, so nothing above
+ * counts until the CRM is deployed again — the old password would keep
+ * working (final review, 19 November). Deploys it, waits, and then signs in
+ * with the new password to prove it took.
+ */
+async function redeployAndConfirm(password) {
+  step("start the CRM's deploy and wait for it, so the new settings take effect")
+  if (!dryRun) {
+    const started = Date.now()
+    execFileSync('gh', ['workflow', 'run', 'deploy.yml', '-R', CRM_REPO, '--ref', 'main'])
+    let runId
+    for (let i = 0; i < 30 && !runId; i++) {
+      await new Promise((r) => setTimeout(r, 2000))
+      const runs = JSON.parse(
+        execFileSync('gh', ['run', 'list', '-R', CRM_REPO, '--workflow', 'deploy.yml', '--event', 'workflow_dispatch',
+          '--limit', '1', '--json', 'databaseId,createdAt'], { encoding: 'utf8' }),
+      )
+      if (runs[0] && Date.parse(runs[0].createdAt) >= started - 5000) runId = runs[0].databaseId
+    }
+    if (!runId) throw new Error('The deploy did not start. Run the "Build and deploy" workflow by hand.')
+    execFileSync('gh', ['run', 'watch', String(runId), '-R', CRM_REPO, '--exit-status'], { stdio: 'inherit' })
+  }
+  step(`sign in at ${SITE}/backups/ with the new password, to confirm it works`)
+  if (!dryRun) {
+    const r = await fetch(`${SITE}/api/backups/sign-in`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ password }),
+    })
+    if (r.status !== 200) {
+      throw new Error(`The new password was refused (${r.status}). The deploy may not have reached Cloudflare: check its log.`)
+    }
+    console.log('The new password works.')
+  }
 }
 
 async function rotatePassword() {
@@ -201,7 +242,7 @@ async function rotatePassword() {
     BACKUP_SESSION_SECRET: secret(sessionSecret),
   })
   writePassword(password)
-  console.log('Redeploy the CRM (or wait for the next deploy) for the new password to work.')
+  await redeployAndConfirm(password)
 }
 
 try {
