@@ -6,7 +6,7 @@
   "description": "Legendary CRM — outlet daily closing, stock top-up and group analytics",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && tsc -p functions --noEmit && vite build",
+    "build": "tsc --noEmit && tsc -p functions --noEmit && tsc -p workers/backup-watch --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",

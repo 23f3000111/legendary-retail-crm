@@ -1,0 +1,18 @@
+# The morning check that last night's backup reached Cloudflare
+# (ops/backup/README.md). Deployed by hand, once, with the KV-and-Workers token:
+#
+#   CLOUDFLARE_API_TOKEN=$CLOUDFLARE_BACKUP_TOKEN npx wrangler@4 deploy
+#   npx wrangler@4 secret put RESEND_API_KEY      (and ALERT_EMAILS, ALERT_REPLY_TO)
+name = "legendary-crm-backup-watch"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+workers_dev = false
+
+[triggers]
+# 03:00 UTC is 11:00 in Malaysia: after GitHub's latest start so far (09:45).
+crons = ["0 3 * * *"]
+
+[[kv_namespaces]]
+binding = "BACKUPS"
+# The id scripts/backup-page-setup.mjs prints for legendary-crm-backups.
+id = "SET_BY_SETUP"
