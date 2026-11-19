@@ -118,6 +118,20 @@ function flatten(value: Record<string, unknown>, into: Map<string, Cell>, taken:
 
 const rowOf = (columns: string[], values: SqlValue[]) => new Map(columns.map((c, i) => [c, values[i]]))
 
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  v !== null && typeof v === 'object' && !Array.isArray(v)
+
+/** A document or an item as a cell, when it is not an object of fields: one odd row must never stop the rest. */
+const asCell = (v: unknown): Cell =>
+  v === null || v === undefined ? null : typeof v === 'object' ? JSON.stringify(v) : (v as string | number | boolean)
+
+/** The document, as an object of fields; anything else, under `value`. */
+const bodyOf = (text: unknown): Record<string, unknown> => {
+  const parsed: unknown = JSON.parse(String(text ?? '{}'))
+  if (isPlainObject(parsed)) return parsed
+  return parsed === null ? {} : { value: parsed }
+}
+
 /** Every table a person may read in a dump. Tables with no rows are left out. */
 export function tablesFrom(dump: DumpTable[]): Table[] {
   const builders = new Map<string, Builder>()
@@ -135,7 +149,7 @@ export function tablesFrom(dump: DumpTable[]): Table[] {
         const kind = String(r.get('kind'))
         const known = KIND_TABLES.find(([k]) => k === kind)
         const name = known ? known[1] : kind.replace(/_/g, '-')
-        const body = JSON.parse(String(r.get('doc') ?? '{}')) as Record<string, unknown>
+        const body = bodyOf(r.get('doc'))
         const children = CHILD_TABLES[kind] ?? []
 
         const row = new Map<string, Cell>(RECORD_COLUMNS.map((c) => [c, (r.get(c) ?? null) as Cell]))
@@ -143,7 +157,7 @@ export function tablesFrom(dump: DumpTable[]): Table[] {
         builder(name, RECORD_COLUMNS, known?.[2]).add(row)
 
         for (const child of children) {
-          const items = Array.isArray(body[child.key]) ? (body[child.key] as Record<string, unknown>[]) : []
+          const items: unknown[] = Array.isArray(body[child.key]) ? (body[child.key] as unknown[]) : []
           const tie = kind === 'po' ? ['order_id', 'location_id'] : ['closing_id', 'location_id', 'day']
           for (const item of items) {
             const childRow = new Map<string, Cell>([
@@ -151,7 +165,8 @@ export function tablesFrom(dump: DumpTable[]): Table[] {
               ['location_id', (r.get('location_id') ?? null) as Cell],
               ...(tie[2] ? ([['day', (r.get('day') ?? null) as Cell]] as [string, Cell][]) : []),
             ])
-            flatten(item, childRow, new Set(tie))
+            if (isPlainObject(item)) flatten(item, childRow, new Set(tie))
+            else childRow.set('value', asCell(item))
             builder(child.name, tie, child.monthColumn).add(childRow)
           }
         }
@@ -161,7 +176,7 @@ export function tablesFrom(dump: DumpTable[]): Table[] {
         const r = rowOf(t.columns, values)
         const own = ['id', 'username', 'role', 'active', 'updated_at']
         const row = new Map<string, Cell>(own.map((c) => [c, (r.get(c) ?? null) as Cell]))
-        const body = JSON.parse(String(r.get('doc') ?? '{}')) as Record<string, unknown>
+        const body = bodyOf(r.get('doc'))
         flatten(body, row, new Set(own), '', new Set([...LOGIN_SECRETS, ...own]))
         builder('logins', own).add(row)
       }

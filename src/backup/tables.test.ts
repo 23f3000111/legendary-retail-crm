@@ -116,6 +116,21 @@ describe('tablesFrom', () => {
     expect(events.rows.map((r) => cell({ ...events, rows: [r] }, 0, 'status'))).toEqual(['submitted', 'approved'])
   })
 
+  it('reads on past an empty item in a closing, or a document that is only null', () => {
+    const odd = doc('closing', 'klia-t2-2026-11-16', 'klia-t2', '2026-11-16', {
+      id: 'klia-t2-2026-11-16',
+      period: '2026-11-16',
+      lines: [null, { id: 'l9', qty: 1 }, 'not-an-object'],
+    })
+    const nothing: SqlValue[] = ['target', 't-1', null, null, 'null', '2026-11-18 01:00:00+00', null, false]
+    const tables = tablesFrom([docs([odd, nothing])])
+    const lines = table(tables, 'closing-lines')
+    expect(lines.rows).toHaveLength(3)
+    expect(cell(lines, 1, 'qty')).toBe(1)
+    expect(lines.rows.map((r) => r[lines.columns.indexOf('value')])).toEqual([null, null, 'not-an-object'])
+    expect(table(tables, 'targets').rows).toHaveLength(1)
+  })
+
   it('never carries a password column', () => {
     const hash = '$2a$10$abcdefghijklmnopqrstuuJhbHn1Ns1qdl5/1L9z5cM7sP0r1zXfu'
     const tables = tablesFrom([
