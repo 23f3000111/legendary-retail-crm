@@ -139,7 +139,8 @@ file.
 A small Cloudflare Worker, `legendary-crm-backup-watch` (in the CRM
 repository under `workers/`), checks the copies at 16:00 every afternoon and
 emails the alert list if the newest is more than 30 hours old — it runs on
-Cloudflare, so a night GitHub never starts this job is still noticed.
+Cloudflare, so a night GitHub never starts this job is still noticed. If it
+cannot read the list of backups at all, it emails the alert list that too.
 
 One KV value holds at most 25 MiB. The copy step stops, and the run fails,
 if a backup ever passes 24 MiB: then split it, or move the copy to R2.

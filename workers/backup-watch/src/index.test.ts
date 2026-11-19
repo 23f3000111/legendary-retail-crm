@@ -72,4 +72,16 @@ describe('the morning check', () => {
     expect(await check(env(), Date.parse(TAKEN))).toBe('stale')
     expect(mails).toEqual([expect.objectContaining({ subject: 'No CRM backup in Cloudflare' })])
   })
+
+  it('tells the alert list when it cannot read the backups, and still fails the run', async () => {
+    // A check that fails without a word is no check (final review M10, 19 November).
+    vi.spyOn(kv, 'list').mockRejectedValue(new Error('KV list failed: 503'))
+    await expect(check(env(), Date.parse(TAKEN))).rejects.toThrow('KV list failed: 503')
+    expect(mails).toHaveLength(1)
+    expect(mails[0].subject).toBe('CRM backup check could not run')
+    expect(mails[0].text).toContain('09:06 on 19 Nov 2026')
+    expect(mails[0].text).toContain('KV list failed: 503')
+    expect(mails[0].text).toContain('https://crm.legendary.com.my/backups/')
+    expect(mails[0].text).toContain('https://github.com/23f3000111/legendary-crm-backups/actions')
+  })
 })

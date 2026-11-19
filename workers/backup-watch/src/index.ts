@@ -19,6 +19,7 @@ export interface Env {
 
 export const STALE_HOURS = 30
 const ACTIONS = 'https://github.com/23f3000111/legendary-crm-backups/actions'
+const PAGE = 'https://crm.legendary.com.my/backups/'
 
 type Key = { name: string; metadata?: unknown }
 
@@ -34,17 +35,38 @@ export function newestTakenAt(keys: Key[]): string | null {
 
 export const hoursSince = (iso: string, nowMs: number) => (nowMs - Date.parse(iso)) / 3_600_000
 
-/** Looks once, and emails the alert list when the newest backup is too old. */
-export async function check(env: Env, nowMs: number): Promise<'fresh' | 'stale'> {
+/** Every nightly and monthly backup's key, page by page. */
+async function allBackups(kv: KVNamespace): Promise<Key[]> {
   const keys: Key[] = []
   for (const prefix of ['nightly/', 'monthly/']) {
     let cursor: string | undefined
     do {
-      const page = await env.BACKUPS.list({ prefix, cursor })
+      const page = await kv.list({ prefix, cursor })
       keys.push(...page.keys)
       cursor = page.list_complete ? undefined : page.cursor
     } while (cursor)
   }
+  return keys
+}
+
+/**
+ * Looks once, and emails the alert list when the newest backup is too old,
+ * or when it cannot read the backups at all: a check that fails without a
+ * word is no check (final review M10, 19 November). It still fails the run
+ * then, so Cloudflare's own log shows it too.
+ */
+export async function check(env: Env, nowMs: number): Promise<'fresh' | 'stale'> {
+  const keys = await allBackups(env.BACKUPS).catch(async (e: unknown) => {
+    await sendAlert(
+      env,
+      'CRM backup check could not run',
+      `The daily check at ${myt(nowMs)} (Malaysia time) could not read the list of backups in Cloudflare, ` +
+        `so it cannot tell whether last night's backup arrived.\n\n` +
+        `Cloudflare said: ${e instanceof Error ? e.message : String(e)}\n\n` +
+        `The backups may well be fine. To see them, sign in at ${PAGE}, or look at the nightly runs: ${ACTIONS}`,
+    )
+    throw e
+  })
   const newest = newestTakenAt(keys)
   if (newest && hoursSince(newest, nowMs) <= STALE_HOURS) return 'fresh'
 
