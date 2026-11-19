@@ -47,7 +47,7 @@ jobs:
       TABLES: people docs locations settings
       # Whether the Backups page's Cloudflare copy is set up. A step's `if`
       # cannot read a secret directly, so the answer is carried here.
-      HAS_CLOUDFLARE: ${{ secrets.CF_KV_TOKEN != '' }}
+      HAS_CLOUDFLARE: ${{ secrets.BACKUP_UPLOAD_KEY != '' }}
       # The server's certificate is checked against Supabase's own root, so
       # the backup cannot be quietly pointed somewhere else.
       PGSSLMODE: verify-full
@@ -156,13 +156,13 @@ jobs:
 
       # A second copy, in Cloudflare: what crm.legendary.com.my/backups lists
       # and opens. After the GitHub copies, so a Cloudflare outage never costs
-      # them. Skipped until scripts/backup-page-setup.mjs has set its secrets.
+      # them. Sent through the page itself, with a key that can add a backup
+      # and do nothing else: this repository holds no Cloudflare key at all.
+      # Skipped until scripts/backup-page-setup.mjs has set that key.
       - name: Copy to Cloudflare
         if: env.HAS_CLOUDFLARE == 'true'
         env:
-          CF_KV_TOKEN: ${{ secrets.CF_KV_TOKEN }}
-          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-          CF_KV_NAMESPACE: ${{ secrets.CF_KV_NAMESPACE }}
+          UPLOAD_KEY: ${{ secrets.BACKUP_UPLOAD_KEY }}
           KEEP: ${{ inputs.keep }}
         run: |
           set -euo pipefail
@@ -172,18 +172,21 @@ jobs:
             echo "::error::The encrypted backup is $size bytes, over the 24 MiB a KV value may safely hold. Split it, or move the copy to R2."
             exit 1
           fi
-          meta=$(jq -c --argjson size "$size" '. + {sizeBytes: $size}' <<<"$META")
+          # The page's own pages.dev address: the same deployment as
+          # crm.legendary.com.my, outside that domain's bot rules. The key
+          # reaches curl on its standard input, never its command line, where
+          # any process on the runner could read it. The page keeps a nightly
+          # one for 31 nights and a monthly one for good.
           put() {
-            curl -fsS -X PUT \
-              "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/storage/kv/namespaces/$CF_KV_NAMESPACE/values/$1" \
-              -H "Authorization: Bearer $CF_KV_TOKEN" \
-              -F "value=@$NAME.tar.gz.gpg" -F "metadata=$meta" > /dev/null
+            printf 'Authorization: Bearer %s\n' "$UPLOAD_KEY" | curl -fsS --retry 3 --retry-delay 10 -X PUT \
+              "https://legendary-crm.pages.dev/api/backups/upload/$1" -H @- \
+              -H 'Content-Type: application/octet-stream' -H "X-Backup-Meta: $META" \
+              --data-binary "@$NAME.tar.gz.gpg" -o /dev/null
           }
-          # Thirty-one nights, then KV deletes it by itself.
-          put "nightly%2F$STAMP?expiration_ttl=2678400"
+          put "nightly/$STAMP"
           day=$(TZ=Asia/Kuala_Lumpur date +%d)
           if [ "$day" = "01" ] || [ "$KEEP" = "true" ]; then
-            put "monthly%2F${STAMP%%_*}"
+            put "monthly/${STAMP%%_*}"
           fi
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Copied to Cloudflare for the Backups page." >> "$GITHUB_STEP_SUMMARY"

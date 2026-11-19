@@ -66,6 +66,21 @@ describe('the encrypted nightly job', () => {
     })
   })
 
+  it('copies to Cloudflare through the page, with a key that can only add a backup: GitHub holds no Cloudflare key', () => {
+    // A Cloudflare key here could have changed the site or sent mail as
+    // legendary.com.my (go-live, 19 November).
+    expect(workflow).not.toMatch(/api\.cloudflare\.com|CF_KV_TOKEN|CF_ACCOUNT_ID|CF_KV_NAMESPACE/)
+    expect(jobEnv).toMatch(/HAS_CLOUDFLARE: \$\{\{ secrets\.BACKUP_UPLOAD_KEY != '' \}\}/)
+    const copy = code(steps[named('Copy to Cloudflare')])
+    expect(copy).toMatch(/UPLOAD_KEY: \$\{\{ secrets\.BACKUP_UPLOAD_KEY \}\}/)
+    expect(copy).toMatch(/https:\/\/legendary-crm\.pages\.dev\/api\/backups\/upload\/\$1/)
+    // The key reaches curl on its standard input, never its command line,
+    // where any process on the runner could read it.
+    expect(copy).toMatch(/printf 'Authorization: Bearer %s\\n' "\$UPLOAD_KEY" \| curl /)
+    expect(copy).toMatch(/ -H @- /)
+    expect(copy).not.toMatch(/Bearer \$UPLOAD_KEY/)
+  })
+
   it('leaves no GitHub token on disk for a later step’s code to find', () => {
     expect(steps.find((s) => s.name.startsWith('actions/checkout'))?.text).toMatch(/persist-credentials: false/)
   })

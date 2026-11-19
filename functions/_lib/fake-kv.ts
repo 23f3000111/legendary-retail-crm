@@ -3,7 +3,7 @@
  * refuse, as KV does once the free plan's 1,000 writes a day are spent.
  */
 export class FakeKV {
-  readonly store = new Map<string, { value: string | ArrayBuffer; metadata?: unknown }>()
+  readonly store = new Map<string, { value: string | ArrayBuffer; metadata?: unknown; expirationTtl?: number }>()
   refuseWrites = false
   refuseReads = false
   writes = 0
@@ -30,7 +30,7 @@ export class FakeKV {
   async put(key: string, value: string | ArrayBuffer, options?: { expirationTtl?: number; metadata?: unknown }) {
     if (this.refuseWrites) throw new Error('KV PUT failed: 429 Too Many Requests')
     this.writes += 1
-    this.store.set(key, { value, metadata: options?.metadata })
+    this.store.set(key, { value, metadata: options?.metadata, expirationTtl: options?.expirationTtl })
   }
 
   async delete(key: string) {

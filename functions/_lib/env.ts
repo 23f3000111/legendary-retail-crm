@@ -18,4 +18,9 @@ export interface Env {
   ALERT_EMAILS: string
   /** Where a reply to an alert goes: backups@legendary.com.my has no mailbox. */
   ALERT_REPLY_TO: string
+  /**
+   * The nightly job's key, 64 hex characters: it can add a backup and do
+   * nothing else. GitHub holds it in place of any Cloudflare key.
+   */
+  BACKUP_UPLOAD_KEY: string
 }

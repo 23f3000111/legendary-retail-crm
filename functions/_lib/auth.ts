@@ -37,6 +37,18 @@ export async function passwordMatches(env: Pick<Env, 'BACKUP_SESSION_SECRET' | '
   return sameText(await hmacHex(env.BACKUP_SESSION_SECRET, `password:${password}`), env.BACKUP_PASSWORD_HMAC)
 }
 
+/**
+ * The nightly job's own key, sent as `Authorization: Bearer <key>`. Compared
+ * as HMACs, so neither the time taken nor the key's length gives anything
+ * away; and refused outright while the page has no proper key of its own.
+ */
+export async function uploadKeyValid(env: Pick<Env, 'BACKUP_UPLOAD_KEY'>, authorization: string | null): Promise<boolean> {
+  const expected = env.BACKUP_UPLOAD_KEY
+  const given = /^Bearer ([\x21-\x7e]+)$/.exec(authorization ?? '')?.[1]
+  if (!expected || expected.length < 32 || !given) return false
+  return sameText(await hmacHex(expected, 'upload'), await hmacHex(given, 'upload'))
+}
+
 export async function newSession(env: Pick<Env, 'BACKUP_SESSION_SECRET'>, nowMs: number): Promise<string> {
   const expires = nowMs + SESSION_MS
   return `${expires}.${await hmacHex(env.BACKUP_SESSION_SECRET, `session:${expires}`)}`

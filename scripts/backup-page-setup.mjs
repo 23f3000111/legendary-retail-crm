@@ -11,20 +11,19 @@
  *   CLOUDFLARE_ACCOUNT_ID
  *   CLOUDFLARE_BACKUP_TOKEN   Workers KV Storage: Edit and Workers Scripts: Edit.
  *                             Stays on this machine: it makes the namespace and
- *                             deploys the morning check.
- *   CLOUDFLARE_KV_JOB_TOKEN   Workers KV Storage: Edit, nothing else. The only
- *                             Cloudflare key that leaves this machine: the
- *                             nightly job copies each backup with it.
+ *                             deploys the afternoon check. No Cloudflare key
+ *                             leaves this machine.
  *   RESEND_API_KEY            the full-access key, to make a sending-only one
  *
  * The first form:
  *   1. finds or makes the KV namespace `legendary-crm-backups`;
  *   2. makes a Resend key that can only send, and only from legendary.com.my;
- *   3. makes the page password and a session secret;
+ *   3. makes the page password, a session secret, and the nightly job's
+ *      upload key (it can add a backup through the page, nothing else);
  *   4. puts all of them, the backup passphrase and the alert list in the
  *      Pages project's encrypted production settings, with the KV binding;
- *   5. gives the encrypted backup repository the secrets its nightly job
- *      needs to copy each backup to KV;
+ *   5. gives the encrypted backup repository its upload key, the one secret
+ *      its nightly job needs to copy each backup here;
  *   6. writes the page password to docs/backup-page-password.txt — move it to
  *      a password manager and delete the file.
  *
@@ -135,12 +134,6 @@ async function setup() {
   }
   const account = env('CLOUDFLARE_ACCOUNT_ID')
   const kvToken = env('CLOUDFLARE_BACKUP_TOKEN')
-  // GitHub gets a key that can do one thing: write KV. Never the one that can
-  // also deploy Workers (19 November security review).
-  const jobToken = env('CLOUDFLARE_KV_JOB_TOKEN')
-  if (jobToken === kvToken) {
-    throw new Error('CLOUDFLARE_KV_JOB_TOKEN must be its own key, with Workers KV Storage: Edit and nothing else.')
-  }
 
   // 1. The KV namespace.
   const namespaces = await cf(`/accounts/${account}/storage/kv/namespaces?per_page=100`, kvToken)
@@ -168,6 +161,10 @@ async function setup() {
   // 3 and 4. The password, the secret, and every setting the page needs.
   const password = newPassword()
   const sessionSecret = randomBytes(32).toString('hex')
+  // GitHub gets a key that can add a backup through the page and do nothing
+  // else, never a Cloudflare key: one could change the site or send mail as
+  // legendary.com.my (19 November security review; go-live).
+  const uploadKey = randomBytes(32).toString('hex')
   const passphrase = readFileSync(passphraseFile, 'utf8').split(/\r?\n/).filter(Boolean).pop()
   await setPagesSettings(
     {
@@ -177,19 +174,14 @@ async function setup() {
       RESEND_API_KEY: secret(sendingKey),
       ALERT_EMAILS: secret(alertEmails),
       ALERT_REPLY_TO: secret(replyTo),
+      BACKUP_UPLOAD_KEY: secret(uploadKey),
     },
     namespace?.id ?? 'dry-run',
   )
 
-  // 5. What the encrypted backup's nightly job needs to copy each backup to KV.
-  for (const [name, v] of [
-    ['CF_KV_TOKEN', jobToken],
-    ['CF_ACCOUNT_ID', account],
-    ['CF_KV_NAMESPACE', namespace?.id ?? 'dry-run'],
-  ]) {
-    step(`set the secret ${name} on ${ENCRYPTED_REPO}`)
-    if (!dryRun) execFileSync('gh', ['secret', 'set', name, '-R', ENCRYPTED_REPO], { input: v })
-  }
+  // 5. All the encrypted backup's nightly job needs to copy each backup here.
+  step(`set the secret BACKUP_UPLOAD_KEY on ${ENCRYPTED_REPO}`)
+  if (!dryRun) execFileSync('gh', ['secret', 'set', 'BACKUP_UPLOAD_KEY', '-R', ENCRYPTED_REPO], { input: uploadKey })
 
   // 6.
   writePassword(password)

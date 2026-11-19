@@ -36,7 +36,7 @@ and cannot call anything the app calls.
 |---|---|
 | `BACKUP_DATABASE_URL` | `backup_reader`'s connection string. Made by `scripts/backup-reader.mjs` in the CRM repository; running that again changes the password. |
 | `BACKUP_PASSPHRASE` | What every backup is encrypted with. |
-| `CF_KV_TOKEN`, `CF_ACCOUNT_ID`, `CF_KV_NAMESPACE` | Where each backup is copied for the Backups page (below). Set by `scripts/backup-page-setup.mjs` in the CRM repository. `CF_KV_TOKEN` can write Workers KV and nothing else. Without them that one step is skipped. |
+| `BACKUP_UPLOAD_KEY` | How each backup is copied to the Backups page (below). It can add a backup through the page and do nothing else: this repository holds no Cloudflare key. Set by `scripts/backup-page-setup.mjs` in the CRM repository. Without it that one step is skipped. |
 
 **Keep the passphrase somewhere other than GitHub** — a password manager. A
 backup nobody can decrypt is not a backup, and GitHub will never show the
@@ -115,9 +115,11 @@ is no backup.
 ## The Backups page, and the copy in Cloudflare
 
 After each night's backup has been encrypted and kept on GitHub, the job
-copies it — still encrypted — into Cloudflare (the KV namespace
-`legendary-crm-backups`, in the account that holds legendary.com.my):
-`nightly/<stamp>` for 31 days, and on the 1st `monthly/<day>` for good.
+sends it, still encrypted, to the Backups page, which keeps it in Cloudflare
+(the KV namespace `legendary-crm-backups`, in the account that holds
+legendary.com.my): `nightly/<stamp>` for 31 days, and on the 1st
+`monthly/<day>` for good. The page takes only an encrypted backup, and only
+with `BACKUP_UPLOAD_KEY`.
 
 **https://crm.legendary.com.my/backups/** lists those copies and opens any of
 them on any phone or computer, behind one password. The page unlocks the

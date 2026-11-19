@@ -184,6 +184,13 @@ protection.
   - metadata holds when the backup was taken, its size and its row counts.
 
   The 30 nightly and 3 monthly backups already on GitHub are copied in once.
+
+  *Changed at go-live (19 November):* the job sends each backup to the
+  page itself (`PUT /api/backups/upload/<key>`) with `BACKUP_UPLOAD_KEY`.
+  That key can add an encrypted backup and do nothing else, so GitHub holds
+  no Cloudflare key at all. The developer's one Cloudflare token can also
+  reach Pages, so a copy of it in GitHub could have changed the site or sent
+  mail as legendary.com.my.
 - **The page:** a second Vite entry, `backups/index.html` with code in
   `src/backups/`. It shares no code with the staff app's bundle, is not
   linked from the CRM, and is marked noindex.
