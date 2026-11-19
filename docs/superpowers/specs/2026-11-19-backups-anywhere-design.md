@@ -1,5 +1,12 @@
 # Backups anywhere — design (19 November 2026)
 
+Approved on 19 November. That day the developer also decided:
+
+- **The alert list** is the developer, Davy and Legendary's main address.
+  The exact addresses are still to come.
+- **The existing data goes into the new private repository too,** not just
+  what arrives from tonight. See Part 1.
+
 Agreed in conversation on 16–19 November. Option 1 was chosen: a
 password-protected Backups page on the CRM's own Cloudflare site. The
 encrypted GitHub backups continue, and a second, unencrypted copy goes into a
@@ -161,6 +168,12 @@ protection.
 - **The code lives once.** The workflow checks out the public CRM repository
   and runs its export script, so the CSV logic is shared with the Backups
   page.
+- **The existing data comes too** (theirs). Each night's copy is the complete
+  data, not just the new records, and the first one is taken as soon as the
+  repository exists rather than waiting for the night. The snapshots already
+  taken, 30 nightly and 3 monthly back to 24 September, are opened once, have
+  their password columns stripped, and become this repository's releases.
+  Its history then matches the encrypted one from the first day.
 
 ### Part 2 — the Cloudflare copy and the Backups page
 
@@ -235,6 +248,13 @@ protection.
 
 - **Sender:** `backups@legendary.com.my`, through Resend, with the domain
   already verified (my call).
+  - Sending from it needs no mailbox.
+  - Legendary's mail is on Google Workspace (MX `smtp.google.com`), so a
+    reply to that address bounces unless someone there creates a
+    `backups@` alias.
+  - Every email therefore carries `Reply-To` with the developer's address
+    (my call).
+- **Recipients:** the developer, Davy and Legendary's main address (theirs).
 - **Content:** subject lines that say what happened, and nothing secret in
   any email.
 
@@ -260,8 +280,9 @@ protection.
 
 ## Needed from the developer before building
 
-1. **The alert list:** the email addresses for the missing-backup, sign-in
-   and lock-out emails.
+1. **The alert list's exact addresses:** the developer's, Davy's and
+   Legendary's main one. They are needed before the first email is sent,
+   not before building starts.
 2. **A Cloudflare API token** with "Workers KV Storage: Edit" and "Workers
    Scripts: Edit" on the account. Parts 2 and 3 wait for it. Part 1 does
    not.
