@@ -42,8 +42,17 @@ export async function newSession(env: Pick<Env, 'BACKUP_SESSION_SECRET'>, nowMs:
   return `${expires}.${await hmacHex(env.BACKUP_SESSION_SECRET, `session:${expires}`)}`
 }
 
+/**
+ * A cookie for this browser session only: no Max-Age, so closing the browser
+ * forgets it, on a borrowed phone too. The hour is in the signed token.
+ */
 export function sessionCookie(token: string): string {
-  return `${SESSION_COOKIE}=${token}; Max-Age=${SESSION_MS / 1000}; Path=/; HttpOnly; Secure; SameSite=Strict`
+  return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict`
+}
+
+/** What signing out sends: the same cookie, emptied and already expired. */
+export function signOutCookie(): string {
+  return `${SESSION_COOKIE}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Strict`
 }
 
 const cookieValue = (header: string | null, name: string) => {

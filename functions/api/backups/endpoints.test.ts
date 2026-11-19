@@ -4,6 +4,7 @@ import { hmacHex } from '../../_lib/auth'
 import type { Env } from '../../_lib/env'
 import { onRequest as middleware } from './_middleware'
 import { onRequestPost as signIn } from './sign-in'
+import { onRequestPost as signOut } from './sign-out'
 import { onRequestGet as list } from './list'
 import { onRequestGet as key } from './key'
 import { onRequestGet as file } from './file/[[key]]'
@@ -69,14 +70,25 @@ describe('the Backups page server', () => {
     expect((await call(key, get('key'))).status).toBe(401)
   })
 
-  it('signs in with the right password and sets a one-hour __Host- cookie', async () => {
+  it('signs in with the right password and sets a __Host- cookie the browser forgets when it closes', async () => {
     const r = await call(signIn, post(PASSWORD))
     expect(r.status).toBe(200)
     const cookie = r.headers.get('set-cookie')!
-    for (const part of ['__Host-lgd_backups=', 'Max-Age=3600', 'HttpOnly', 'Secure', 'SameSite=Strict', 'Path=/']) {
+    for (const part of ['__Host-lgd_backups=', 'HttpOnly', 'Secure', 'SameSite=Strict', 'Path=/']) {
       expect(cookie).toContain(part)
     }
+    expect(cookie).not.toContain('Max-Age')
     expect((await call(list, get('list', cookie.split(';')[0]))).status).toBe(200)
+  })
+
+  it('signs out by clearing the cookie, with or without a session', async () => {
+    const cookie = await signedIn()
+    const out = (cookieHeader?: string) =>
+      call(signOut, new Request(`${SITE}/api/backups/sign-out`, { method: 'POST', headers: cookieHeader ? { cookie: cookieHeader } : {} }))
+    for (const r of [await out(cookie), await out()]) {
+      expect(r.status).toBe(200)
+      expect(r.headers.get('set-cookie')).toBe('__Host-lgd_backups=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Strict')
+    }
   })
 
   it('a wrong password is refused and counted; the sixth try is told to wait', async () => {

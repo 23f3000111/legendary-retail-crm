@@ -16,9 +16,10 @@ const HEADERS: Record<string, string> = {
 
 export const onRequest: PagesFunction<Env> = async (context) => {
   const { request, env } = context
-  const signingIn = request.method === 'POST' && new URL(request.url).pathname.endsWith('/api/backups/sign-in')
+  const path = new URL(request.url).pathname
+  const open = request.method === 'POST' && (path.endsWith('/api/backups/sign-in') || path.endsWith('/api/backups/sign-out'))
   const response =
-    signingIn || (await sessionValid(env, request.headers.get('cookie'), Date.now()))
+    open || (await sessionValid(env, request.headers.get('cookie'), Date.now()))
       ? await context.next()
       : json(401, { error: 'Sign in again.' })
   const out = new Response(response.body, response)

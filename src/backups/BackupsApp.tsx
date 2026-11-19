@@ -16,7 +16,7 @@ import { Field, TextInput } from '../components/ui/Field'
 import { Notice } from '../components/ui/Notice'
 import { csvFiles, toCsv } from '../backup/csv'
 import type { Table } from '../backup/tables'
-import { fetchBackup, fetchKey, fileUrl, listBackups, signIn, SignedOut, type BackupEntry } from './api'
+import { fetchBackup, fetchKey, fileUrl, listBackups, signIn, SignedOut, signOut, type BackupEntry } from './api'
 import { CannotUnlock, openBackup, type OpenedBackup } from './open'
 import { formatMyt, hoursOld, visibleRows } from './view'
 
@@ -84,10 +84,20 @@ export function BackupsApp() {
     <div className="relative z-10 mx-auto flex min-h-screen max-w-5xl flex-col gap-5 px-4 py-6 sm:px-6 sm:py-10">
       <header className="flex items-center gap-3">
         <img src="../icon-perfume.png" alt="" className="h-9 w-9 rounded-full bg-grad-mark p-1 shadow-glow" />
-        <div>
+        <div className="flex-1">
           <p className="eyebrow">Legendary</p>
           <h1 className="font-display text-[20px] font-semibold tracking-tight text-ink">CRM backups</h1>
         </div>
+        {(screen.at === 'list' || screen.at === 'opened' || screen.at === 'opening') && (
+          <Button
+            size="sm"
+            variant="ghost"
+            icon="logout"
+            onClick={() => void signOut().finally(() => setScreen({ at: 'sign-in' }))}
+          >
+            Sign out
+          </Button>
+        )}
       </header>
 
       {screen.at === 'checking' && <p className="readout text-[12px] text-ink-3">Opening…</p>}
@@ -119,7 +129,7 @@ export function BackupsApp() {
       )}
 
       <footer className="mt-auto pt-4 text-[11.5px] leading-relaxed text-ink-3">
-        A backup is unlocked on this device and never sent anywhere. Close the tab when you are done.
+        A backup is unlocked on this device and never sent anywhere. Sign out when you are done.
       </footer>
     </div>
   )
@@ -158,7 +168,7 @@ function SignInForm({ error, onIn }: { error?: string; onIn: () => void }) {
 
   return (
     <Panel className="max-w-md">
-      <PanelHeader title="Sign in" meta="With the backup password. An hour later you sign in again." />
+      <PanelHeader title="Sign in" meta="With the backup password. After an hour, or once the browser closes, you sign in again." />
       <Rule />
       <PanelBody>
         <form onSubmit={submit} className="flex flex-col gap-4">

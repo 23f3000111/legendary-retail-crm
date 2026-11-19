@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hmacHex, newSession, passwordMatches, SESSION_COOKIE, sessionCookie, sessionValid } from './auth'
+import { hmacHex, newSession, passwordMatches, SESSION_COOKIE, sessionCookie, sessionValid, signOutCookie } from './auth'
 import type { Env } from './env'
 
 const env = (secret: string, passwordHmac = '') => ({ BACKUP_SESSION_SECRET: secret, BACKUP_PASSWORD_HMAC: passwordHmac }) as Env
@@ -39,7 +39,12 @@ describe('the session', () => {
     expect(await sessionValid(e, null, T0)).toBe(false)
   })
 
-  it('is set as a one-hour __Host- cookie that scripts cannot read', () => {
-    expect(sessionCookie('abc.def')).toBe('__Host-lgd_backups=abc.def; Max-Age=3600; Path=/; HttpOnly; Secure; SameSite=Strict')
+  it('is a __Host- cookie scripts cannot read, which the browser forgets when it closes', () => {
+    // No Max-Age: a cookie for the browser session only. The hour is in the signed token.
+    expect(sessionCookie('abc.def')).toBe('__Host-lgd_backups=abc.def; Path=/; HttpOnly; Secure; SameSite=Strict')
+  })
+
+  it('is cleared by signing out', () => {
+    expect(signOutCookie()).toBe('__Host-lgd_backups=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Strict')
   })
 })

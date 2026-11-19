@@ -32,6 +32,11 @@ export async function signIn(password: string): Promise<SignIn> {
   return { ok: false, status: r.status, error: body.error ?? 'Something went wrong.', lock: body.lock, until: body.until }
 }
 
+/** Forgets this browser's session now. */
+export async function signOut(): Promise<void> {
+  await fetch(`${BASE}/sign-out`, { method: 'POST' })
+}
+
 /** The backups, or why there are none to show: signed out, or not on Cloudflare at all. */
 export async function listBackups(): Promise<{ now: string; backups: BackupEntry[] } | 'signed-out' | 'not-here'> {
   const r = await fetch(`${BASE}/list`)
