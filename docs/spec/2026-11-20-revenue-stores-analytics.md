@@ -94,6 +94,81 @@ narrowed page, it says so: "Only Orchid, as on the page it was opened from."
 - **The pop-up is on the Overview too**, because the message asked for
   "pop-up everywhere".
 
+## Later the same day: dates for the partners, outlets in your own order, single lines
+
+A third message, with screenshots of the *Dealers & consignment* section on
+Revenue and of Analytics' *Revenue by channel*. It changed three things.
+
+### Consignment and dealers, each for its own dates
+
+"Put calendars to select start date and end date ... for both Dealers and
+Consignment separately and for dealers ... top most is highest value."
+
+- Each list has its own **From** and **To**. Both start on last month, the
+  month every partner has reported.
+- Each partner's months add up when their 1st falls in the dates: 1 September
+  to 31 October is September and October together. Dates that hold no month's
+  1st (2 to 31 October) hold nothing, and the list says why.
+- Every partner is listed, **highest first**, with those with nothing at the
+  foot.
+- The title is the total for the dates. Under it: how many partners have a
+  figure, and for which months.
+- Each row says who keyed it in, or how many months it adds up. Consignment
+  keeps its margin.
+- **Tap a partner** for its pop-up: its months, keyed in.
+- **Key in a month** switches the section to the boxes for one month, as
+  before. **Back to the dates** returns to the lists.
+- **By channel** now has its own From and To, with its CSV in its corner.
+- All these dates are kept for the tab, like the report's rules.
+
+### Outlets in your own order
+
+"There should be a drag option for all the outlets, Consignment, Dealers,
+stores, in analytics page, everywhere ... so client can drag the things and
+placed as per their choice."
+
+**Arrange** opens the products' drag list again, for outlets. Each line can
+be dragged by its handle, moved with the arrow keys, or sent to the top. Main
+stores, dealers and consignment are arranged separately, each in its own
+list. **Save my order** keeps it.
+
+The order is each person's own, kept on that device, as *Hide other notes*
+is. One person's order never changes anyone else's lists.
+
+| List | How it opens | Arrange |
+|---|---|---|
+| Stores | Highest first; **My order** on the switch | Yes |
+| Analytics: *By store* | Highest first; My order on the switch | Yes |
+| Analytics: the filter's store chips | Your order | — |
+| Revenue: consignment, dealers | Highest first, as asked; My order on the switch | Yes |
+| Overview: *Who is selling* | Highest first; My order on the switch | Yes |
+| Closings: the filing grid | Your order | Yes |
+| Dealer sales, and keying in on Revenue | Your order, which stays put while figures are typed | Yes |
+
+Saving an arrangement switches that list to My order. Each list remembers
+its choice on the device. An outlet that opens later joins the end of the
+person's order.
+
+### Single lines folded on Analytics
+
+"Remove or hide the things that has only one detail like Revenue by channel
+in analytics page has only one Main stores detail ... put this Main stores
+detail somewhere else."
+
+A section with a single line is no longer a section. Its line sits in a card
+under the four boxes:
+
+| Section | Folded when | The card |
+|---|---|---|
+| Revenue by channel | One channel sold | "Main stores only", the amount, and why: a partner's month counts when its 1st is in the dates |
+| Which countries bought | One country | The country, its customers, units and sales; tap it to open it |
+| Products | One product | The product, its units and sales |
+| By store | One store in view | The store, its sales and customers; tap it for its pop-up |
+
+When one of the two top sections is folded, the other takes the whole
+width. Revenue's By channel stays a section, because it carries its own
+dates.
+
 ## Legendary CRM Amendments #7 — the check
 
 Each page and rule of the document, checked on 20 November in the local
