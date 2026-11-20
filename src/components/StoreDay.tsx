@@ -1,23 +1,18 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { Panel, PanelBody, PanelHeader, Rule } from './ui/Panel'
 import { Button } from './ui/Button'
-import { Badge } from './ui/Badge'
-import { DataTable, type Column } from './ui/DataTable'
 import { FiguresTable } from './ui/FiguresTable'
 import { Flag } from './ui/Flag'
-import { Icon } from './ui/icons'
-import { Modal } from './ui/Modal'
 import { Notice } from './ui/Notice'
 import { useToasts } from './ui/Toast'
-import { StockItemDetail } from './StockItemDetail'
+import { DayStockTable } from './DayStockTable'
 import { useData } from '../store/useData'
-import { emptyFilter, selectStock, selectStoreDay, type StoreDayRow } from '../store/selectors'
+import { emptyFilter, selectStoreDay } from '../store/selectors'
 import { buildDetailReport, detailCsvBlocks, detailFilename, detailPrintSpec } from '../lib/detailReport'
 import { downloadCsvSections } from '../lib/exportCsv'
 import { openPrintReport } from '../lib/printReport'
 import { countryByCode } from '../data/countries'
 import { locationById } from '../data/locations'
-import { TIER_LABEL } from '../data/products'
 import { formatDate, formatDayShort, formatTimestamp } from '../lib/dates'
 import { num, rm } from '../lib/format'
 
@@ -34,20 +29,9 @@ export function StoreDay({ locationId, day }: { locationId: string; day: string 
   const push = useToasts((s) => s.push)
   const store = locationById(locationId)
   const d = useMemo(() => selectStoreDay(data, locationId, day), [data, locationId, day])
-  const [item, setItem] = useState<StoreDayRow | null>(null)
-  const stockRow = useMemo(
-    () => (item ? selectStock(data, locationId).find((r) => r.skuId === item.skuId) : undefined),
-    [data, locationId, item],
-  )
 
   const filed = d.closing
-  const counted = d.rows.some((r) => r.onHand !== null)
   const tender = d.tender
-  const totals = {
-    deducted: d.rows.reduce((a, r) => a + r.deducted, 0),
-    revenue: d.rows.reduce((a, r) => a + r.revenue, 0),
-    onHand: d.rows.reduce((a, r) => a + (r.onHand ?? 0), 0),
-  }
 
   const report = () => buildDetailReport(data, { ...emptyFilter(day, day), locationIds: [locationId] })
   const exportCsv = () => {
@@ -74,76 +58,6 @@ export function StoreDay({ locationId, day }: { locationId: string; day: string 
     )
     if (!ok) push('The report could not open: allow pop-ups for this site, then try again.', 'critical')
   }
-
-  const columns: Column<StoreDayRow>[] = [
-    {
-      key: 'label',
-      header: 'Product',
-      render: (r) => (
-        <div className="min-w-0">
-          <p className="truncate text-[13px] leading-tight text-ink">{r.label}</p>
-          <p className="readout text-[11px] text-ink-3">{r.code}</p>
-        </div>
-      ),
-    },
-    {
-      key: 'price',
-      header: 'Price',
-      align: 'right',
-      width: '150px',
-      render: (r) => (
-        <span className="inline-flex flex-col items-end gap-1">
-          {r.prices.map((p) => (
-            <span key={`${p.tier}:${p.unitPrice}`} className="inline-flex items-center gap-1.5 whitespace-nowrap">
-              {/* Labelled the way the sale is, where it is not the store's own price. */}
-              {p.tier !== store?.priceBasis && p.tier !== 'foc' && <Badge tone="neutral">{TIER_LABEL[p.tier]}</Badge>}
-              <span className="readout text-[12.5px] text-ink-2">{p.tier === 'foc' ? 'FOC' : rm(p.unitPrice)}</span>
-              {p.qty > 0 && <span className="readout text-[11px] text-ink-3">×{num(p.qty)}</span>}
-            </span>
-          ))}
-        </span>
-      ),
-    },
-    {
-      key: 'deducted',
-      header: 'Deducted',
-      align: 'right',
-      width: '90px',
-      render: (r) => (
-        <span className={`readout text-[12.5px] ${r.deducted ? 'font-semibold text-ink' : 'text-ink-3'}`}>
-          {r.deducted ? `−${num(r.deducted)}` : '0'}
-        </span>
-      ),
-      total: totals.deducted ? `−${num(totals.deducted)}` : '0',
-    },
-    {
-      key: 'sales',
-      header: 'Sales',
-      align: 'right',
-      width: '100px',
-      render: (r) => (
-        <span className={`readout text-[12.5px] ${r.revenue ? 'text-ink' : 'text-ink-3'}`}>{r.units ? rm(r.revenue) : '—'}</span>
-      ),
-      total: rm(totals.revenue),
-    },
-    {
-      key: 'onHand',
-      header: d.live ? 'On hand' : 'On hand at close',
-      align: 'right',
-      width: '110px',
-      render: (r) => (
-        <span className="readout text-[13px] font-semibold text-ink">{r.onHand === null ? '—' : num(r.onHand)}</span>
-      ),
-      total: counted ? num(totals.onHand) : undefined,
-    },
-    {
-      key: 'open',
-      header: '',
-      align: 'right',
-      width: '36px',
-      render: () => <Icon name="chevronRight" className="ml-auto h-3.5 w-3.5 text-ink-3" />,
-    },
-  ]
 
   const box = (label: string, value: string, note?: string, strong = false) => (
     <div key={label} className="rounded-xl border border-line bg-surface-2 px-3 py-2.5">
@@ -199,14 +113,7 @@ export function StoreDay({ locationId, day }: { locationId: string; day: string 
 
         <section>
           <p className="eyebrow mb-2">Stock</p>
-          <DataTable
-            columns={columns}
-            rows={d.rows}
-            rowKey={(r) => r.skuId}
-            dense
-            onRowClick={setItem}
-            totalLabel={`Total · ${num(d.rows.length)} products`}
-          />
+          <DayStockTable locationId={locationId} rows={d.rows} onHandHeader={d.live ? 'On hand' : 'On hand at close'} />
         </section>
 
         <section>
@@ -246,16 +153,6 @@ export function StoreDay({ locationId, day }: { locationId: string; day: string 
           )}
         </section>
       </PanelBody>
-
-      <Modal
-        open={item !== null}
-        onClose={() => setItem(null)}
-        title={item?.label ?? ''}
-        subtitle={item && stockRow ? `${item.code} · ${num(stockRow.onHand)} on the shelf at ${store?.shortName ?? ''} now` : undefined}
-        width="max-w-lg"
-      >
-        {item && stockRow && <StockItemDetail locationId={locationId} skuId={item.skuId} row={stockRow} />}
-      </Modal>
     </Panel>
   )
 }

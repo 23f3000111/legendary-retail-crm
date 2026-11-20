@@ -1026,19 +1026,39 @@ export const selectArrivals = (
 
 /**
  * What arrived since a store's last count before `day`, for that day's
- * closing: a three of vials counted together is shared out by what each
- * should hold and what arrived of each, so a vial the store had run out of
- * gets its own back when it comes in (Revision 10).
+ * closing. It goes into what the shelf should hold, so every box starts with
+ * the delivery in it (20 November: "after promoter receive stock for PO, the
+ * received quantity automatically adds into the closing quantity"), and a
+ * three of vials counted together is shared out with it, so a vial the store
+ * had run out of gets its own back when it comes in (Revision 10).
+ *
+ * A delivery confirmed on the day of that last count is in that count only if
+ * it came before the count was filed; one confirmed after waits for the next.
+ * `filedAt`, for a day already filed: nothing confirmed after it was.
  */
 export const selectArrivalsForClosing = (
   data: Pick<CrmData, 'purchaseOrders' | 'closings'>,
   locationId: string,
   day: DateStr,
+  filedAt?: string,
 ): Map<string, number> => {
   const last = data.closings
     .filter((c) => c.locationId === locationId && c.period < day && c.stockCount.length > 0)
-    .reduce<DateStr | undefined>((a, c) => (!a || c.period > a ? c.period : a), undefined)
-  return selectArrivals(data, locationId, last, day)
+    .reduce<Closing | undefined>((a, c) => (!a || c.period > a.period ? c : a), undefined)
+  const countedAt = last ? Date.parse(last.submittedAt) : NaN
+  const until = filedAt ? Date.parse(filedAt) : NaN
+  const out = new Map<string, number>()
+  for (const po of data.purchaseOrders) {
+    if (po.locationId !== locationId || po.status !== 'received') continue
+    const at = po.events.find((e) => e.status === 'received')?.at
+    const when = at ? Date.parse(at) : NaN
+    if (Number.isNaN(when)) continue
+    const arrived = todayInMalaysia(new Date(when))
+    if (arrived > day || when > until) continue
+    if (last && (arrived < last.period || (arrived === last.period && !(when > countedAt)))) continue
+    for (const l of po.lines) out.set(l.skuId, (out.get(l.skuId) ?? 0) + effectiveQty(l))
+  }
+  return out
 }
 
 /** What an order is worth, on the basis the destination store is counted on. */
@@ -1890,9 +1910,41 @@ export const selectStoreDay = (data: CrmData, locationId: string, day: DateStr):
   const live = day === data.today
   const closing = data.closings.find((c) => c.locationId === locationId && c.period === day && c.periodType === 'day')
   const lines = live ? (data.liveLines[locationId] ?? []) : (closing?.lines ?? [])
-  const basis = basisOf(locationId)
   const detail = selectDayDetail(data, day, locationId)
+  const rows = storeDayRows(
+    lines,
+    closing ? [...closing.lines, ...closing.writeOffs] : lines,
+    closing ? new Map(closing.stockCount.map((c) => [c.skuId, c.counted])) : null,
+    basisOf(locationId),
+  )
 
+  return {
+    day,
+    live,
+    closing,
+    tender: closing?.tender,
+    revenue: detail.revenue,
+    units: detail.units,
+    customers: detail.customers,
+    rows,
+    countries: detail.countries,
+  }
+}
+
+/**
+ * A store's day, product by product: every price each went at, what left the
+ * shelf (`offShelf`: the sales, and anything written off), and the count at
+ * the close (`counts`, or null where nothing was counted). For the store's
+ * page, from what was filed; for the promoter's closing (20 November: "so that
+ * they can refer back the deducted stocks and sales of the day"), from the
+ * closing being filled in.
+ */
+export const storeDayRows = (
+  lines: SaleLine[],
+  offShelf: { skuId: string; qty: number }[],
+  counts: Map<string, number> | null,
+  basis: PriceBasis,
+): StoreDayRow[] => {
   const sold = new Map<string, { units: number; revenue: number; prices: SoldAt[] }>()
   for (const l of lines) {
     const unitPrice = lineUnitPrice(l, basis)
@@ -1906,17 +1958,15 @@ export const selectStoreDay = (data: CrmData, locationId: string, day: DateStr):
     sold.set(l.skuId, s)
   }
   const off = new Map<string, number>()
-  for (const l of closing ? [...closing.lines, ...closing.writeOffs] : lines) {
-    off.set(l.skuId, (off.get(l.skuId) ?? 0) + l.qty)
-  }
-  const count = new Map((closing?.stockCount ?? []).map((c) => [c.skuId, c.counted]))
+  for (const l of offShelf) off.set(l.skuId, (off.get(l.skuId) ?? 0) + l.qty)
+  const count = counts ?? new Map<string, number>()
 
   const ids = [...countedSkus.map((s) => s.id)]
   for (const id of [...sold.keys(), ...count.keys()]) if (!ids.includes(id)) ids.push(id)
   const at = rangeIndex()
   ids.sort((a, b) => (at.get(a) ?? LAST_IN_RANGE) - (at.get(b) ?? LAST_IN_RANGE))
 
-  const rows: StoreDayRow[] = ids.map((skuId) => {
+  return ids.map((skuId) => {
     const sku = skuById(skuId)
     const s = sold.get(skuId)
     const usual: SoldAt = isFoc(sku) ? { unitPrice: 0, tier: 'foc', qty: 0 } : { unitPrice: priceOf(sku, basis), tier: basis, qty: 0 }
@@ -1928,21 +1978,9 @@ export const selectStoreDay = (data: CrmData, locationId: string, day: DateStr):
       units: s?.units ?? 0,
       revenue: Math.round((s?.revenue ?? 0) * 100) / 100,
       deducted: off.get(skuId) ?? 0,
-      onHand: closing ? (count.get(skuId) ?? null) : null,
+      onHand: counts ? (count.get(skuId) ?? null) : null,
     }
   })
-
-  return {
-    day,
-    live,
-    closing,
-    tender: closing?.tender,
-    revenue: detail.revenue,
-    units: detail.units,
-    customers: detail.customers,
-    rows,
-    countries: detail.countries,
-  }
 }
 
 // ── Dealers and consignment, month by month ─────────────────────────────────

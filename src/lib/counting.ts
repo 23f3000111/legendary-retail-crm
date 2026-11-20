@@ -43,6 +43,22 @@ export function shelfRows(stock: StockRow[]): ShelfRow[] {
 }
 
 /**
+ * What each line on the shelf should hold at the close: the last count, plus
+ * what the store has confirmed receiving since (20 November: "after promoter
+ * receive stock for PO, the received quantity automatically adds into the
+ * closing quantity"), less what the day sold. Never below 0.
+ */
+export function shelfExpected(
+  stock: Pick<StockRow, 'skuId' | 'onHand'>[],
+  sold: Map<string, number>,
+  arrived: Map<string, number>,
+): Map<string, number> {
+  return new Map(
+    stock.map((s) => [s.skuId, Math.max(0, s.onHand + (arrived.get(s.skuId) ?? 0) - (sold.get(s.skuId) ?? 0))]),
+  )
+}
+
+/**
  * One count shared across several lines, in proportion to `weights`: when it
  * matches their total each gets exactly its weight, and a difference is
  * spread by share, the largest remainders first. With nothing to go by — a

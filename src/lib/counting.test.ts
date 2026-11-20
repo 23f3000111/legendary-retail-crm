@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { countsFromBoxes, shelfRows, splitCount } from './counting'
+import { countsFromBoxes, shelfExpected, shelfRows, splitCount } from './counting'
 import { applyCatalogue, COUNT_GROUPS, entryOf, groupOf, skuById } from '../data/products'
 import { selectStock } from '../store/selectors'
 import type { StockRow } from '../store/selectors'
@@ -137,5 +137,37 @@ describe('a three after a delivery', () => {
     const weights: Record<string, number> = { 'passion-vial': 49, 'dream-vial': 24, 'life-vial': 58 }
     const counts = countsFromBoxes(rows, { 'group:spirit-2-vials': '131' }, (id) => weights[id] ?? 0)
     expect(['passion-vial', 'dream-vial', 'life-vial'].map((id) => counts.get(id))).toEqual([49, 24, 58])
+  })
+})
+
+// The client, 20 November: "After promoter receive stock for PO, the received
+// quantity automatically adds into the closing quantity."
+describe('what the shelf should hold at the close', () => {
+  const opening = (counts: Record<string, number>): StockRow[] =>
+    stock().map((s) => ({ ...s, counted: s.skuId in counts, onHand: counts[s.skuId] ?? 0 }))
+
+  it('is the last count, with what the store confirmed receiving added and what sold taken off', () => {
+    const expected = shelfExpected(
+      opening({ 'orchid-retail': 20, 'man-retail': 5 }),
+      new Map([['orchid-retail', 3]]),
+      new Map([
+        ['orchid-retail', 24],
+        ['man-retail', 12],
+      ]),
+    )
+    expect(expected.get('orchid-retail')).toBe(41)
+    expect(expected.get('man-retail')).toBe(17)
+  })
+
+  it('never goes below nothing', () => {
+    const expected = shelfExpected(opening({ 'orchid-retail': 2 }), new Map([['orchid-retail', 5]]), new Map())
+    expect(expected.get('orchid-retail')).toBe(0)
+  })
+
+  it('starts a three’s box at the three’s total, the delivery in it', () => {
+    const shelf = opening({ 'passion-vial': 49, 'dream-vial': 0, 'life-vial': 58 })
+    const expected = shelfExpected(shelf, new Map(), new Map([['dream-vial', 24]]))
+    const three = shelfRows(shelf).find((r) => r.key === 'group:spirit-2-vials')!
+    expect(three.skus.reduce((a, s) => a + expected.get(s.skuId)!, 0)).toBe(131)
   })
 })

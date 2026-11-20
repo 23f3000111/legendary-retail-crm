@@ -125,4 +125,27 @@ describe('what arrived at a store between two counts', () => {
     // The closing of the 9th: since the store's last count before it, the 8th's.
     expect(selectArrivalsForClosing(d, 'melaka', '2026-11-09').get('dream-vial')).toBe(24)
   })
+
+  // The client, 20 November: "After promoter receive stock for PO, the
+  // received quantity automatically adds into the closing quantity."
+  it('takes in a delivery confirmed the same day as the last count, after that count was filed', () => {
+    // The 8th was filed at 22:05. One order came at 13:00 that day, before the
+    // count, so it is in it; another was confirmed at 23:00, after it.
+    const d: CrmData = {
+      ...data([eighth], order([sent('2026-11-09T03:49:00.000Z')])),
+      purchaseOrders: [received('PO-A', '2026-11-08T05:00:00.000Z', 6), received('PO-D', '2026-11-08T15:00:00.000Z', 12)],
+    }
+    expect(selectArrivalsForClosing(d, 'melaka', '2026-11-09').get('dream-vial')).toBe(12)
+  })
+
+  it('takes in nothing confirmed after a filed day was closed, when that day is opened again', () => {
+    // The 9th was filed at 22:00; an order confirmed at 23:00 that night
+    // belongs to the 10th's count, not to a change to the 9th's.
+    const d: CrmData = {
+      ...data([eighth, ninth], order([sent('2026-11-09T03:49:00.000Z')])),
+      purchaseOrders: [received('PO-B', '2026-11-09T05:00:00.000Z', 24), received('PO-E', '2026-11-09T15:00:00.000Z', 6)],
+    }
+    expect(selectArrivalsForClosing(d, 'melaka', '2026-11-09', ninth.submittedAt).get('dream-vial')).toBe(24)
+    expect(selectArrivalsForClosing(d, 'melaka', '2026-11-10').get('dream-vial')).toBe(6)
+  })
 })

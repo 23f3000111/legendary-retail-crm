@@ -9,6 +9,7 @@ import { Flag } from '../../components/ui/Flag'
 import { Icon } from '../../components/ui/icons'
 import { ChangeList, Notice } from '../../components/ui/Notice'
 import { SaleEditor, type SaleDraft } from '../../components/SaleEditor'
+import { DayStockTable } from '../../components/DayStockTable'
 import { useData } from '../../store/useData'
 import { useCan, useCurrentUser } from '../../store/useAuth'
 import { useToasts } from '../../components/ui/Toast'
@@ -17,7 +18,9 @@ import {
   selectClosingFor,
   selectClosingOutOfStep,
   selectStock,
+  selectStoreDay,
   selectSuggestedPoLines,
+  storeDayRows,
 } from '../../store/selectors'
 import { locationById, type Location } from '../../data/locations'
 import { lineUnitPrice, skuById, skuLabel, TIER_LABEL } from '../../data/products'
@@ -27,7 +30,7 @@ import { formatDate, formatTimestamp } from '../../lib/dates'
 import { moneyInput, num } from '../../lib/format'
 import { newId, newOrderId } from '../../lib/ids'
 import { closingEditMode, CORRECTION_WINDOW_DAYS, type ClosingEditMode } from '../../lib/editing'
-import { countsFromBoxes, shelfRows } from '../../lib/counting'
+import { countsFromBoxes, shelfExpected, shelfRows } from '../../lib/counting'
 import { clock, describeLineChanges, describeClosingChanges, figuresOf, money, toSen } from '../../lib/changes'
 import type { Result } from '../../api/backend'
 import type {
@@ -184,6 +187,8 @@ function FiledDay({
   const waiting = correction?.status === 'pending'
   const href = closeHref(location.id, day, data.today, !atCounter)
   const units = filed.lines.reduce((a, l) => a + l.qty, 0)
+  // The day as filed, product by product, to look back on (20 November).
+  const dayRows = useMemo(() => selectStoreDay(data, location.id, day).rows, [data, location.id, day])
   // Kelly or Davy, looking at a day a store has asked to correct: decide it here.
   const decides = waiting && capability.approveCorrections
 
@@ -303,6 +308,19 @@ function FiledDay({
           )}
         </PanelBody>
       </Panel>
+
+      {/* ── The day, product by product (20 November) ───────────────────── */}
+      <Panel>
+        <PanelHeader
+          eyebrow="The day, product by product"
+          title={`${num(dayRows.reduce((a, r) => a + r.deducted, 0))} off the shelf · ${money(filed.revenueMYR)} sold`}
+          meta="What each product went for, what the day took off the shelf, what it sold, and the count at the close, as filed. Tap a product to see what came in and what went out."
+        />
+        <Rule />
+        <PanelBody>
+          <DayStockTable locationId={location.id} rows={dayRows} />
+        </PanelBody>
+      </Panel>
     </div>
   )
 }
@@ -383,8 +401,17 @@ function ClosingForm({
   // the day's own closing — that already has the day's sales taken off.
   const stock = useMemo(() => selectStock(data, locationId, day), [data, locationId, day])
 
-  /** What the shelf should hold now: the opening count, less the day's sales. */
-  const expectedOf = (skuId: string, onHand: number) => Math.max(0, onHand - (soldToday.get(skuId) ?? 0))
+  // Deliveries the store has confirmed receiving since that count (20
+  // November: "the received quantity automatically adds into the closing
+  // quantity"). Changing a filed day: only those confirmed before it was filed.
+  const arrivals = useMemo(
+    () => selectArrivalsForClosing(data, locationId, day, mode === 'new' ? undefined : filed?.submittedAt),
+    [data, locationId, day, mode, filed?.submittedAt],
+  )
+
+  /** What the shelf should hold now: the opening count, with what arrived, less the day's sales. */
+  const expected = useMemo(() => shelfExpected(stock, soldToday, arrivals), [stock, soldToday, arrivals])
+  const expectedOf = (skuId: string) => expected.get(skuId) ?? 0
 
   /**
    * The boxes to fill in: one a line, except the 3ml vials of Spirit 1,
@@ -422,7 +449,7 @@ function ClosingForm({
         const ids = row.skus.map((s) => s.skuId)
         if (ids.every((id) => was.has(id))) return [row.key, String(ids.reduce((a, id) => a + was.get(id)!, 0))]
         const blank = firstCount || row.skus.some((s) => !s.counted) || mode !== 'new'
-        return [row.key, blank ? '' : String(row.skus.reduce((a, s) => a + expectedOf(s.skuId, s.onHand), 0))]
+        return [row.key, blank ? '' : String(row.skus.reduce((a, s) => a + expectedOf(s.skuId), 0))]
       }),
     )
   })
@@ -463,14 +490,13 @@ function ClosingForm({
   const orderLines = useMemo(() => linesToSend(poRows), [poRows])
 
   // What each box says, line by line: a three's count shared across its
-  // vials by what each should hold with what arrived of each since the last
-  // count, or, on a change, by what was filed.
+  // vials by what each should hold, what arrived of each since the last count
+  // included, or, on a change, by what was filed.
   const boxKey = new Map(rows.flatMap((row) => row.skus.map((s): [string, string] => [s.skuId, row.key])))
-  const arrivals = useMemo(() => selectArrivalsForClosing(data, locationId, day), [data, locationId, day])
   const boxCounts = countsFromBoxes(
     rows,
     counted,
-    (skuId) => expectedOf(skuId, stock.find((s) => s.skuId === skuId)?.onHand ?? 0) + (arrivals.get(skuId) ?? 0),
+    expectedOf,
     mode === 'new' ? undefined : new Map((start?.stockCount ?? []).map((c) => [c.skuId, c.counted])),
   )
   const stockCount: StockCount[] = [
@@ -657,7 +683,7 @@ function ClosingForm({
 
   const shelf = rows.map((row) => {
     const ids = row.skus.map((s) => s.skuId)
-    const expected = row.skus.reduce((a, s) => a + expectedOf(s.skuId, s.onHand), 0)
+    const expected = row.skus.reduce((a, s) => a + expectedOf(s.skuId), 0)
     const value = counted[row.key] ?? ''
     const was = ids.every((id) => countOnRecord.has(id))
       ? ids.reduce((a, id) => a + countOnRecord.get(id)!, 0)
@@ -670,6 +696,8 @@ function ClosingForm({
       code: row.group ? row.group.members : row.skus[0].code,
       group: Boolean(row.group),
       sold: row.skus.reduce((a, s) => a + (soldToday.get(s.skuId) ?? 0), 0),
+      // Confirmed received since the last count: already in what it should be.
+      received: row.skus.reduce((a, s) => a + (arrivals.get(s.skuId) ?? 0), 0),
       expected,
       value,
       was,
@@ -686,7 +714,12 @@ function ClosingForm({
   })
   const changedCounts = shelf.filter((s) => s.changed).length
   const stillToCount = shelf.filter((s) => s.value === '').length
+  const anyReceived = shelf.some((s) => s.received > 0)
   const setCount = (skuId: string, value: string) => setCounted((v) => ({ ...v, [skuId]: value }))
+
+  // The day, product by product, as it will be filed: the sales as they
+  // stand, what left the shelf, and the counts in the boxes (20 November).
+  const dayRows = storeDayRows(lines, [...lines, ...(filed?.writeOffs ?? [])], boxCounts, basis)
 
   const heading =
     mode === 'new'
@@ -902,7 +935,9 @@ function ClosingForm({
               ? 'Each box holds the count that was filed.'
               : firstCount
                 ? 'Nothing has been counted at this store yet, so tonight every product is counted from scratch. From tomorrow the boxes fill themselves in and you only change what is different.'
-                : "Each box already holds what the shelf should have after today's sales. If what you count matches, leave it."
+                : anyReceived
+                  ? "Each box already holds what the shelf should have after today's sales, with the stock you confirmed receiving added in. If what you count matches, leave it."
+                  : "Each box already holds what the shelf should have after today's sales. If what you count matches, leave it."
           }
           action={
             mode !== 'new' ? (
@@ -945,6 +980,9 @@ function ClosingForm({
                   <p className="truncate text-[13px] leading-tight text-ink">{s.label}</p>
                   {s.group && <p className="text-[11px] text-ink-3">{s.code}, counted together</p>}
                   <p className="mt-1 text-[11.5px] text-ink-3">
+                    {s.received > 0 && !firstCount && !s.fresh ? (
+                      <span className="font-medium text-good">Received +{num(s.received)} · </span>
+                    ) : null}
                     {s.sold > 0 ? `Sold ${num(s.sold)}${firstCount ? '' : ' · '}` : ''}
                     {firstCount ? (
                       s.sold > 0 || mode !== 'new' ? '' : 'Type what is on the shelf'
@@ -984,6 +1022,7 @@ function ClosingForm({
                 <tr className="border-b border-line">
                   {[
                     'Product',
+                    ...(anyReceived && !firstCount ? ['Received'] : []),
                     'Sold',
                     firstCount ? '' : 'Should be',
                     mode === 'new' ? '' : 'Filed',
@@ -1014,6 +1053,11 @@ function ClosingForm({
                         <p className="readout text-[10.5px] text-ink-3">{s.code}</p>
                       )}
                     </td>
+                    {anyReceived && !firstCount && (
+                      <td className={`readout py-2 pr-3 text-right text-[13px] ${s.received > 0 ? 'font-medium text-good' : 'text-ink-3'}`}>
+                        {s.received > 0 ? `+${num(s.received)}` : '—'}
+                      </td>
+                    )}
                     <td className={`readout py-2 pr-3 text-right text-[13px] ${s.sold > 0 ? 'text-ink' : 'text-ink-3'}`}>
                       {s.sold > 0 ? num(s.sold) : '—'}
                     </td>
@@ -1039,6 +1083,19 @@ function ClosingForm({
               </tbody>
             </table>
           </div>
+        </PanelBody>
+      </Panel>
+
+      {/* ── The day, product by product (20 November) ───────────────────── */}
+      <Panel>
+        <PanelHeader
+          eyebrow="The day, product by product"
+          title={`${num(dayRows.reduce((a, r) => a + r.deducted, 0))} off the shelf · ${money(revenue)} sold`}
+          meta="What each product went for, what the day took off the shelf, what it sold, and the count you are closing with. Tap a product to see what came in and what went out."
+        />
+        <Rule />
+        <PanelBody>
+          <DayStockTable locationId={locationId} rows={dayRows} />
         </PanelBody>
       </Panel>
 

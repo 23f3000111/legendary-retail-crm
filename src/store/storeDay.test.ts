@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { partnersIn, selectPartnerMonths, selectStoreDay } from './selectors'
+import { partnersIn, selectPartnerMonths, selectStoreDay, storeDayRows } from './selectors'
 import { applyCatalogue, countedSkus } from '../data/products'
 import type { Closing, CrmData, SaleLine } from '../data/types'
 
@@ -114,6 +114,33 @@ describe("a store's day", () => {
     expect(d).toMatchObject({ live: false, revenue: 0, units: 0 })
     expect(d.closing).toBeUndefined()
     expect(d.rows.every((r) => r.onHand === null && r.deducted === 0)).toBe(true)
+  })
+})
+
+// The client, 20 November, the promoter's closing page: "Add below picture
+// section ... so that they can refer back the deducted stocks and sales of the
+// day" — the same rows, read from the closing being filled in.
+describe('the day, product by product, from the closing being filled in', () => {
+  it('takes the sales as they stand and the counts as typed, every product listed', () => {
+    const lines = closing.lines
+    const counts = new Map([
+      ['orchid-retail', 41],
+      ['man-retail', 6],
+    ])
+    // What leaves the shelf is the sales: nothing is written off at the counter.
+    const rows = storeDayRows(lines, lines, counts, 'retail')
+    expect(rows.map((r) => r.skuId)).toEqual(countedSkus.map((s) => s.id))
+    const at = (id: string) => rows.find((r) => r.skuId === id)!
+    expect(at('orchid-retail')).toMatchObject({ units: 3, revenue: 574, deducted: 3, onHand: 41 })
+    expect(at('man-retail')).toMatchObject({ units: 1, deducted: 1, onHand: 6 })
+    // Not counted yet: nothing to show.
+    expect(at('violet-retail')).toMatchObject({ units: 0, deducted: 0, onHand: null })
+  })
+
+  it('reads the same as the store’s page once the day is filed', () => {
+    const filed = selectStoreDay(data, 'bsas', filedDay).rows
+    const counts = new Map(closing.stockCount.map((c) => [c.skuId, c.counted]))
+    expect(storeDayRows(closing.lines, [...closing.lines, ...closing.writeOffs], counts, 'retail')).toEqual(filed)
   })
 })
 
