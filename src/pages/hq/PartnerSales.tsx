@@ -21,6 +21,19 @@ import type { CrmData } from '../../data/types'
 /** The CRM went live in September 2026; nothing is keyed in before that. */
 const FIRST_MONTH = '2026-09'
 
+/** The months that can be keyed in, the latest first: this one back to the first. */
+export const partnerMonthChoices = (today: string): string[] => {
+  const out: string[] = []
+  for (let m = monthKey(today); m >= FIRST_MONTH && out.length < 24; m = shiftMonth(m, -1)) out.push(m)
+  return out
+}
+
+/** Last month first: that is the one being keyed in, most days. */
+export const firstPartnerMonth = (today: string): string => {
+  const last = shiftMonth(monthKey(today), -1)
+  return last >= FIRST_MONTH ? last : monthKey(today)
+}
+
 /**
  * Dealers' and consignment partners' sales, keyed in a month at a time.
  *
@@ -37,16 +50,8 @@ export function PartnerSales() {
   const data = useData()
   const thisMonth = monthKey(data.today)
 
-  // Last month first: that is the one being keyed in, most days.
-  const months = useMemo(() => {
-    const out: string[] = []
-    for (let m = thisMonth; m >= FIRST_MONTH && out.length < 24; m = shiftMonth(m, -1)) out.push(m)
-    return out
-  }, [thisMonth])
-  const [month, setMonth] = useState(() => {
-    const last = shiftMonth(thisMonth, -1)
-    return last >= FIRST_MONTH ? last : thisMonth
-  })
+  const months = useMemo(() => partnerMonthChoices(data.today), [data.today])
+  const [month, setMonth] = useState(() => firstPartnerMonth(data.today))
 
   return (
     <div className="space-y-5">
@@ -72,12 +77,19 @@ export function PartnerSales() {
       </div>
 
       {/* Remounted per month, so what is typed always belongs to the month shown. */}
-      <MonthForm key={month} data={data} month={month} />
+      <PartnerMonthForm key={month} month={month} />
     </div>
   )
 }
 
-function MonthForm({ data, month }: { data: CrmData; month: string }) {
+/**
+ * The consignment partners and the dealers side by side, a box each for the
+ * month's figure. Here, and on Finance's Revenue (20 November: "remove the
+ * dealer sales page and we put dealers section side by side of Consignment
+ * section"), where `quiet` keeps the save bar away until something is typed.
+ */
+export function PartnerMonthForm({ month, quiet = false }: { month: string; quiet?: boolean }) {
+  const data = useData()
   const user = useCurrentUser()
   const save = useData((s) => s.savePartnerSales)
   const push = useToasts((s) => s.push)
@@ -126,10 +138,12 @@ function MonthForm({ data, month }: { data: CrmData; month: string }) {
     push(`${monthLabel(month)} saved — ${pending.length} ${pending.length === 1 ? 'figure' : 'figures'}`, 'good')
   }
 
+  const showBar = canKey && (!quiet || pending.length > 0 || error !== null)
+
   return (
     <>
       {/* Room at the end so the last dealer can scroll clear of the save bar. */}
-      <div className={`grid gap-5 lg:grid-cols-2 ${canKey ? 'pb-28' : ''}`}>
+      <div className={`grid gap-5 lg:grid-cols-2 ${showBar ? 'pb-28' : ''}`}>
         {(['consignment', 'dealer'] as PartnerChannel[]).map((channel) => (
           <ChannelPanel
             key={channel}
@@ -148,7 +162,7 @@ function MonthForm({ data, month }: { data: CrmData; month: string }) {
       {/* Pinned to the window rather than sticky: the page body clips sideways
           (index.css), which stops sticky from ever taking hold. Fifty boxes is
           a long scroll, and Save should never be at the other end of it. */}
-      {canKey && (
+      {showBar && (
         <div className="fixed inset-x-4 bottom-2 z-30 flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-surface/95 px-4 py-3 shadow-lift backdrop-blur sm:inset-x-6 sm:bottom-12">
           <p className="min-w-0 flex-1 text-[12.5px] text-ink-2">
             {error ? (
@@ -242,6 +256,8 @@ function ChannelPanel({
                       : row?.has
                         ? `${rm(row.revenue)} from its closings`
                         : 'Nothing keyed in yet'}
+                  {/* The one margin figure the client asked to keep (Q58, Q65). */}
+                  {channel === 'consignment' && l.marginPct != null ? ` · margin ${l.marginPct}%` : ''}
                 </p>
               </div>
               <div className="w-[132px] shrink-0">

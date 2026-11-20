@@ -1,114 +1,87 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Panel, PanelBody, PanelHeader, Rule } from '../../components/ui/Panel'
 import { Button } from '../../components/ui/Button'
 import { Badge, StatusChip } from '../../components/ui/Badge'
-import { StatTile } from '../../components/ui/StatTile'
-import { EmptyState } from '../../components/ui/DataTable'
+import { FiguresTable } from '../../components/ui/FiguresTable'
+import { Select } from '../../components/ui/Field'
 import { Icon } from '../../components/ui/icons'
 import { ChartFrame } from '../../components/charts/ChartFrame'
-import { Notice } from '../../components/ui/Notice'
 import { TrendChart } from '../../components/charts/TrendChart'
-import { Donut, DonutTable, type DonutSlice } from '../../components/charts/Donut'
+import { Donut, type DonutSlice } from '../../components/charts/Donut'
+import { SalesReport } from '../../components/SalesReport'
+import { PartnerMonthForm, firstPartnerMonth, partnerMonthChoices } from './PartnerSales'
 import { useData } from '../../store/useData'
 import { useCurrentUser } from '../../store/useAuth'
-import { canOpen } from '../../components/layout/nav'
-import {
-  emptyFilter,
-  filteredClosings,
-  latestMonthWithFigures,
-  poValue,
-  selectPartnerMonth,
-  selectChannelSplit,
-  selectKpis,
-  selectTimeSeries,
-  selectWriteOffs,
-} from '../../store/selectors'
-import { CHANNEL_PLURAL, locationsInChannel, locationById } from '../../data/locations'
+import { useViews } from '../../store/useViews'
+import { emptyFilter, poValue, selectChannelMonth, selectTimeSeries, totalsFor } from '../../store/selectors'
+import { CHANNEL_PLURAL, locationById } from '../../data/locations'
 import { awaitingFinance } from '../../lib/po-machine'
 import { addDays, monthKey, monthLabel } from '../../lib/dates'
 import { downloadCsv } from '../../lib/exportCsv'
 import { num, rm, rmCompact } from '../../lib/format'
 
 /**
- * The Finance screen.
+ * The Finance screen: Revenue.
  *
  * Revenue only — the client was explicit that cost and profit stay out of this
- * system (Q58, Q65). The one margin figure lives here, against each consignment
- * partner, which is the exception they asked for.
+ * system (Q58, Q65). The one margin figure is against each consignment
+ * partner, the exception they asked for.
+ *
+ * As the developer set it out on 20 November: no tiles at the top (revenue,
+ * units sold, orders to clear, staff purchases) and no Written off; the sales
+ * report, its business date *between* two dates and its other rules folded
+ * until wanted; the dealers beside the consignment partners, keyed in here
+ * now that Finance has no Dealer sales page; and By channel for a month, so
+ * the dealers and consignment are in it.
  */
 export function Finance() {
   const data = useData()
   const user = useCurrentUser()
-  // A tile opens the screen behind its number — but only one this role may
-  // open, since a link that bounces is worse than no link.
-  const open = (path: string) => (user && canOpen(user.role, path) ? path : undefined)
+  const keep = useViews((s) => s.keep)
+
+  // The partners' month: last month first, the one being keyed in most days.
+  const months = useMemo(() => partnerMonthChoices(data.today), [data.today])
+  const [month, setMonthState] = useState(() => {
+    const kept = useViews.getState().revenue?.month
+    return kept && months.includes(kept) ? kept : firstPartnerMonth(data.today)
+  })
+  const setMonth = (m: string) => {
+    setMonthState(m)
+    keep('revenue', { ...useViews.getState().revenue, month: m })
+  }
 
   const filter = useMemo(() => emptyFilter(addDays(data.today, -29), data.today), [data.today])
-  const kpis = selectKpis(data, filter)
-  const trend = selectTimeSeries(data, filter, 'revenue')
-  const channels = selectChannelSplit(data, filter)
-  const writeOffs = selectWriteOffs(data, filter)
+  const trend = useMemo(() => selectTimeSeries(data, filter, 'revenue'), [data, filter])
+  const thirtyDays = useMemo(() => totalsFor(data, filter).revenue, [data, filter])
+  const channels = useMemo(() => selectChannelMonth(data, month), [data, month])
+  const channelTotal = channels.reduce((a, c) => a + c.revenue, 0)
+  const share = (n: number) => (channelTotal ? (n / channelTotal) * 100 : 0)
+  const unkeyed = channels.filter((c) => c.keyed && c.keyed.done < c.keyed.of)
 
   // Every approved order Finance has not yet cleared — the warehouse may
   // already be packing it; that no longer waits on Finance.
   const waitingOnMe = user?.role === 'finance' ? data.purchaseOrders.filter(awaitingFinance) : []
 
-  const channelSlices: DonutSlice[] = channels.map((c) => ({
-    key: c.channel,
-    label: CHANNEL_PLURAL[c.channel],
-    value: c.revenue,
-  }))
+  const channelSlices: DonutSlice[] = channels
+    .filter((c) => c.revenue > 0)
+    .map((c) => ({ key: c.channel, label: CHANNEL_PLURAL[c.channel], value: c.revenue }))
 
-  // Consignment partners report monthly, so their table works off the latest
-  // month with a figure in — keyed in at head office (Dealer sales), or, in
-  // the sample history, filed — rather than a rolling 30 days.
-  const consignmentRows = useMemo(() => {
-    const month = latestMonthWithFigures(data, 'consignment')
-    const figures = new Map(
-      (month ? selectPartnerMonth(data, 'consignment', month) : []).map((r) => [r.locationId, r]),
-    )
-    return {
-      period: month ? `${month}-01` : undefined,
-      rows: locationsInChannel('consignment').map((p) => {
-        const figure = figures.get(p.id)
-        // A keyed-in month is one figure, with no products behind it.
-        const units = figure?.keyed
-          ? null
-          : data.closings
-              .filter((c) => c.locationId === p.id && month && monthKey(c.period) === month)
-              .reduce((a, c) => a + c.lines.reduce((s, l) => s + l.qty, 0), 0)
-        return {
-          id: p.id,
-          name: p.name,
-          marginPct: p.marginPct ?? null,
-          revenue: figure?.revenue ?? 0,
-          units,
-          filed: Boolean(figure?.has),
-        }
-      }),
-    }
-  }, [data])
-
-  const consignmentTotal = consignmentRows.rows.reduce((a, r) => a + r.revenue, 0)
-  // A keyed-in month has no units behind it, so the total counts those that do.
-  const counted = consignmentRows.rows.filter((r) => r.units !== null)
-  const consignmentUnits = counted.length ? counted.reduce((a, r) => a + (r.units ?? 0), 0) : null
-
-  const staffTotal = useMemo(() => {
-    const rows = filteredClosings(data, filter)
-    return {
-      revenue: rows.reduce((a, c) => a + c.staffSales.revenueMYR, 0),
-      units: rows.reduce((a, c) => a + c.staffSales.qty, 0),
-    }
-  }, [data, filter])
-
-  // The dates go in the file, and on every row (client, 20 October).
-  const exportRevenue = () =>
+  // The month and the channels in the file, on every row (client, 20 October).
+  const exportChannels = () =>
     downloadCsv(
-      `legendary-revenue-by-channel-${filter.from}-to-${filter.to}.csv`,
-      ['From', 'To', 'Channel', 'Revenue MYR', 'Units'],
-      channels.map((c) => [filter.from, filter.to, CHANNEL_PLURAL[c.channel], c.revenue, c.units]),
+      `legendary-revenue-by-channel-${month}.csv`,
+      ['Month', 'Channel', 'Revenue MYR', 'Share %', 'Partners keyed in'],
+      [
+        ...channels.map((c) => [
+          month,
+          CHANNEL_PLURAL[c.channel],
+          c.revenue,
+          Math.round(share(c.revenue) * 10) / 10,
+          c.keyed ? `${c.keyed.done} of ${c.keyed.of}` : '',
+        ]),
+        [month, 'Total', Math.round(channelTotal * 100) / 100, channelTotal ? 100 : 0, ''],
+      ],
     )
 
   return (
@@ -116,60 +89,15 @@ export function Finance() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="eyebrow">Head Office · Finance</p>
-          <h1 className="page-title mt-1">
-            Revenue
-          </h1>
+          <h1 className="page-title mt-1">Revenue</h1>
           <p className="mt-1 max-w-2xl text-[13px] text-ink-2">
             Legendary's own revenue, excluding SST. Cost and profit are not held in this system —
             SQL Accounting remains the book of record.
           </p>
         </div>
-        <Button variant="secondary" icon="download" onClick={exportRevenue}>
-          Export
+        <Button variant="secondary" icon="download" onClick={exportChannels}>
+          By channel · {monthLabel(month)}
         </Button>
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile
-          label="Revenue · 30 days"
-          to={open('/analytics')}
-          value={kpis.current.revenue}
-          format={rm}
-          delta={kpis.delta.revenue}
-          tone="violet"
-          icon="wallet"
-        />
-        <StatTile
-          label="Units sold"
-          to={open('/analytics')}
-          value={kpis.current.units}
-          format={(n) => num(Math.round(n))}
-          delta={kpis.delta.units}
-          tone="blue"
-          icon="box"
-        />
-        <StatTile
-          label="Orders to clear"
-          to={open('/orders')}
-          value={waitingOnMe.length}
-          format={(n) => num(Math.round(n))}
-          footnote={
-            waitingOnMe.length
-              ? `${rm(waitingOnMe.reduce((a, p) => a + poValue(p), 0))} of stock`
-              : 'queue clear'
-          }
-          tone="cyan"
-          icon="doc"
-        />
-        <StatTile
-          label="Staff purchases"
-          to={open('/closings')}
-          value={staffTotal.revenue}
-          format={rm}
-          footnote={`${num(staffTotal.units)} units, kept separate`}
-          tone="teal"
-          icon="users"
-        />
       </div>
 
       {waitingOnMe.length > 0 && (
@@ -209,155 +137,85 @@ export function Finance() {
         </Panel>
       )}
 
-      {/* The old sales report, with its "equal" rules, is gone (16 November: "this
-          is useless ... make it clean"): a store's day is on Stores, and any dates,
-          stores, products or countries on Analytics — both with CSV and PDF. */}
-      <Notice tone="neutral" icon="chart">
-        Sales detail is on{' '}
-        <Link to="/locations" className="text-primary hover:underline">
-          Stores
-        </Link>{' '}
-        — tap a store, then a date — and for any dates on{' '}
-        <Link to="/analytics" className="text-primary hover:underline">
-          Analytics
-        </Link>
-        . Both export CSV and PDF.
-      </Notice>
+      {/* The sales report: between two dates, the other rules folded (20 November). */}
+      <SalesReport />
 
-      <Panel>
-        <PanelHeader
-          eyebrow="Consignment"
-          title={
-            consignmentRows.period
-              ? `${monthLabel(monthKey(consignmentRows.period))} · ${rm(consignmentTotal)}`
-              : 'Consignment partners'
-          }
-          meta="These partners report once a month; their figures are keyed in on Dealer sales. Margin rates are placeholders until you confirm them."
-          action={
-            open('/partners') ? (
-              <Link to="/partners">
-                <Button size="sm" variant="ghost" iconRight="chevronRight">
-                  Key in
-                </Button>
-              </Link>
-            ) : undefined
-          }
-        />
-        <Rule />
-        <PanelBody>
-          <div className="scroll-x">
-            <table className="w-full min-w-[560px] border-collapse">
-              <thead>
-                <tr className="border-b border-line">
-                  {['Partner', 'Units', 'Revenue to us', 'Their margin', 'Status'].map((h, i) => (
-                    <th
-                      key={h}
-                      className={`pb-2 text-[10px] font-semibold uppercase tracking-wide2 text-ink-3 ${i === 0 ? 'text-left' : 'text-right'}`}
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {consignmentRows.rows.map((r) => (
-                  <tr key={r.id} className="border-b border-line/70 last:border-0">
-                    <td className="py-2.5 text-[13px] text-ink">{r.name}</td>
-                    <td className="readout py-2.5 text-right text-[13px] text-ink-2">
-                      {r.units === null ? '—' : num(r.units)}
-                    </td>
-                    <td className="readout py-2.5 text-right text-[13px] text-ink">
-                      {rm(r.revenue)}
-                    </td>
-                    <td className="readout py-2.5 text-right text-[13px] text-ink-2">
-                      {r.marginPct === null ? '—' : `${r.marginPct}%`}
-                    </td>
-                    <td className="py-2.5 text-right">
-                      {r.filed ? (
-                        <Badge tone="good" icon="check">
-                          Reported
-                        </Badge>
-                      ) : (
-                        <Badge tone="warn" icon="clock">
-                          Awaited
-                        </Badge>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr className="border-t border-line">
-                  <td className="py-2.5 text-[12.5px] font-semibold text-ink-2">Total</td>
-                  <td className="readout py-2.5 text-right text-[13px] font-semibold text-ink">
-                    {consignmentUnits === null ? '—' : num(consignmentUnits)}
-                  </td>
-                  <td className="readout py-2.5 text-right text-[13px] font-semibold text-ink">
-                    {rm(consignmentTotal)}
-                  </td>
-                  <td />
-                  <td className="py-2.5 text-right text-[11.5px] text-ink-3">
-                    {consignmentRows.rows.filter((r) => r.filed).length} of {consignmentRows.rows.length} reported
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
+      {/* ── Dealers beside consignment, a month at a time (20 November) ───── */}
+      <section className="space-y-3">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="eyebrow">Dealers &amp; consignment</p>
+            <h2 className="mt-1 font-display text-[18px] font-semibold leading-tight tracking-tight text-ink">
+              {monthLabel(month)}, a figure per partner
+            </h2>
+            <p className="mt-1 max-w-2xl text-[12.5px] text-ink-2">
+              They report once a month. Key in each partner's figure here; type 0 for one that sold nothing.
+              Margin rates are placeholders until you confirm them.
+            </p>
           </div>
-        </PanelBody>
-      </Panel>
-
-      <Panel>
-        <PanelHeader
-          eyebrow="Written off"
-          title={`${writeOffs.total} units in 30 days`}
-          meta="Testers used up, damages and free samples. Kelly and Davy approve these."
-        />
-        <Rule />
-        <PanelBody>
-          {writeOffs.total === 0 ? (
-            <EmptyState icon="check" title="Nothing written off" body="No testers, damages or samples recorded in this period." />
-          ) : (
-            <ul className="flex flex-wrap gap-3">
-              {[...writeOffs.byReason.entries()].map(([reason, qty]) => (
-                <li
-                  key={reason}
-                  className="rounded-xl border border-line bg-surface-2 px-4 py-3"
-                >
-                  <p className="eyebrow capitalize">{reason}</p>
-                  <p className="readout mt-1 font-display text-[19px] font-semibold text-ink">
-                    {num(qty)}
-                  </p>
-                </li>
+          <div className="w-[200px]">
+            <Select aria-label="Month" value={month} onChange={(e) => setMonth(e.target.value)}>
+              {months.map((m) => (
+                <option key={m} value={m}>
+                  {monthLabel(m)}
+                  {m === monthKey(data.today) ? ' (this month)' : ''}
+                </option>
               ))}
-            </ul>
-          )}
-        </PanelBody>
-      </Panel>
+            </Select>
+          </div>
+        </div>
+        {/* Remounted per month, so what is typed always belongs to the month shown. */}
+        <PartnerMonthForm key={month} month={month} quiet />
+      </section>
 
       {/* The graphs, at the foot of the page (client, 1 November). */}
       <div className="grid gap-5 lg:grid-cols-[1.5fr_1fr]">
-        <ChartFrame
-          title="Revenue"
-          meta={`${rm(kpis.current.revenue)} over 30 days`}
-          height={240}
-        >
+        <ChartFrame title="Revenue · last 30 days" meta={`${rm(thirtyDays)} over 30 days, day by day`} height={240}>
           <TrendChart data={trend} format={rmCompact} label="Daily revenue" />
         </ChartFrame>
 
         <ChartFrame
-          title="By channel"
-          meta="Main stores, dealers and consignment"
+          title={`By channel · ${monthLabel(month)}`}
+          meta={
+            <>
+              Main stores as filed{month === monthKey(data.today) ? ', today live' : ''}; dealers and consignment as keyed
+              in above. Choose the month there.
+              {unkeyed.length > 0 && (
+                <span className="text-warn">
+                  {' '}
+                  {unkeyed.map((c) => `${c.keyed!.of - c.keyed!.done} ${CHANNEL_PLURAL[c.channel].toLowerCase()}`).join(' and ')}{' '}
+                  not keyed in yet.
+                </span>
+              )}
+            </>
+          }
           height={240}
-          table={<DonutTable slices={channelSlices} format={rm} unitHeader="Revenue" />}
+          table={
+            <FiguresTable
+              rows={channels}
+              rowKey={(c) => c.channel}
+              columns={[
+                { header: 'Channel', render: (c) => CHANNEL_PLURAL[c.channel] },
+                { header: 'Revenue', align: 'right', render: (c) => rm(c.revenue), total: rm(channelTotal) },
+                { header: 'Share', align: 'right', render: (c) => `${share(c.revenue).toFixed(1)}%`, total: channelTotal ? '100.0%' : '—' },
+                {
+                  header: 'Keyed in',
+                  align: 'right',
+                  render: (c) =>
+                    c.keyed ? (
+                      <span className={c.keyed.done < c.keyed.of ? 'text-warn' : 'text-ink-2'}>
+                        {num(c.keyed.done)} of {num(c.keyed.of)}
+                      </span>
+                    ) : (
+                      <span className="text-ink-3">daily</span>
+                    ),
+                },
+              ]}
+            />
+          }
         >
           <div className="flex h-full items-center justify-center">
-            <Donut
-              slices={channelSlices}
-              centreLabel="30-day revenue"
-              centreValue={rmCompact(kpis.current.revenue)}
-              format={rm}
-              size={176}
-            />
+            <Donut slices={channelSlices} centreLabel={monthLabel(month)} centreValue={rmCompact(channelTotal)} format={rm} size={176} />
           </div>
         </ChartFrame>
       </div>
