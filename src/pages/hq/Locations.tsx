@@ -10,9 +10,11 @@ import { PAGE } from '../../components/ui/LoadMore'
 import { SalesBoxes } from '../../components/SalesBoxes'
 import { SalesCalendar } from '../../components/SalesCalendar'
 import { StoreSalesModal, datesChoice, windowChoices } from '../../components/StoreSales'
+import { OutletOrderControl } from '../../components/OutletOrderControl'
 import { useData } from '../../store/useData'
 import { useCurrentUser } from '../../store/useAuth'
 import { useViews } from '../../store/useViews'
+import { useOutletSort } from '../../store/useOutletOrder'
 import {
   emptyFilter,
   salesWindows,
@@ -23,7 +25,7 @@ import {
   type StoreSalesRow,
   type StoreTotal,
 } from '../../store/selectors'
-import { CHANNEL_PLURAL, locationById, locations, tradingLocations } from '../../data/locations'
+import { CHANNELS, CHANNEL_PLURAL, locationById, locations, tradingLocations } from '../../data/locations'
 import { formatDate, monthKey, monthLabel } from '../../lib/dates'
 import { chooseDates } from '../../lib/periods'
 import { downloadCsv } from '../../lib/exportCsv'
@@ -70,6 +72,8 @@ export function Locations() {
   const [query, setQuery] = useState('')
   /** A store opened, and the window it opens on. */
   const [opened, setOpened] = useState<{ id: string; window?: Period } | null>(null)
+  // Highest first, or the person's own order (20 November: "a drag option for all the outlets").
+  const order = useOutletSort('stores', 'value')
 
   const setView = (v: View) => {
     setViewState(v)
@@ -95,16 +99,19 @@ export function Locations() {
   }
   const rows = useMemo(
     () =>
-      allRows
-        .filter((r) => shows(r.locationId))
-        .sort((a, b) => b.monthToDate.revenue - a.monthToDate.revenue || b.lastMonth.revenue - a.lastMonth.revenue),
+      order.sort(
+        allRows
+          .filter((r) => shows(r.locationId))
+          .sort((a, b) => b.monthToDate.revenue - a.monthToDate.revenue || b.lastMonth.revenue - a.lastMonth.revenue),
+        (r) => r.locationId,
+      ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [allRows, view, query],
+    [allRows, view, query, order.mode, order.order],
   )
   const chosenRows = useMemo(
-    () => dateRows.filter((r) => shows(r.locationId)),
+    () => order.sort(dateRows.filter((r) => shows(r.locationId)), (r) => r.locationId),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [dateRows, view, query],
+    [dateRows, view, query, order.mode, order.order],
   )
 
   const coming = locations.filter((l) => l.status === 'coming')
@@ -348,6 +355,9 @@ export function Locations() {
             ) : (
               <p className="mb-1.5 text-[12px] text-ink-3">Choose dates to see only those days. Until then: today, yesterday, the month and last month.</p>
             )}
+            <div className="mb-0.5 ml-auto">
+              <OutletOrderControl sort={order} channels={view === 'all' ? CHANNELS : [view]} />
+            </div>
           </div>
 
           {dates ? (

@@ -12,6 +12,8 @@ import { Icon } from '../../components/ui/icons'
 import { PAGE, totalOf, usePaged } from '../../components/ui/LoadMore'
 import { Sparkline } from '../../components/charts/Sparkline'
 import { SalesBoxes } from '../../components/SalesBoxes'
+import { OutletOrderControl } from '../../components/OutletOrderControl'
+import { useOutletSort } from '../../store/useOutletOrder'
 import { useData } from '../../store/useData'
 import { useCan, useCurrentUser } from '../../store/useAuth'
 import { useToasts } from '../../components/ui/Toast'
@@ -53,7 +55,9 @@ export function Closings() {
     [data.today],
   )
 
-  const stores = locationsInChannel(channel).filter((l) => l.status === 'open')
+  // In the person's own order (20 November: "a drag option for all the outlets").
+  const order = useOutletSort('closings', 'mine')
+  const stores = order.sort(locationsInChannel(channel).filter((l) => l.status === 'open'), (l) => l.id)
   // Forty-four dealers make a long grid: ten at a time, the foot counting them all.
   const shown = usePaged(stores, { page: PAGE, resetOn: channel })
   const filed = (locationId: string, period: string) =>
@@ -243,6 +247,7 @@ export function Closings() {
           eyebrow="Filing grid"
           title="Who has filed"
           meta={stores.length > PAGE ? `${stores.length} stores, ${PAGE} at a time.` : undefined}
+          action={channel === 'consignment' ? undefined : <OutletOrderControl sort={order} channels={[channel]} switchable={false} />}
         />
         <Rule />
         <PanelBody>

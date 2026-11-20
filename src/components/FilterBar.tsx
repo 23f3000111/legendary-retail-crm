@@ -15,6 +15,8 @@ import { collections, products, skus, VARIANT_LABEL, type CollectionId, type Var
 import { countries } from '../data/countries'
 import { formatDate } from '../lib/dates'
 import { activeRange, chooseDates, rangeDates, RANGES, type RangeKey } from '../lib/periods'
+import { inOutletOrder } from '../lib/outletOrder'
+import { useOutletSort } from '../store/useOutletOrder'
 import {
   activeFilterCount,
   isDimensionless,
@@ -108,8 +110,10 @@ export function FilterBar({
       countryCodes: [],
     })
 
-  const mainStores = locations.filter((l) => l.channel === 'main')
-  const consignment = locations.filter((l) => l.channel === 'consignment')
+  // The chips in the person's own order, where they have arranged one.
+  const { order } = useOutletSort('filter', 'mine')
+  const mainStores = inOutletOrder(locations.filter((l) => l.channel === 'main'), (l) => l.id, order)
+  const consignment = inOutletOrder(locations.filter((l) => l.channel === 'consignment'), (l) => l.id, order)
 
   return (
     <section className="panel">

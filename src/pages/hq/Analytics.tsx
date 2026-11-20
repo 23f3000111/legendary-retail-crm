@@ -11,6 +11,7 @@ import { useToasts } from '../../components/ui/Toast'
 import { FilterBar, filterInWords } from '../../components/FilterBar'
 import { CountryDetailModal } from '../../components/CountryDetail'
 import { StoreSalesModal, datesChoice } from '../../components/StoreSales'
+import { OutletOrderControl } from '../../components/OutletOrderControl'
 import { ChartFrame } from '../../components/charts/ChartFrame'
 import { TrendChart } from '../../components/charts/TrendChart'
 import { Donut, DonutTable, type DonutSlice } from '../../components/charts/Donut'
@@ -19,6 +20,7 @@ import { SkuBars } from '../../components/charts/SkuBars'
 import { HeatCalendar } from '../../components/charts/HeatCalendar'
 import { useData } from '../../store/useData'
 import { useViews } from '../../store/useViews'
+import { useOutletSort } from '../../store/useOutletOrder'
 import { restoreFilter } from '../../lib/views'
 import {
   activeFilterCount,
@@ -36,7 +38,7 @@ import {
   type Filter,
   type Metric,
 } from '../../store/selectors'
-import { CHANNEL_PLURAL, locationById } from '../../data/locations'
+import { CHANNELS, CHANNEL_PLURAL, locationById } from '../../data/locations'
 import { countryByCode } from '../../data/countries'
 import { addDays, formatDate } from '../../lib/dates'
 import { buildDetailReport, detailCsvBlocks, detailFilename, detailPrintSpec } from '../../lib/detailReport'
@@ -64,6 +66,28 @@ import { num, rm, rmCompact } from '../../lib/format'
  * store opens in a pop-up first — its figures for these dates, what is behind
  * them — with **Open full detail** for its page.
  */
+/** One line of what would otherwise be a section of one; a country or a store opens. */
+function Single({ label, value, note, onOpen }: { label: string; value: React.ReactNode; note: string; onOpen?: () => void }) {
+  const body = (
+    <>
+      <p className="eyebrow">{label}</p>
+      <p className="mt-1 flex items-center gap-1 text-[14px] font-medium leading-tight text-ink">
+        {value}
+        {onOpen && <Icon name="chevronRight" className="h-3.5 w-3.5 shrink-0 text-ink-3" />}
+      </p>
+      <p className="mt-1 text-[11.5px] leading-snug text-ink-3">{note}</p>
+    </>
+  )
+  const box = 'rounded-xl border border-line bg-surface px-4 py-3 shadow-glass'
+  return onOpen ? (
+    <button type="button" onClick={onOpen} className={`${box} text-left transition-colors hover:border-primary/45`}>
+      {body}
+    </button>
+  ) : (
+    <div className={box}>{body}</div>
+  )
+}
+
 export function Analytics() {
   const data = useData()
   const push = useToasts((s) => s.push)
@@ -108,13 +132,16 @@ export function Analytics() {
     value: metric === 'revenue' ? c.revenue : c.units,
   }))
 
-  // Every store in view, ranked by the measure, ten at a time; the total counts them all.
+  // Every store in view, ranked by the measure or in the person's own order,
+  // ten at a time; the total counts them all.
+  const order = useOutletSort('analytics-stores', 'value')
   const ranked = useMemo(
-    () => [...stores].sort((a, b) => value(b) - value(a) || b.revenue - a.revenue),
+    () => order.sort([...stores].sort((a, b) => value(b) - value(a) || b.revenue - a.revenue), (r) => r.locationId),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [stores, metric],
+    [stores, metric, order.mode, order.order],
   )
-  const storePage = usePaged(ranked, { page: PAGE, resetOn: JSON.stringify([filter, metric]) })
+  const storePage = usePaged(ranked, { page: PAGE, resetOn: JSON.stringify([filter, metric, order.mode]) })
+  const storeChannels = CHANNELS.filter((c) => stores.some((s) => locationById(s.locationId)?.channel === c))
   const sum = (k: 'revenue' | 'units' | 'customers') => stores.reduce((a, s) => a + s[k], 0)
 
   // The chart draws the best twelve by the measure; the table keeps the range's order.
@@ -139,6 +166,15 @@ export function Analytics() {
   }
 
   const delta = totals.previous ? ((totals.revenue - totals.previous) / totals.previous) * 100 : null
+
+  // A section with one line is no section (20 November: "Revenue by channel in
+  // analytics page has only one Main stores detail so we do not need an entire
+  // section for this"): its line goes under the boxes instead.
+  const oneChannel = channels.length === 1 ? channels[0] : null
+  const oneCountry = countries.length === 1 ? countries[0] : null
+  const oneProduct = skus.length === 1 ? skus[0] : null
+  const singleStore = stores.length === 1 ? stores[0] : null
+  const singles = [oneChannel, oneCountry, oneProduct, singleStore].filter(Boolean).length
 
   return (
     <div className="space-y-5">
@@ -201,6 +237,47 @@ export function Analytics() {
         />
       </div>
 
+      {/* The single lines, where a whole section would hold only one. */}
+      {!empty && singles > 0 && (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {oneChannel && (
+            <Single
+              label="Channel"
+              value={`${CHANNEL_PLURAL[oneChannel.channel]} only`}
+              note={`${format(value(oneChannel))}, all of it. A dealer's or consignment partner's month counts when its 1st is in the dates.`}
+            />
+          )}
+          {oneCountry && (
+            <Single
+              label="Country"
+              value={
+                <span className="inline-flex items-center gap-2">
+                  <Flag code={oneCountry.countryCode} size={16} fallback={oneCountry.flag} />
+                  {oneCountry.name}
+                </span>
+              }
+              note={`${num(oneCountry.customers)} ${oneCountry.customers === 1 ? 'customer' : 'customers'} · ${num(oneCountry.units)} units · ${rm(oneCountry.revenue)}`}
+              onOpen={() => setCountry(oneCountry.countryCode)}
+            />
+          )}
+          {oneProduct && (
+            <Single
+              label="Product"
+              value={oneProduct.label}
+              note={`${num(oneProduct.units)} units · ${rm(oneProduct.revenue)}`}
+            />
+          )}
+          {singleStore && (
+            <Single
+              label="Store"
+              value={locationById(singleStore.locationId)?.shortName ?? singleStore.locationId}
+              note={`${rm(singleStore.revenue)} · ${num(singleStore.customers)} ${singleStore.customers === 1 ? 'customer' : 'customers'}`}
+              onOpen={() => setStore({ id: singleStore.locationId })}
+            />
+          )}
+        </div>
+      )}
+
       {empty ? (
         <Panel>
           <EmptyState
@@ -236,7 +313,8 @@ export function Analytics() {
             </Panel>
           )}
 
-          <div className="grid gap-5 lg:grid-cols-2">
+          <div className={`grid gap-5 ${!oneCountry && !oneChannel ? 'lg:grid-cols-2' : ''}`}>
+            {!oneCountry && (
             <ChartFrame
               title="Which countries bought"
               meta={`${num(countries.reduce((a, c) => a + c.customers, 0))} customers with a country recorded, ${period}. Every country, ${PAGE} at a time. Tap one to open it.`}
@@ -275,7 +353,9 @@ export function Analytics() {
                 </div>
               </div>
             </ChartFrame>
+            )}
 
+            {!oneChannel && (
             <ChartFrame
               title={`${METRIC_LABEL[metric]} by channel`}
               meta={period}
@@ -292,9 +372,11 @@ export function Analytics() {
                 />
               </div>
             </ChartFrame>
+            )}
           </div>
 
           {/* ── Every product: its total for the dates, in the range's order ── */}
+          {!oneProduct && (
           <ChartFrame
             title="Products"
             meta={`Every product sold, ${period}: its units and sales for the whole period, in the range's order, ${PAGE} at a time. The chart ranks the best twelve.`}
@@ -324,12 +406,15 @@ export function Analytics() {
           >
             <SkuBars rows={bars} metric={metric} />
           </ChartFrame>
+          )}
 
           {/* ── Every store: its total for the dates ─────────────────────── */}
+          {!singleStore && (
           <Panel>
             <PanelHeader
               eyebrow="By store"
-              title={`Ranked by ${METRIC_LABEL[metric].toLowerCase()}, ${period}`}
+              title={order.mode === 'mine' ? `In your order, ${period}` : `Ranked by ${METRIC_LABEL[metric].toLowerCase()}, ${period}`}
+              action={<OutletOrderControl sort={order} channels={storeChannels} />}
               meta={`${stores.length} stores in view, ${PAGE} at a time: each one's total for the period, and against the same number of days before. Tap a store to see what is behind its figures for these dates; Open full detail there goes to its page.`}
             />
             <Rule />
@@ -412,6 +497,7 @@ export function Analytics() {
               {storePage.more}
             </PanelBody>
           </Panel>
+          )}
 
           {/* ── The graphs, at the foot of the page ──────────────────────── */}
           <ChartFrame

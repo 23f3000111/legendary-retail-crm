@@ -12,6 +12,8 @@ import { SalesBoxes } from '../../components/SalesBoxes'
 import { SalesCalendar } from '../../components/SalesCalendar'
 import { CountryDetailModal } from '../../components/CountryDetail'
 import { StoreSalesModal, datesChoice, monthChoice, windowChoices, type StorePeriodChoice } from '../../components/StoreSales'
+import { OutletOrderControl } from '../../components/OutletOrderControl'
+import { useOutletSort, type OutletSort } from '../../store/useOutletOrder'
 import { ChartFrame } from '../../components/charts/ChartFrame'
 import { Donut, DonutTable, type DonutSlice } from '../../components/charts/Donut'
 import { OriginRibbon, OriginTable } from '../../components/charts/OriginRibbon'
@@ -37,7 +39,7 @@ import {
   selectToday,
   type PartnerChannel,
 } from '../../store/selectors'
-import { locationById, MORNING_WATCHLIST, tradingLocations } from '../../data/locations'
+import { CHANNELS, locationById, MORNING_WATCHLIST, tradingLocations } from '../../data/locations'
 import { isOpen, STATUS_LABEL, STATUS_OWNER } from '../../lib/po-machine'
 import { addDays, formatDate, monthKey, monthLabel, relativeDay, shiftMonth, startOfMonth } from '../../lib/dates'
 import { num, rm, rmCompact } from '../../lib/format'
@@ -108,6 +110,8 @@ export function Overview() {
     countryCodes?: string[]
   } | null>(null)
   const openStore = (id: string, initial: string) => setOpened({ id, periods: windowChoices(data.today), initial })
+  /** Who is selling: highest first, or the person's own order (20 November). */
+  const order = useOutletSort('overview-selling', 'value')
   const openPartner = (id: string, month: string) => setOpened({ id, periods: [monthChoice(month, data.today)] })
 
   const mix = useMemo(() => selectOriginMix(data, filter), [data, filter])
@@ -313,11 +317,14 @@ export function Overview() {
             title="Who is selling"
             meta="Main stores today, live. Consignment and dealers by their latest month, as far as it has been keyed in — they report monthly."
             action={
-              <Link to="/locations">
-                <Button size="sm" variant="ghost" iconRight="chevronRight">
-                  All {tradingLocations.length} stores
-                </Button>
-              </Link>
+              <div className="flex flex-wrap items-center justify-end gap-1.5">
+                <OutletOrderControl sort={order} channels={CHANNELS} />
+                <Link to="/locations">
+                  <Button size="sm" variant="ghost" iconRight="chevronRight">
+                    All {tradingLocations.length} stores
+                  </Button>
+                </Link>
+              </div>
             }
           />
           <Rule />
@@ -326,6 +333,7 @@ export function Overview() {
               title="Main stores · today so far"
               // Every main store at once (16 November: "All my stores").
               all
+              order={order}
               onOpen={(id) => openStore(id, 'today')}
               rows={tradingLocations
                 .filter((l) => l.channel === 'main')
@@ -352,8 +360,8 @@ export function Overview() {
                   }
                 })}
             />
-            <PartnerRanking data={data} channel="consignment" canKey={Boolean(open('/partners'))} onOpen={openPartner} />
-            <PartnerRanking data={data} channel="dealer" canKey={Boolean(open('/partners'))} onOpen={openPartner} />
+            <PartnerRanking data={data} channel="consignment" canKey={Boolean(open('/partners'))} onOpen={openPartner} order={order} />
+            <PartnerRanking data={data} channel="dealer" canKey={Boolean(open('/partners'))} onOpen={openPartner} order={order} />
           </PanelBody>
         </Panel>
       ) : (
@@ -634,11 +642,13 @@ function PartnerRanking({
   channel,
   canKey,
   onOpen,
+  order,
 }: {
   data: CrmData
   channel: PartnerChannel
   canKey: boolean
   onOpen: (id: string, month: string) => void
+  order: OutletSort
 }) {
   const month = latestPartnerMonth(data, channel)
   const label = channel === 'dealer' ? 'Dealers' : 'Consignment'
@@ -663,6 +673,7 @@ function PartnerRanking({
     <Ranking
       title={`${label} · ${monthLabel(month)}${keyedIn.length < total ? ` · ${keyedIn.length} of ${total} keyed in` : ''}`}
       onOpen={(id) => onOpen(id, month)}
+      order={order}
       rows={keyedIn.map((r) => ({
         locationId: r.locationId,
         name: r.shortName,
@@ -680,10 +691,13 @@ function Ranking({
   rows,
   all = false,
   onOpen,
+  order,
 }: {
   title: string
   all?: boolean
   onOpen: (id: string) => void
+  /** Highest first, or the person's own order. */
+  order: OutletSort
   rows: {
     locationId: string
     name: string
@@ -696,7 +710,10 @@ function Ranking({
     tiebreak?: number
   }[]
 }) {
-  const ranked = [...rows].sort((a, b) => b.revenue - a.revenue || (b.tiebreak ?? 0) - (a.tiebreak ?? 0))
+  const ranked = order.sort(
+    [...rows].sort((a, b) => b.revenue - a.revenue || (b.tiebreak ?? 0) - (a.tiebreak ?? 0)),
+    (r) => r.locationId,
+  )
   const { visible, more } = usePaged(ranked, { page: all ? undefined : PAGE })
   return (
     <div>

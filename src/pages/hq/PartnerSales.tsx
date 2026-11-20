@@ -5,6 +5,8 @@ import { Badge } from '../../components/ui/Badge'
 import { NumberInput, Select } from '../../components/ui/Field'
 import { Icon } from '../../components/ui/icons'
 import { PAGE, usePaged } from '../../components/ui/LoadMore'
+import { OutletOrderControl } from '../../components/OutletOrderControl'
+import { useOutletSort } from '../../store/useOutletOrder'
 import { useData, PARTNER_KEYERS } from '../../store/useData'
 import { useCurrentUser } from '../../store/useAuth'
 import { useToasts } from '../../components/ui/Toast'
@@ -204,7 +206,9 @@ function ChannelPanel({
   changed: (id: string) => boolean
   invalid: (id: string) => boolean
 }) {
-  const partners = partnersIn(channel)
+  // In the person's own order (20 November), which stays put while figures are typed.
+  const order = useOutletSort(`keying-${channel}`, 'mine')
+  const partners = order.sort(partnersIn(channel), (l) => l.id)
   // Ten at a time; Show all brings every box up at once for keying in a month.
   const { visible, more } = usePaged(partners, { page: PAGE })
   const rows = new Map(selectPartnerMonth(data, channel, month).map((r) => [r.locationId, r]))
@@ -220,13 +224,16 @@ function ChannelPanel({
         title={`${done} of ${partners.length} keyed in`}
         meta={`${rm(total)} so far.${complete ? ' This is the month the overview shows.' : ''}`}
         action={
-          done === partners.length ? (
-            <Badge tone="good" icon="check">
-              Complete
-            </Badge>
-          ) : (
-            <Badge tone="warn">{partners.length - done} to go</Badge>
-          )
+          <div className="flex flex-wrap items-center justify-end gap-1.5">
+            {done === partners.length ? (
+              <Badge tone="good" icon="check">
+                Complete
+              </Badge>
+            ) : (
+              <Badge tone="warn">{partners.length - done} to go</Badge>
+            )}
+            <OutletOrderControl sort={order} channels={[channel]} switchable={false} />
+          </div>
         }
       />
       <Rule />
