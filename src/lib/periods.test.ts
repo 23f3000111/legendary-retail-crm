@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activeRange, chooseDates, rangeDates } from './periods'
+import { activeRange, chooseDates, monthDates, rangeDates } from './periods'
 
 /**
  * The meeting of 16 November, on Analytics: "when I want to go analytics I'm
@@ -31,5 +31,18 @@ describe('the periods', () => {
     expect(chooseDates('2026-12-01', '2026-12-25', today)).toEqual({ from: today, to: today })
     // A box cleared while typing keeps the other end.
     expect(chooseDates('', '2026-11-07', today)).toEqual({ from: '2026-11-07', to: '2026-11-07' })
+  })
+})
+
+// 16 November: "they can export the specific months or specific date and then
+// with all the detail" — a store's month, from its calendar.
+describe('a month to export', () => {
+  it('runs from the 1st to the month’s end', () => {
+    expect(monthDates('2026-10', today)).toEqual({ from: '2026-10-01', to: '2026-10-31' })
+    expect(monthDates('2026-02', today)).toEqual({ from: '2026-02-01', to: '2026-02-28' })
+  })
+
+  it('stops at today in the month still running', () => {
+    expect(monthDates('2026-11', today)).toEqual({ from: '2026-11-01', to: today })
   })
 })

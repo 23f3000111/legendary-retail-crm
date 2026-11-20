@@ -182,7 +182,9 @@ export function Locations() {
           meta={
             view === 'consignment' || view === 'dealer'
               ? 'Dealers and consignment partners report a month at a time, on Dealer sales: last month is their figure, and the days show a dash.'
-              : `Today is live; yesterday and the month are as filed. ${PAGE} at a time; tap a store to open it.`
+              : view === 'main'
+                ? 'Today is live; yesterday and the month are as filed. Every main store at once; tap a store to open it.'
+                : `Today is live; yesterday and the month are as filed. ${PAGE} at a time; tap a store to open it.`
           }
           action={
             <div className="flex flex-wrap items-center gap-2">
@@ -213,7 +215,9 @@ export function Locations() {
               rows={rows}
               rowKey={(r) => r.locationId}
               onRowClick={(r) => navigate(`/stores/${r.locationId}`)}
-              page={PAGE}
+              // The main stores all at once (16 November: "I just want to see the
+              // main store. All my stores"); the forty-odd dealers ten at a time.
+              page={view === 'main' ? undefined : PAGE}
               pageKey={`${view}|${query}`}
               columns={[
                 {

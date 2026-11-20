@@ -7,7 +7,7 @@ import { StatTile } from '../../components/ui/StatTile'
 import { EmptyState } from '../../components/ui/DataTable'
 import { Icon } from '../../components/ui/icons'
 import { ChartFrame } from '../../components/charts/ChartFrame'
-import { SalesReport } from '../../components/SalesReport'
+import { Notice } from '../../components/ui/Notice'
 import { TrendChart } from '../../components/charts/TrendChart'
 import { Donut, DonutTable, type DonutSlice } from '../../components/charts/Donut'
 import { useData } from '../../store/useData'
@@ -209,7 +209,20 @@ export function Finance() {
         </Panel>
       )}
 
-      <SalesReport />
+      {/* The old sales report, with its "equal" rules, is gone (16 November: "this
+          is useless ... make it clean"): a store's day is on Stores, and any dates,
+          stores, products or countries on Analytics — both with CSV and PDF. */}
+      <Notice tone="neutral" icon="chart">
+        Sales detail is on{' '}
+        <Link to="/locations" className="text-primary hover:underline">
+          Stores
+        </Link>{' '}
+        — tap a store, then a date — and for any dates on{' '}
+        <Link to="/analytics" className="text-primary hover:underline">
+          Analytics
+        </Link>
+        . Both export CSV and PDF.
+      </Notice>
 
       <Panel>
         <PanelHeader

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { Panel, PanelBody, PanelHeader, Rule } from '../../components/ui/Panel'
 import { Icon } from '../../components/ui/icons'
 import { Button } from '../../components/ui/Button'
@@ -58,7 +58,6 @@ import { num, rm, rmCompact } from '../../lib/format'
  * Figures first, graphs at the foot (client, 1 November).
  */
 export function Analytics() {
-  const navigate = useNavigate()
   const data = useData()
   const push = useToasts((s) => s.push)
   const [filter, setFilter] = useState<Filter>(() => emptyFilter(addDays(data.today, -29), data.today))
@@ -317,7 +316,7 @@ export function Analytics() {
             <PanelHeader
               eyebrow="By store"
               title={`Ranked by ${METRIC_LABEL[metric].toLowerCase()}, ${period}`}
-              meta={`${stores.length} stores in view, ${PAGE} at a time: each one's total for the period, and against the same number of days before. Tap any row to open that store.`}
+              meta={`${stores.length} stores in view, ${PAGE} at a time: each one's total for the period, and against the same number of days before. Tap a store to see these dates for it alone — its products, its customers; the arrow opens its own page.`}
             />
             <Rule />
             <PanelBody>
@@ -326,7 +325,7 @@ export function Analytics() {
                 <table className="w-full border-collapse sm:min-w-[640px]">
                   <thead>
                     <tr className="border-b border-line">
-                      {['', 'Store', 'Channel', 'Customers', METRIC_LABEL[metric], 'vs before'].map((h, i) => (
+                      {['', 'Store', 'Channel', 'Customers', METRIC_LABEL[metric], 'vs before', ''].map((h, i) => (
                         <th
                           key={h || i}
                           className={`pb-2 text-[10px] font-semibold uppercase tracking-wide2 text-ink-3 ${i >= 3 ? 'text-right' : 'text-left'} ${
@@ -346,23 +345,22 @@ export function Analytics() {
                       return (
                         <tr
                           key={r.locationId}
-                          onClick={() => navigate(`/stores/${r.locationId}`)}
-                          className="cursor-pointer border-b border-line/70 transition-colors last:border-0 hover:bg-sunken"
+                          // 16 November: opening a store from here "then I lost my filter
+                          // function". A tap keeps the dates and the rules and narrows the
+                          // page to that store instead.
+                          onClick={() => {
+                            setFilter((f) => ({ ...f, locationIds: [r.locationId] }))
+                            window.scrollTo({ top: 0, behavior: 'smooth' })
+                          }}
+                          title={`See ${period} for ${l?.shortName ?? r.locationId} alone`}
+                          className="group cursor-pointer border-b border-line/70 transition-colors last:border-0 hover:bg-sunken"
                         >
                           <td className="w-8 py-2.5">
                             <span className="readout text-[11px] text-ink-3">{i + 1}</span>
                           </td>
                           <td className="py-2.5">
-                            <Link to={`/stores/${r.locationId}`} className="group block" onClick={(e) => e.stopPropagation()}>
-                              <p className="flex items-center gap-1 text-[13px] leading-tight text-ink group-hover:text-primary">
-                                {l?.shortName ?? r.locationId}
-                                <Icon
-                                  name="chevronRight"
-                                  className="h-3 w-3 text-ink-3 transition-transform group-hover:translate-x-0.5 group-hover:text-primary"
-                                />
-                              </p>
-                              <p className="text-[11px] text-ink-3">{l?.region}</p>
-                            </Link>
+                            <p className="text-[13px] leading-tight text-ink group-hover:text-primary">{l?.shortName ?? r.locationId}</p>
+                            <p className="text-[11px] text-ink-3">{l?.region}</p>
                           </td>
                           <td className="hidden py-2.5 text-[12px] text-ink-2 sm:table-cell">{l ? CHANNEL_PLURAL[l.channel] : ''}</td>
                           <td className="readout hidden py-2.5 pl-3 text-right text-[12.5px] text-ink-2 sm:table-cell">{num(r.customers)}</td>
@@ -376,6 +374,17 @@ export function Analytics() {
                                 {Math.abs(change).toFixed(1)}%
                               </span>
                             )}
+                          </td>
+                          <td className="w-9 py-2.5 pl-2 text-right">
+                            <Link
+                              to={`/stores/${r.locationId}`}
+                              onClick={(e) => e.stopPropagation()}
+                              aria-label={`Open ${l?.shortName ?? r.locationId}'s own page`}
+                              title={`Open ${l?.shortName ?? r.locationId}'s own page`}
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-ink-3 transition-colors hover:bg-primary/10 hover:text-primary"
+                            >
+                              <Icon name="chevronRight" className="h-3.5 w-3.5" />
+                            </Link>
                           </td>
                         </tr>
                       )
@@ -392,6 +401,7 @@ export function Analytics() {
                       <td className="readout whitespace-nowrap py-2.5 pl-3 text-right text-[13px] font-semibold text-ink">
                         {format(metric === 'revenue' ? sum('revenue') : sum('units'))}
                       </td>
+                      <td />
                       <td />
                     </tr>
                   </tfoot>

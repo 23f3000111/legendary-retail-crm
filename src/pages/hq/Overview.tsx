@@ -245,7 +245,7 @@ export function Overview() {
             meta={`${formatDate(startOfMonth(data.today))} to today, with today's sales as they stand. Tap a store to open it.`}
             height={230}
             grow
-            table={<DonutTable slices={mainMtd} format={rm} unitHeader="Revenue" href={storePage} page={PAGE} />}
+            table={<DonutTable slices={mainMtd} format={rm} unitHeader="Revenue" href={storePage} />}
           >
             <div className="flex h-full items-center justify-center">
               <Donut
@@ -311,6 +311,8 @@ export function Overview() {
           <PanelBody className="space-y-6">
             <Ranking
               title="Main stores · today so far"
+              // Every main store at once (16 November: "All my stores").
+              all
               rows={tradingLocations
                 .filter((l) => l.channel === 'main')
                 .map((l) => {
@@ -631,12 +633,14 @@ function PartnerRanking({ data, channel, canKey }: { data: CrmData; channel: Par
   )
 }
 
-/** A league: rank, name, figure, ten at a time. Each card opens the outlet. */
+/** A league: rank, name, figure, ten at a time unless `all`. Each card opens the outlet. */
 function Ranking({
   title,
   rows,
+  all = false,
 }: {
   title: string
+  all?: boolean
   rows: {
     locationId: string
     name: string
@@ -650,7 +654,7 @@ function Ranking({
   }[]
 }) {
   const ranked = [...rows].sort((a, b) => b.revenue - a.revenue || (b.tiebreak ?? 0) - (a.tiebreak ?? 0))
-  const { visible, more } = usePaged(ranked, { page: PAGE })
+  const { visible, more } = usePaged(ranked, { page: all ? undefined : PAGE })
   return (
     <div>
       <p className="eyebrow mb-2">{title}</p>

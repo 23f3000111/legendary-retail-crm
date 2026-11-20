@@ -45,6 +45,7 @@ import {
 import { DateSpanInput } from '../../components/DateSpanInput'
 import { SalesBoxes } from '../../components/SalesBoxes'
 import { SalesCalendar } from '../../components/SalesCalendar'
+import { MonthExport } from '../../components/MonthExport'
 import { CountryDetailModal } from '../../components/CountryDetail'
 import { rm } from '../../lib/format'
 
@@ -297,7 +298,13 @@ export function StoreDetail() {
       ) : (
         <>
           {/* ── The calendar chooses the day (Revision 10) ──────────────── */}
-          <SalesCalendar key={id} locationId={id} selected={day} onSelect={(d) => setPicked({ id, day: d })} />
+          <SalesCalendar
+            key={id}
+            locationId={id}
+            selected={day}
+            onSelect={(d) => setPicked({ id, day: d })}
+            monthActions={(month) => <MonthExport locationId={id} month={month} />}
+          />
 
           {/* ── That day alone: stock, payment, customers ───────────────── */}
           <StoreDay locationId={id} day={day} />

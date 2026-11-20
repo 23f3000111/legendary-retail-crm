@@ -45,3 +45,13 @@ export const chooseDates = (from: DateStr, to: DateStr, today: DateStr): { from:
   if (a > today) a = today
   return { from: a, to: b }
 }
+
+/**
+ * A month's days for its export, from a store's calendar (16 November: "they
+ * can export the specific months or specific date and then with all the
+ * detail"): the 1st to the month's end, or to today in the month still running.
+ */
+export const monthDates = (month: string, today: DateStr): { from: DateStr; to: DateStr } => {
+  const end = addDays(`${shiftMonth(month, 1)}-01`, -1)
+  return { from: `${month}-01`, to: end < today ? end : today }
+}

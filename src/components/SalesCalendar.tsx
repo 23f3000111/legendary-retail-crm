@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { Panel, PanelBody, PanelHeader, Rule } from './ui/Panel'
 import { Badge } from './ui/Badge'
@@ -35,10 +35,13 @@ export function SalesCalendar({
   locationId,
   selected,
   onSelect,
+  monthActions,
 }: {
   locationId?: string
   selected?: string
   onSelect?: (day: string) => void
+  /** More in the header, for the month on show: a store's month export. */
+  monthActions?: (month: string) => ReactNode
 }) {
   const data = useData()
   const thisMonth = monthKey(data.today)
@@ -74,7 +77,8 @@ export function SalesCalendar({
               }, and where the customers came from.`
         }
         action={
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center justify-end gap-1">
+            {monthActions?.(month)}
             <IconButton
               name="chevronLeft"
               label="The month before"
