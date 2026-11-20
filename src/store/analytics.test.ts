@@ -4,7 +4,9 @@ import {
   foldOrigins,
   partnersIn,
   selectChannelMonth,
+  selectChannelPeriod,
   selectChannelTotals,
+  selectPartnerPeriod,
   selectCountryTotals,
   selectDailySales,
   selectDailySeries,
@@ -170,5 +172,60 @@ describe('a month by channel', () => {
       ['dealer', 0, 0],
       ['consignment', 0, 0],
     ])
+  })
+
+  // 20 November, later: Revenue's sections choose their own From and To.
+  it('takes in every partner month whose 1st falls in the dates chosen', () => {
+    const rows = selectChannelPeriod(d, '2026-10-01', today)
+    expect(rows.map((r) => [r.channel, r.revenue])).toEqual([
+      // 31 Oct's five, and the eight days of November with today's one live.
+      ['main', 18 * 188],
+      ['dealer', 1000],
+      ['consignment', 1200],
+    ])
+    expect(rows[2].keyed).toEqual({ done: 2, of: consignment.length })
+    // The 2nd of October to the 31st holds no month's 1st.
+    expect(selectChannelPeriod(d, '2026-10-02', '2026-10-31').map((r) => r.revenue)).toEqual([5 * 188, 0, 0])
+  })
+})
+
+// 20 November, later: "put calendars to select start date and end date ... for
+// both Dealers and Consignment separately and for dealers, there should be a
+// sorting like top most is highest value".
+describe('the partners, for the dates chosen', () => {
+  const dealers = partnersIn('dealer')
+  const keyed = (locationId: string, month: string, revenueMYR: number) => ({
+    locationId,
+    month,
+    revenueMYR,
+    enteredBy: 'Kelly Tew',
+    enteredAt: `${month}-28T03:00:00Z`,
+  })
+  const d: CrmData = {
+    ...data,
+    partnerSales: [
+      keyed(dealers[1].id, '2026-09', 1000),
+      keyed(dealers[1].id, '2026-10', 2000),
+      keyed(dealers[2].id, '2026-10', 500),
+      keyed(dealers[0].id, '2026-11', 9000),
+    ],
+  }
+
+  it('adds up each one’s months whose 1st is in the dates, highest first', () => {
+    const p = selectPartnerPeriod(d, 'dealer', '2026-09-01', '2026-10-31')
+    expect(p.months).toEqual(['2026-09', '2026-10'])
+    expect(p.rows.slice(0, 2).map((r) => [r.locationId, r.revenue, r.months.length])).toEqual([
+      [dealers[1].id, 3000, 2],
+      [dealers[2].id, 500, 1],
+    ])
+    expect(p).toMatchObject({ total: 3500, withFigure: 2 })
+    // Every dealer is listed; those with nothing come last, at nothing.
+    expect(p.rows).toHaveLength(dealers.length)
+    expect(p.rows[2].revenue).toBe(0)
+  })
+
+  it('holds no month for dates without a 1st in them', () => {
+    const p = selectPartnerPeriod(d, 'dealer', '2026-10-02', '2026-10-31')
+    expect(p).toMatchObject({ months: [], total: 0, withFigure: 0 })
   })
 })

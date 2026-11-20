@@ -1637,22 +1637,83 @@ export interface ChannelMonth {
   keyed?: { done: number; of: number }
 }
 
-export const selectChannelMonth = (data: CrmData, month: string): ChannelMonth[] => {
-  const from = `${month}-01`
-  const end = addDays(`${shiftMonth(month, 1)}-01`, -1)
-  const totals = new Map(
-    from <= data.today
-      ? selectChannelTotals(data, emptyFilter(from, end < data.today ? end : data.today)).map((c) => [c.channel, c])
-      : [],
-  )
+export const selectChannelMonth = (data: CrmData, month: string): ChannelMonth[] =>
+  selectChannelPeriod(data, `${month}-01`, addDays(`${shiftMonth(month, 1)}-01`, -1))
+
+/** The months whose 1st falls from `from` to `to`, oldest first: those a partner's figures count in. */
+export const monthsStartingIn = (from: DateStr, to: DateStr): string[] => {
+  const out: string[] = []
+  for (let m = monthKey(from); m <= monthKey(to); m = shiftMonth(m, 1)) {
+    const first = `${m}-01`
+    if (first >= from && first <= to) out.push(m)
+  }
+  return out
+}
+
+/**
+ * Some dates by channel, for Revenue's By channel with its own From and To
+ * (20 November, later): the main stores' days, today live, and each partner
+ * channel's months whose 1st is in the dates, with how many partners have a
+ * figure in them. Every channel is listed, at nothing where nothing is in.
+ */
+export const selectChannelPeriod = (data: CrmData, from: DateStr, to: DateStr): ChannelMonth[] => {
+  const end = to < data.today ? to : data.today
+  const totals = new Map(from <= end ? selectChannelTotals(data, emptyFilter(from, end)).map((c) => [c.channel, c]) : [])
+  const months = monthsStartingIn(from, end)
+  const figures = partnerFigures(data)
+  const withFigure = (channel: PartnerChannel) =>
+    partnersIn(channel).filter((l) => months.some((m) => figures.has(`${l.id}::${m}`))).length
   return CHANNELS.map((channel) => ({
     channel,
     revenue: totals.get(channel)?.revenue ?? 0,
     units: totals.get(channel)?.units ?? 0,
-    ...(channel === 'main'
-      ? {}
-      : { keyed: { done: partnersKeyed(data, channel, month), of: partnersIn(channel).length } }),
+    ...(channel === 'main' ? {} : { keyed: { done: withFigure(channel), of: partnersIn(channel).length } }),
   }))
+}
+
+/** One partner over some dates: each month whose 1st is in them, with its figure. */
+export interface PartnerPeriodRow {
+  locationId: string
+  revenue: number
+  months: { month: string; revenue: number; keyed?: PartnerSales }[]
+}
+
+/**
+ * The dealers, or the consignment partners, over the dates chosen on Revenue
+ * (20 November, later: "only selected data should appear for both Dealers and
+ * Consignment separately and for dealers ... top most is highest value").
+ * Each partner's months whose 1st is in the dates, keyed in or — in the
+ * sample history — filed, added up; every partner listed, highest first, and
+ * those with nothing after them.
+ */
+export const selectPartnerPeriod = (
+  data: CrmData,
+  channel: PartnerChannel,
+  from: DateStr,
+  to: DateStr,
+): { months: string[]; rows: PartnerPeriodRow[]; total: number; withFigure: number } => {
+  const months = monthsStartingIn(from, to)
+  const figures = partnerFigures(data)
+  const sen = (n: number) => Math.round(n * 100) / 100
+  const name = (id: string) => locationById(id)?.name ?? id
+  const rows = partnersIn(channel)
+    .map((l) => {
+      const ms = months.flatMap((month) => {
+        const f = figures.get(`${l.id}::${month}`)
+        return f ? [{ month, revenue: sen(f.revenue), ...(f.keyed ? { keyed: f.keyed } : {}) }] : []
+      })
+      return { locationId: l.id, revenue: sen(ms.reduce((a, m) => a + m.revenue, 0)), months: ms }
+    })
+    .sort(
+      (a, b) =>
+        b.revenue - a.revenue || b.months.length - a.months.length || name(a.locationId).localeCompare(name(b.locationId)),
+    )
+  return {
+    months,
+    rows,
+    total: sen(rows.reduce((a, r) => a + r.revenue, 0)),
+    withFigure: rows.filter((r) => r.months.length > 0).length,
+  }
 }
 
 /** Every product sold in the period, its units and sales, in the range's order. */
