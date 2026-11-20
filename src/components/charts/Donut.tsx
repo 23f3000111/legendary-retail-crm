@@ -25,6 +25,7 @@ export function Donut({
   thickness = 26,
   format = (n: number) => num(n),
   href,
+  onSelect,
 }: {
   slices: DonutSlice[]
   total?: number
@@ -35,6 +36,8 @@ export function Donut({
   format?: (n: number) => string
   /** Where a segment's name leads, if anywhere: a store's own page. */
   href?: (key: string) => string | undefined
+  /** Or what a segment's name opens in place: a store's pop-up (20 November). */
+  onSelect?: (key: string) => void
 }) {
   const [hovered, setHovered] = useState<string | null>(null)
 
@@ -149,7 +152,12 @@ export function Donut({
               aria-hidden="true"
             />
             {/* Labels wear ink, never the series colour — the swatch carries identity. */}
-            <SegmentName label={a.label} to={a.key === 'OTHER' ? undefined : href?.(a.key)} className="flex-1 text-[12px] text-ink-2" />
+            <SegmentName
+              label={a.label}
+              to={a.key === 'OTHER' ? undefined : href?.(a.key)}
+              onSelect={a.key === 'OTHER' || !onSelect ? undefined : () => onSelect(a.key)}
+              className="flex-1 text-[12px] text-ink-2"
+            />
             <span className="readout text-[11.5px] text-ink-3">{a.share.toFixed(1)}%</span>
           </li>
         ))}
@@ -158,8 +166,26 @@ export function Donut({
   )
 }
 
-/** A segment's name: a link to its own page where it has one (client, 1 November). */
-function SegmentName({ label, to, className }: { label: string; to?: string; className: string }) {
+/** A segment's name: a link to its own page where it has one (client, 1 November), or a pop-up. */
+function SegmentName({ label, to, onSelect, className }: { label: string; to?: string; onSelect?: () => void; className: string }) {
+  if (!to && onSelect) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          onSelect()
+        }}
+        className={`group inline-flex items-center gap-1 text-left hover:text-primary ${className}`}
+      >
+        {label}
+        <Icon
+          name="chevronRight"
+          className="h-3 w-3 shrink-0 text-ink-3 transition-transform group-hover:translate-x-0.5 group-hover:text-primary"
+        />
+      </button>
+    )
+  }
   if (!to) return <span className={className}>{label}</span>
   return (
     <Link to={to} onClick={(e) => e.stopPropagation()} className={`group inline-flex items-center gap-1 hover:text-primary ${className}`}>
@@ -182,12 +208,15 @@ export function DonutTable({
   format = (n: number) => num(n),
   unitHeader = 'Value',
   href,
+  onSelect,
   page,
 }: {
   slices: DonutSlice[]
   format?: (n: number) => string
   unitHeader?: string
   href?: (key: string) => string | undefined
+  /** Or what a row opens in place: a store's pop-up (20 November). */
+  onSelect?: (key: string) => void
   page?: number
 }) {
   const navigate = useNavigate()
@@ -214,18 +243,19 @@ export function DonutTable({
         <tbody>
           {visible.map((s, i) => {
             const to = s.key === 'OTHER' ? undefined : href?.(s.key)
+            const select = s.key === 'OTHER' || to || !onSelect ? undefined : () => onSelect(s.key)
             return (
               <tr
                 key={s.key}
-                onClick={to ? () => navigate(to) : undefined}
-                className={`border-b border-line/70 last:border-0 ${to ? 'cursor-pointer transition-colors hover:bg-primary/5' : ''}`}
+                onClick={to ? () => navigate(to) : select}
+                className={`border-b border-line/70 last:border-0 ${to || select ? 'cursor-pointer transition-colors hover:bg-primary/5' : ''}`}
               >
                 <td className="py-1.5 text-[12.5px] text-ink">
                   <span
                     className="mr-2 inline-block h-2.5 w-2.5 rounded-[3px] align-middle"
                     style={{ background: s.key === 'OTHER' ? OTHER : seriesColor(i) }}
                   />
-                  <SegmentName label={s.label} to={to} className="align-middle" />
+                  <SegmentName label={s.label} to={to} onSelect={select} className="align-middle" />
                 </td>
                 <td className="readout py-1.5 text-right text-[12.5px] text-ink">{format(s.value)}</td>
                 <td className="readout py-1.5 text-right text-[12.5px] text-ink-2">

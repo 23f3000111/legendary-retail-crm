@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Panel, PanelBody, PanelHeader, Rule } from '../../components/ui/Panel'
 import { Button } from '../../components/ui/Button'
 import { Badge, StatusChip } from '../../components/ui/Badge'
@@ -86,6 +86,7 @@ const RANGES: { value: RangeKey; label: string }[] = [
 export function StoreDetail() {
   const { id = '' } = useParams()
   const navigate = useNavigate()
+  const [params] = useSearchParams()
   const data = useData()
   const user = useCurrentUser()
   // Everybody who sees the estate opens this page, but not everybody opens
@@ -110,7 +111,10 @@ export function StoreDetail() {
   const finance = user?.role === 'finance'
   const partner = location ? location.channel !== 'main' : false
   const lastFiled = selectLastFiled(data, id)
-  const day = picked?.id === id ? picked.day : (lastFiled?.period ?? data.today)
+  // A pop-up's "Open full detail" for one day opens the page on that day (20 November).
+  const asked = params.get('day')
+  const askedDay = asked && /^\d{4}-\d{2}-\d{2}$/.test(asked) && asked <= data.today ? asked : null
+  const day = picked?.id === id ? picked.day : (askedDay ?? lastFiled?.period ?? data.today)
   const partnerMonths = useMemo(() => (partner ? selectPartnerMonths(data, id) : []), [data, id, partner])
 
   const filter = useMemo(
@@ -272,7 +276,7 @@ export function StoreDetail() {
           <PanelHeader
             eyebrow="Months"
             title="Sales, month by month"
-            meta="Dealers and consignment partners report one figure a month, keyed in on Dealer sales."
+            meta="Dealers and consignment partners report one figure a month, keyed in at head office."
           />
           <Rule />
           <PanelBody>
@@ -321,7 +325,7 @@ export function StoreDetail() {
         note={
           location.channel === 'main'
             ? undefined
-            : 'A month keyed in on Dealer sales has no products behind it, so it is not in this table.'
+            : 'A month keyed in at head office has no products behind it, so it is not in this table.'
         }
         table={<SkuWindowsTable rows={skuRows} chosen={rangeHeading} pageKey={id} />}
       >

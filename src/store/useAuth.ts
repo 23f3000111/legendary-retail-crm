@@ -21,6 +21,7 @@ import type { Result } from '../api/backend'
 import { can, picksStore, storeChoicesFor, storeForSession, type Capability, type Person } from '../data/people'
 import { setSession } from '../lib/session'
 import { useData } from './useData'
+import { useViews } from './useViews'
 
 interface AuthState {
   token: string | null
@@ -100,6 +101,8 @@ export const useAuth = create<AuthState>()(
           setSession(null)
           set({ token: null, personId: null, locationId: null, pending: null })
           useData.getState().clearSession()
+          // The next person on this tab starts with the pages as they open.
+          useViews.getState().forget()
           if (token) await backend().signOut(token)
         },
 

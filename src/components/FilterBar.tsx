@@ -56,7 +56,9 @@ export const filterInWords = (filter: Filter): string[] => {
  * filter, so a change here moves everything at once rather than leaving one
  * chart disagreeing with its neighbour — the dates included: the usual
  * periods, last month, or any dates chosen, From and To (16 November: "when
- * I want to go analytics I'm supposed to choose the date here").
+ * I want to go analytics I'm supposed to choose the date here"). From and To
+ * are always there, beside the periods (20 November: "please put calendars
+ * to select start date and end date").
  *
  * The nationality row carries a warning, because only main stores record it —
  * choosing a country silently drops dealers and consignment from the answer,
@@ -79,15 +81,12 @@ export function FilterBar({
   coverage?: { capableLocations: number; totalLocations: number; partial: boolean }
 }) {
   const [expanded, setExpanded] = useState(false)
-  /** "Dates" chosen, so the two boxes show even while they hold a preset's dates. */
-  const [custom, setCustom] = useState(false)
 
   const setRange = (key: RangeKey) => {
-    if (key === 'dates') return setCustom(true)
-    setCustom(false)
-    onChange({ ...filter, ...rangeDates(key, today) })
+    if (key !== 'dates') onChange({ ...filter, ...rangeDates(key, today) })
   }
-  const range: RangeKey = custom ? 'dates' : activeRange(filter.from, filter.to, today)
+  // Dates that are no period light none of the buttons: From and To say them.
+  const range: RangeKey = activeRange(filter.from, filter.to, today)
 
   const toggle = <K extends keyof Filter>(key: K, value: string) => {
     const list = filter[key] as unknown as string[]
@@ -117,35 +116,34 @@ export function FilterBar({
       <div className="flex flex-wrap items-center gap-3 px-5 py-3.5">
         <div>
           <p className="eyebrow mb-1.5">Period</p>
-          <SegmentedControl<RangeKey> value={range} onChange={setRange} options={RANGES} />
+          <SegmentedControl<RangeKey> value={range} onChange={setRange} options={RANGES.filter((r) => r.value !== 'dates')} />
         </div>
 
-        {range === 'dates' && (
-          <div className="flex flex-wrap items-end gap-2">
-            <label className="block">
-              <span className="eyebrow mb-1.5 block">From</span>
-              <TextInput
-                type="date"
-                aria-label="From"
-                value={filter.from}
-                max={today}
-                onChange={(e) => onChange({ ...filter, ...chooseDates(e.target.value, filter.to, today) })}
-                className="h-9 w-[156px] text-[12.5px]"
-              />
-            </label>
-            <label className="block">
-              <span className="eyebrow mb-1.5 block">To</span>
-              <TextInput
-                type="date"
-                aria-label="To"
-                value={filter.to}
-                max={today}
-                onChange={(e) => onChange({ ...filter, ...chooseDates(filter.from, e.target.value, today) })}
-                className="h-9 w-[156px] text-[12.5px]"
-              />
-            </label>
-          </div>
-        )}
+        {/* The calendars, always in view (20 November). */}
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="block">
+            <span className="eyebrow mb-1.5 block">From</span>
+            <TextInput
+              type="date"
+              aria-label="From"
+              value={filter.from}
+              max={today}
+              onChange={(e) => onChange({ ...filter, ...chooseDates(e.target.value, filter.to, today) })}
+              className="h-9 w-[156px] text-[12.5px]"
+            />
+          </label>
+          <label className="block">
+            <span className="eyebrow mb-1.5 block">To</span>
+            <TextInput
+              type="date"
+              aria-label="To"
+              value={filter.to}
+              max={today}
+              onChange={(e) => onChange({ ...filter, ...chooseDates(filter.from, e.target.value, today) })}
+              className="h-9 w-[156px] text-[12.5px]"
+            />
+          </label>
+        </div>
 
         <div className="hidden h-9 w-px bg-line sm:block" />
 

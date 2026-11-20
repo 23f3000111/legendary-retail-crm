@@ -4,9 +4,11 @@ import { Panel, PanelBody, PanelHeader, Rule } from './ui/Panel'
 import { Badge } from './ui/Badge'
 import { Button, IconButton } from './ui/Button'
 import { Flag } from './ui/Flag'
+import { Icon } from './ui/icons'
 import { Modal } from './ui/Modal'
 import { FiguresTable } from './ui/FiguresTable'
 import { PAGE } from './ui/LoadMore'
+import { StoreSalesModal, datesChoice } from './StoreSales'
 import { useData } from '../store/useData'
 import { useCan } from '../store/useAuth'
 import { selectDailySales, selectDayDetail } from '../store/selectors'
@@ -47,6 +49,8 @@ export function SalesCalendar({
   const thisMonth = monthKey(data.today)
   const [month, setMonth] = useState(() => (selected ? monthKey(selected) : thisMonth))
   const [open, setOpen] = useState<string | null>(null)
+  /** A store tapped in the day's window: its pop-up, for that day (20 November). */
+  const [storeDay, setStoreDay] = useState<{ id: string; day: string } | null>(null)
 
   const days = useMemo(() => selectDailySales(data, month, locationId), [data, month, locationId])
   const earliest = useMemo(
@@ -155,7 +159,24 @@ export function SalesCalendar({
           })}
         </div>
       </PanelBody>
-      {open && <DayDetailModal day={open} locationId={locationId} onClose={() => setOpen(null)} />}
+      {open && (
+        <DayDetailModal
+          day={open}
+          locationId={locationId}
+          onClose={() => setOpen(null)}
+          onStore={(id) => {
+            setOpen(null)
+            setStoreDay({ id, day: open })
+          }}
+        />
+      )}
+      {storeDay && (
+        <StoreSalesModal
+          locationId={storeDay.id}
+          periods={[datesChoice(storeDay.day, storeDay.day)]}
+          onClose={() => setStoreDay(null)}
+        />
+      )}
     </Panel>
   )
 }
@@ -165,7 +186,18 @@ export function SalesCalendar({
  * store, how much sales, how many SKU sold, which country buyer" — and, for
  * one store, every product it sold and which countries bought it.
  */
-export function DayDetailModal({ day, locationId, onClose }: { day: string; locationId?: string; onClose: () => void }) {
+export function DayDetailModal({
+  day,
+  locationId,
+  onClose,
+  onStore,
+}: {
+  day: string
+  locationId?: string
+  onClose: () => void
+  /** A store tapped: its own pop-up for the day, in place of this one. */
+  onStore?: (locationId: string) => void
+}) {
   const data = useData()
   const capability = useCan()
   const d = useMemo(() => selectDayDetail(data, day, locationId), [data, day, locationId])
@@ -208,9 +240,20 @@ export function DayDetailModal({ day, locationId, onClose }: { day: string; loca
                   header: 'Store',
                   render: (s) => (
                     <span className="flex items-center gap-2">
-                      <Link to={`/stores/${s.locationId}`} className="hover:text-primary hover:underline">
-                        {locationById(s.locationId)?.shortName ?? s.locationId}
-                      </Link>
+                      {onStore ? (
+                        <button
+                          type="button"
+                          onClick={() => onStore(s.locationId)}
+                          className="inline-flex items-center gap-1 text-left hover:text-primary"
+                        >
+                          {locationById(s.locationId)?.shortName ?? s.locationId}
+                          <Icon name="chevronRight" className="h-3 w-3 shrink-0 text-ink-3" />
+                        </button>
+                      ) : (
+                        <Link to={`/stores/${s.locationId}`} className="hover:text-primary hover:underline">
+                          {locationById(s.locationId)?.shortName ?? s.locationId}
+                        </Link>
+                      )}
                       {!s.filed && !live && <Badge tone="warn">Not filed</Badge>}
                     </span>
                   ),

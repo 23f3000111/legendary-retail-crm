@@ -7,6 +7,8 @@ export interface FiguresColumn<T> {
   render: (row: T) => ReactNode
   /** What the column adds up to, at its foot. Columns without one leave the cell empty. */
   total?: ReactNode
+  /** Stepped aside on a phone, so the figures fit without scrolling sideways. */
+  hideOnPhone?: boolean
 }
 
 /**
@@ -40,11 +42,11 @@ export function FiguresTable<T>({
   const { visible, partial, more } = usePaged(rows, { page, resetOn: pageKey })
   if (!rows.length) return <p className="py-4 text-center text-[12.5px] text-ink-3">{empty}</p>
   const hasTotal = columns.some((c) => c.total !== undefined)
-  const align = (c: FiguresColumn<T>) => (c.align === 'right' ? 'text-right' : 'text-left')
+  const align = (c: FiguresColumn<T>) => `${c.align === 'right' ? 'text-right' : 'text-left'}${c.hideOnPhone ? ' hidden sm:table-cell' : ''}`
   return (
     <>
       <div className="scroll-x">
-        <table className="w-full min-w-[320px] border-collapse">
+        <table className="w-full min-w-[300px] border-collapse">
           <thead>
             <tr className="border-b border-line">
               {columns.map((c) => (

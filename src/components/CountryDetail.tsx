@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { Modal } from './ui/Modal'
 import { Button } from './ui/Button'
 import { Flag } from './ui/Flag'
+import { Icon } from './ui/icons'
 import { FiguresTable } from './ui/FiguresTable'
 import { PAGE } from './ui/LoadMore'
 import { useData } from '../store/useData'
@@ -23,6 +24,7 @@ export function CountryDetailModal({
   when,
   live = false,
   onClose,
+  onStore,
 }: {
   countryCode: string
   filter: Filter
@@ -31,6 +33,8 @@ export function CountryDetailModal({
   /** Today from the counter, as the four boxes read it, for a table by the four windows. */
   live?: boolean
   onClose: () => void
+  /** A store tapped: its own pop-up, for this country, in place of this one (20 November). */
+  onStore?: (locationId: string) => void
 }) {
   const data = useData()
   const d = useMemo(() => selectCountryDetail(data, filter, countryCode, live), [data, filter, countryCode, live])
@@ -64,11 +68,21 @@ export function CountryDetailModal({
             columns={[
               {
                 header: 'Store',
-                render: (s) => (
-                  <Link to={`/stores/${s.locationId}`} className="hover:text-primary hover:underline">
-                    {locationById(s.locationId)?.shortName ?? s.locationId}
-                  </Link>
-                ),
+                render: (s) =>
+                  onStore ? (
+                    <button
+                      type="button"
+                      onClick={() => onStore(s.locationId)}
+                      className="inline-flex items-center gap-1 text-left hover:text-primary"
+                    >
+                      {locationById(s.locationId)?.shortName ?? s.locationId}
+                      <Icon name="chevronRight" className="h-3 w-3 shrink-0 text-ink-3" />
+                    </button>
+                  ) : (
+                    <Link to={`/stores/${s.locationId}`} className="hover:text-primary hover:underline">
+                      {locationById(s.locationId)?.shortName ?? s.locationId}
+                    </Link>
+                  ),
               },
               { header: 'Customers', align: 'right', render: (s) => num(s.customers), total: num(d.customers) },
               { header: 'Units', align: 'right', render: (s) => num(s.units), total: num(d.units) },

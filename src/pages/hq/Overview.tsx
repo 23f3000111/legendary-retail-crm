@@ -11,6 +11,7 @@ import { PAGE, usePaged } from '../../components/ui/LoadMore'
 import { SalesBoxes } from '../../components/SalesBoxes'
 import { SalesCalendar } from '../../components/SalesCalendar'
 import { CountryDetailModal } from '../../components/CountryDetail'
+import { StoreSalesModal, datesChoice, monthChoice, windowChoices, type StorePeriodChoice } from '../../components/StoreSales'
 import { ChartFrame } from '../../components/charts/ChartFrame'
 import { Donut, DonutTable, type DonutSlice } from '../../components/charts/Donut'
 import { OriginRibbon, OriginTable } from '../../components/charts/OriginRibbon'
@@ -60,6 +61,10 @@ import type { CrmData } from '../../data/types'
  * worry about, and how the stores track against target. He sees everything
  * and edits nothing, so a screen full of operational detail was work he never
  * had to do. Every chart is still on Analytics.
+ *
+ * **A store opens in a pop-up first** (20 November: "it's ideal to have
+ * pop-up everywhere with detailed details"): its figures for the window the
+ * card or chart shows, and what is behind them, then Open full detail.
  */
 
 /**
@@ -95,6 +100,15 @@ export function Overview() {
   const filter = useMemo(() => emptyFilter(addDays(data.today, -29), data.today), [data.today])
   /** A country opened from "Which countries bought". */
   const [country, setCountry] = useState<string | null>(null)
+  /** A store opened from a card or a chart, on the days that showed it. */
+  const [opened, setOpened] = useState<{
+    id: string
+    periods: StorePeriodChoice[]
+    initial?: string
+    countryCodes?: string[]
+  } | null>(null)
+  const openStore = (id: string, initial: string) => setOpened({ id, periods: windowChoices(data.today), initial })
+  const openPartner = (id: string, month: string) => setOpened({ id, periods: [monthChoice(month, data.today)] })
 
   const mix = useMemo(() => selectOriginMix(data, filter), [data, filter])
   const rows = useMemo(() => selectLocationRows(data, filter), [data, filter])
@@ -128,8 +142,6 @@ export function Overview() {
       .sort((a, b) => b.value - a.value)
   }, [monthToDate])
   const mainMtdTotal = mainMtd.reduce((a, r) => a + r.value, 0)
-  /** Every store named on this page opens its own (asked on 1 November). */
-  const storePage = (id: string) => `/stores/${id}`
 
   return (
     <div className="space-y-5">
@@ -178,9 +190,10 @@ export function Overview() {
             <ul className="grid gap-3 sm:grid-cols-3">
               {watchlist.map((w) => (
                 <li key={w.loc!.id}>
-                  <Link
-                    to={`/stores/${w.loc!.id}`}
-                    className="group block rounded-xl border border-line bg-surface-2 px-4 py-3.5 transition-all duration-200 hover:border-primary/45 hover:shadow-glass"
+                  <button
+                    type="button"
+                    onClick={() => openStore(w.loc!.id, 'yesterday')}
+                    className="group block w-full rounded-xl border border-line bg-surface-2 px-4 py-3.5 text-left transition-all duration-200 hover:border-primary/45 hover:shadow-glass"
                   >
                     <p className="flex items-center gap-1.5 text-[12px] text-ink-2">
                       {w.loc!.shortName}
@@ -200,7 +213,7 @@ export function Overview() {
                       </p>
                     )}
                     <Sparkline data={selectLocationSparkline(data, w.loc!.id)} width={140} height={26} />
-                  </Link>
+                  </button>
                 </li>
               ))}
             </ul>
@@ -238,14 +251,14 @@ export function Overview() {
       {/* ── How the money splits: dealers, and the main stores ────────── */}
       {!executive && (
         <div className="grid gap-5 lg:grid-cols-2 xl:grid-cols-3">
-          <PartnerSplit data={data} channel="dealer" storePage={storePage} canKey={Boolean(open('/partners'))} />
+          <PartnerSplit data={data} channel="dealer" onOpen={openPartner} canKey={Boolean(open('/partners'))} />
 
           <ChartFrame
             title="Main stores · month to date"
             meta={`${formatDate(startOfMonth(data.today))} to today, with today's sales as they stand. Tap a store to open it.`}
             height={230}
             grow
-            table={<DonutTable slices={mainMtd} format={rm} unitHeader="Revenue" href={storePage} />}
+            table={<DonutTable slices={mainMtd} format={rm} unitHeader="Revenue" onSelect={(id) => openStore(id, 'monthToDate')} />}
           >
             <div className="flex h-full items-center justify-center">
               <Donut
@@ -254,13 +267,13 @@ export function Overview() {
                 centreValue={rmCompact(mainMtdTotal)}
                 format={rm}
                 size={186}
-                href={storePage}
+                onSelect={(id) => openStore(id, 'monthToDate')}
               />
             </div>
           </ChartFrame>
 
           {/* Consignment beside the dealers and main stores, above the best sellers (16 November). */}
-          <PartnerSplit data={data} channel="consignment" storePage={storePage} canKey={Boolean(open('/partners'))} />
+          <PartnerSplit data={data} channel="consignment" onOpen={openPartner} canKey={Boolean(open('/partners'))} />
         </div>
       )}
 
@@ -313,6 +326,7 @@ export function Overview() {
               title="Main stores · today so far"
               // Every main store at once (16 November: "All my stores").
               all
+              onOpen={(id) => openStore(id, 'today')}
               rows={tradingLocations
                 .filter((l) => l.channel === 'main')
                 .map((l) => {
@@ -338,8 +352,8 @@ export function Overview() {
                   }
                 })}
             />
-            <PartnerRanking data={data} channel="consignment" canKey={Boolean(open('/partners'))} />
-            <PartnerRanking data={data} channel="dealer" canKey={Boolean(open('/partners'))} />
+            <PartnerRanking data={data} channel="consignment" canKey={Boolean(open('/partners'))} onOpen={openPartner} />
+            <PartnerRanking data={data} channel="dealer" canKey={Boolean(open('/partners'))} onOpen={openPartner} />
           </PanelBody>
         </Panel>
       ) : (
@@ -361,9 +375,10 @@ export function Overview() {
             <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {mainRows.map((r, i) => (
                 <li key={r.locationId}>
-                  <Link
-                    to={`/stores/${r.locationId}`}
-                    className="group block rounded-xl border border-line bg-surface-2 px-3.5 py-3 transition-all duration-200 hover:border-primary/45 hover:shadow-glass"
+                  <button
+                    type="button"
+                    onClick={() => openStore(r.locationId, 'monthToDate')}
+                    className="group block w-full rounded-xl border border-line bg-surface-2 px-3.5 py-3 text-left transition-all duration-200 hover:border-primary/45 hover:shadow-glass"
                   >
                     <div className="flex items-start gap-2">
                       <span className="readout mt-0.5 w-4 shrink-0 text-[11px] text-ink-3">{i + 1}</span>
@@ -395,7 +410,7 @@ export function Overview() {
                         </div>
                       </>
                     )}
-                  </Link>
+                  </button>
                 </li>
               ))}
             </ul>
@@ -468,6 +483,20 @@ export function Overview() {
           filter={filter}
           when="Last 30 days"
           onClose={() => setCountry(null)}
+          onStore={(id) => {
+            setCountry(null)
+            setOpened({ id, periods: [{ ...datesChoice(filter.from, filter.to), label: 'Last 30 days' }], countryCodes: [country] })
+          }}
+        />
+      )}
+
+      {opened && (
+        <StoreSalesModal
+          locationId={opened.id}
+          periods={opened.periods}
+          initial={opened.initial}
+          base={opened.countryCodes ? { countryCodes: opened.countryCodes } : undefined}
+          onClose={() => setOpened(null)}
         />
       )}
 
@@ -504,12 +533,13 @@ const CHANNEL_WORD: Record<PartnerChannel, { one: string; many: string }> = {
 function PartnerSplit({
   data,
   channel,
-  storePage,
+  onOpen,
   canKey,
 }: {
   data: CrmData
   channel: PartnerChannel
-  storePage: (id: string) => string
+  /** A partner tapped: its pop-up, for the month shown. */
+  onOpen: (id: string, month: string) => void
   canKey: boolean
 }) {
   const month = latestPartnerMonth(data, channel)
@@ -545,7 +575,7 @@ function PartnerSplit({
       grow
       table={
         month ? (
-          <DonutTable slices={slices} format={rm} unitHeader="Revenue" href={storePage} page={PAGE} />
+          <DonutTable slices={slices} format={rm} unitHeader="Revenue" onSelect={(id) => onOpen(id, month)} page={PAGE} />
         ) : undefined
       }
     >
@@ -557,7 +587,7 @@ function PartnerSplit({
             centreValue={rmCompact(sum)}
             format={rm}
             size={186}
-            href={storePage}
+            onSelect={(id) => onOpen(id, month)}
           />
         </div>
       ) : (
@@ -599,7 +629,17 @@ function WaitingForMonth({
 }
 
 /** Dealers or consignment, best first, for their latest month: those keyed in so far. */
-function PartnerRanking({ data, channel, canKey }: { data: CrmData; channel: PartnerChannel; canKey: boolean }) {
+function PartnerRanking({
+  data,
+  channel,
+  canKey,
+  onOpen,
+}: {
+  data: CrmData
+  channel: PartnerChannel
+  canKey: boolean
+  onOpen: (id: string, month: string) => void
+}) {
   const month = latestPartnerMonth(data, channel)
   const label = channel === 'dealer' ? 'Dealers' : 'Consignment'
   if (!month) {
@@ -622,6 +662,7 @@ function PartnerRanking({ data, channel, canKey }: { data: CrmData; channel: Par
   return (
     <Ranking
       title={`${label} · ${monthLabel(month)}${keyedIn.length < total ? ` · ${keyedIn.length} of ${total} keyed in` : ''}`}
+      onOpen={(id) => onOpen(id, month)}
       rows={keyedIn.map((r) => ({
         locationId: r.locationId,
         name: r.shortName,
@@ -633,14 +674,16 @@ function PartnerRanking({ data, channel, canKey }: { data: CrmData; channel: Par
   )
 }
 
-/** A league: rank, name, figure, ten at a time unless `all`. Each card opens the outlet. */
+/** A league: rank, name, figure, ten at a time unless `all`. Each card opens the outlet's pop-up. */
 function Ranking({
   title,
   rows,
   all = false,
+  onOpen,
 }: {
   title: string
   all?: boolean
+  onOpen: (id: string) => void
   rows: {
     locationId: string
     name: string
@@ -663,9 +706,10 @@ function Ranking({
           <li key={r.locationId}>
             {/* A card from sm up; on a phone, one row with the figure on the
                 right, so three leagues of ten are not a scroll of 30 cards. */}
-            <Link
-              to={`/stores/${r.locationId}`}
-              className="group flex flex-wrap items-start gap-x-3 rounded-xl border border-line bg-surface-2 px-3.5 py-3 transition-all duration-200 hover:border-primary/45 hover:shadow-glass sm:block"
+            <button
+              type="button"
+              onClick={() => onOpen(r.locationId)}
+              className="group flex w-full flex-wrap items-start gap-x-3 rounded-xl border border-line bg-surface-2 px-3.5 py-3 text-left transition-all duration-200 hover:border-primary/45 hover:shadow-glass sm:block"
             >
               {r.above && (
                 <p
@@ -691,7 +735,7 @@ function Ranking({
                 <p className="readout text-[15px] font-semibold leading-tight text-ink">{rm(r.revenue)}</p>
                 <p className="mt-0.5 truncate text-[11px] text-ink-3">{r.detail}</p>
               </div>
-            </Link>
+            </button>
           </li>
         ))}
       </ul>
