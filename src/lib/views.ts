@@ -33,6 +33,10 @@ export const restoreFilter = (saved: unknown, today: DateStr): Filter | null => 
   }
 }
 
+/** A section's From and To, as they were left: in order, and never past today. */
+export const restoreDates = (saved: unknown, today: DateStr): { from: DateStr; to: DateStr } | null =>
+  isRecord(saved) && isDay(saved.from) && isDay(saved.to) ? chooseDates(saved.from, saved.to, today) : null
+
 /**
  * The sales report's rules, as they were left: the business date always
  * *between* two dates, and every other rule "one of these" (20 November:

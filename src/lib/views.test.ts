@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { restoreFilter, restoreRules } from './views'
+import { restoreDates, restoreFilter, restoreRules } from './views'
 import { emptyFilter } from '../store/selectors'
 
 /**
@@ -28,6 +28,20 @@ describe('a filter kept for when you come back', () => {
     expect(restoreFilter(null, today)).toBeNull()
     expect(restoreFilter('2026-11-01', today)).toBeNull()
     expect(restoreFilter({ from: 'yesterday', to: today }, today)).toBeNull()
+  })
+})
+
+// 20 November, later: Revenue's consignment, dealers and By channel each keep
+// their own From and To.
+describe('a section’s dates, kept', () => {
+  it('comes back in order and never past today', () => {
+    expect(restoreDates({ from: '2026-10-01', to: '2026-10-31' }, today)).toEqual({ from: '2026-10-01', to: '2026-10-31' })
+    expect(restoreDates({ from: '2026-12-01', to: '2026-11-02' }, today)).toEqual({ from: '2026-11-02', to: today })
+  })
+
+  it('gives nothing back for something that is not two dates', () => {
+    expect(restoreDates(undefined, today)).toBeNull()
+    expect(restoreDates({ from: '2026-10-01' }, today)).toBeNull()
   })
 })
 

@@ -18,8 +18,11 @@ export interface Views {
   analytics?: { filter: unknown; metric: unknown }
   /** Stores: the dates chosen, if any, and the channel shown. */
   stores?: { dates: { from: DateStr; to: DateStr } | null; view: Channel | 'all' }
-  /** Revenue: the sales report's rules, and the partners' month. */
-  revenue?: { rules?: unknown; month?: string }
+  /**
+   * Revenue: the sales report's rules; the month being keyed in; and the
+   * dates of its consignment, dealers and By channel, each its own.
+   */
+  revenue?: { rules?: unknown; month?: string; dates?: Record<string, unknown> }
   keep: <K extends 'analytics' | 'stores' | 'revenue'>(page: K, value: Views[K]) => void
   forget: () => void
 }
