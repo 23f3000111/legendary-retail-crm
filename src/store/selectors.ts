@@ -43,7 +43,7 @@ import { linesDiffer } from '../lib/changes'
 import { rangeIndex } from '../lib/range'
 import { addDays, dateRange, daysBetween, monthKey, shiftMonth, spanDays, startOfMonth, todayInMalaysia, type DateSpan } from '../lib/dates'
 import { effectiveQty, isOpen } from '../lib/po-machine'
-import type { Alert, Closing, CrmData, DateStr, PartnerSales, PurchaseOrder, SaleLine } from '../data/types'
+import type { Alert, Closing, CrmData, DateStr, PartnerSales, PurchaseOrder, SaleLine, Tender } from '../data/types'
 
 /** Where a line the range does not know sits in a list: at the end. */
 const LAST_IN_RANGE = Number.MAX_SAFE_INTEGER
@@ -473,7 +473,14 @@ export const selectSalesReport = (
   data: CrmData,
   rules: ReportRule[],
   locationId?: string,
-): { rows: ReportRow[]; units: number; revenue: number; days: { from: DateStr; to: DateStr } | null } => {
+): {
+  rows: ReportRow[]
+  units: number
+  revenue: number
+  days: { from: DateStr; to: DateStr } | null
+  /** What the units were, product by product, most first (20 November: "unit should be in detailed"). */
+  skus: { skuId: string; label: string; units: number; revenue: number }[]
+} => {
   let days: { from: DateStr; to: DateStr } | null = null
   let stores: Extract<ReportRule, { field: 'store' }> | undefined
   let items: Extract<ReportRule, { field: 'item' }> | undefined
@@ -493,13 +500,19 @@ export const selectSalesReport = (
     return true
   }
   const tally = new Map<string, ReportRow>()
+  const products = new Map<string, { units: number; revenue: number }>()
   const add = (day: DateStr, locationId: string, l: SaleLine) => {
     if (!keep(l)) return
     const key = `${day}::${locationId}`
     const row = tally.get(key) ?? { day, locationId, units: 0, revenue: 0 }
+    const value = l.qty * lineUnitPrice(l, basisOf(locationId))
     row.units += l.qty
-    row.revenue += l.qty * lineUnitPrice(l, basisOf(locationId))
+    row.revenue += value
     tally.set(key, row)
+    const p = products.get(l.skuId) ?? { units: 0, revenue: 0 }
+    p.units += l.qty
+    p.revenue += value
+    products.set(l.skuId, p)
   }
   const here = (id: string) =>
     (!locationId || id === locationId) && (!stores || stores.locationIds.includes(id) === (stores.op === 'equal'))
@@ -520,6 +533,10 @@ export const selectSalesReport = (
     units: rows.reduce((a, r) => a + r.units, 0),
     revenue: Math.round(rows.reduce((a, r) => a + r.revenue, 0) * 100) / 100,
     days,
+    skus: [...products.entries()]
+      .filter(([, p]) => p.units > 0)
+      .map(([skuId, p]) => ({ skuId, label: skuById(skuId)?.label ?? skuId, units: p.units, revenue: Math.round(p.revenue * 100) / 100 }))
+      .sort((a, b) => b.units - a.units || b.revenue - a.revenue || a.label.localeCompare(b.label)),
   }
 }
 
@@ -1486,6 +1503,156 @@ export const selectStoreTotals = (data: CrmData, f: Filter): StoreTotal[] => {
       previousUnits: before.get(l.id)?.units ?? 0,
     }))
     .sort((a, b) => b.revenue - a.revenue || b.units - a.units || name(a.locationId).localeCompare(name(b.locationId)))
+}
+
+// ── One store, opened (20 November) ─────────────────────────────────────────
+//
+// "When click on any stores then its data should be open in pop-up with all
+// the details ... it says 20 unit sold but it's not showing what 20 unit
+// sold": a store's figures for some dates, read as Analytics reads them, and
+// what is behind them.
+
+export interface StorePeriod extends SalesFigure {
+  locationId: string
+  /** What sold, most units first, with every price each went at. */
+  skus: { skuId: string; label: string; code: string; units: number; revenue: number; prices: SoldAt[] }[]
+  /** Where the customers came from, most customers first. */
+  countries: { countryCode: string; customers: number; units: number; revenue: number }[]
+  /** The days it sold, oldest first. */
+  days: { day: DateStr; revenue: number; units: number; customers: number }[]
+  /**
+   * How the days filed in the window were paid, as filed at each close. Null
+   * where none was filed, or where the view is narrowed to products or
+   * countries, which a day's payment cannot be split by.
+   */
+  tender: (Tender & { days: number }) | null
+  /** A dealer's or consignment partner's months keyed in, each counted on its 1st. */
+  months: { month: string; revenue: number; keyed?: PartnerSales }[]
+}
+
+/**
+ * One store over the filter's dates, narrowed by its products and countries:
+ * its sales, units and customers, the same as its row on Analytics; what it
+ * sold and at which prices; who bought; the days; how it was paid; and a
+ * partner's months keyed in, which have no products behind them.
+ */
+export const selectStorePeriod = (data: CrmData, f: Filter, locationId: string): StorePeriod => {
+  const here: Filter = { ...f, locationIds: [locationId], channels: [], regions: [] }
+  const basis = basisOf(locationId)
+  const total = blank()
+  const days = new Map<DateStr, ReturnType<typeof blank>>()
+  const products = new Map<string, { units: number; revenue: number; prices: SoldAt[] }>()
+  const nations = new Map<string, OriginTally>()
+
+  eachLineIn(data, here, (l, value, basket, _id, day) => {
+    const d = days.get(day) ?? blank()
+    days.set(day, d)
+    for (const t of [total, d]) {
+      t.revenue += value
+      t.units += l.qty
+      t.baskets.add(basket)
+    }
+    const p = products.get(l.skuId) ?? { units: 0, revenue: 0, prices: [] }
+    p.units += l.qty
+    p.revenue += value
+    const unitPrice = lineUnitPrice(l, basis)
+    const tier = l.priceTier ?? basis
+    const same = p.prices.find((x) => x.unitPrice === unitPrice && x.tier === tier)
+    if (same) same.qty += l.qty
+    else p.prices.push({ unitPrice, tier, qty: l.qty })
+    products.set(l.skuId, p)
+    if (l.countryCode) {
+      const t = nations.get(l.countryCode) ?? newOriginTally()
+      t.units += l.qty
+      t.revenue += value
+      t.baskets.add(basket)
+      nations.set(l.countryCode, t)
+    }
+  })
+
+  const narrowed = narrowsByProduct(here)
+  const sen = (n: number) => Math.round(n * 100) / 100
+  const months = narrowed
+    ? []
+    : data.partnerSales
+        .filter((p) => p.locationId === locationId && inWindow(`${p.month}-01`, here))
+        .map((p) => ({ month: p.month, revenue: p.revenueMYR, keyed: p }))
+        .sort((a, b) => (a.month < b.month ? -1 : 1))
+  for (const m of months) total.revenue += m.revenue
+
+  let tender: StorePeriod['tender'] = null
+  if (!narrowed) {
+    const keyed = keyedMonths(data)
+    const filed = data.closings.filter(
+      (c) =>
+        c.locationId === locationId &&
+        c.periodType === 'day' &&
+        c.period < data.today &&
+        inWindow(c.period, here) &&
+        c.tender &&
+        !keyed.has(`${locationId}::${monthKey(c.period)}`),
+    )
+    if (filed.length) {
+      const sum = (k: keyof Tender) => sen(filed.reduce((a, c) => a + (c.tender?.[k] ?? 0), 0))
+      tender = { cash: sum('cash'), ewallet: sum('ewallet'), card: sum('card'), days: filed.length }
+    }
+  }
+
+  return {
+    locationId,
+    ...finish(total),
+    skus: [...products.entries()]
+      .map(([skuId, p]) => ({
+        skuId,
+        label: skuById(skuId)?.label ?? skuId,
+        code: skuById(skuId)?.code ?? '',
+        units: p.units,
+        revenue: sen(p.revenue),
+        prices: [...p.prices].sort((a, b) => b.qty - a.qty || b.unitPrice - a.unitPrice),
+      }))
+      .sort((a, b) => b.units - a.units || b.revenue - a.revenue || a.label.localeCompare(b.label)),
+    countries: [...nations.entries()]
+      .map(([countryCode, t]) => ({ countryCode, customers: t.baskets.size, units: t.units, revenue: sen(t.revenue) }))
+      .sort((a, b) => b.customers - a.customers || b.units - a.units || a.countryCode.localeCompare(b.countryCode)),
+    days: [...days.entries()]
+      .map(([day, t]) => ({ day, ...finish(t) }))
+      .sort((a, b) => (a.day < b.day ? -1 : 1)),
+    tender,
+    months,
+  }
+}
+
+/**
+ * One month by channel, for Finance's Revenue (20 November: "in By channel
+ * section, dealers and Consignment should be seen"): the main stores' days,
+ * today live in a month still running, and each partner channel's months
+ * keyed in, with how many partners that is. Every channel is listed, at
+ * nothing where nothing is in yet.
+ */
+export interface ChannelMonth {
+  channel: Channel
+  revenue: number
+  units: number
+  /** Dealers and consignment: how many partners have the month keyed in. */
+  keyed?: { done: number; of: number }
+}
+
+export const selectChannelMonth = (data: CrmData, month: string): ChannelMonth[] => {
+  const from = `${month}-01`
+  const end = addDays(`${shiftMonth(month, 1)}-01`, -1)
+  const totals = new Map(
+    from <= data.today
+      ? selectChannelTotals(data, emptyFilter(from, end < data.today ? end : data.today)).map((c) => [c.channel, c])
+      : [],
+  )
+  return CHANNELS.map((channel) => ({
+    channel,
+    revenue: totals.get(channel)?.revenue ?? 0,
+    units: totals.get(channel)?.units ?? 0,
+    ...(channel === 'main'
+      ? {}
+      : { keyed: { done: partnersKeyed(data, channel, month), of: partnersIn(channel).length } }),
+  }))
 }
 
 /** Every product sold in the period, its units and sales, in the range's order. */

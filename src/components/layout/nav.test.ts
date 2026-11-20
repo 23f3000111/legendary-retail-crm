@@ -35,6 +35,17 @@ describe('where a link may take you', () => {
   })
 })
 
+// 20 November, on Finance's Revenue: "we need to remove the dealer sales page
+// and we put dealers section side by side of Consignment section". Finance
+// keys the months in on Revenue now; Kelly, Davy and Chloe keep the page.
+describe('where the partners’ months are keyed in (20 November)', () => {
+  it('takes Dealer sales away from Finance alone', () => {
+    expect(canOpen('finance', '/partners')).toBe(false)
+    expect(canOpen('finance', '/finance')).toBe(true)
+    for (const role of ['md', 'ops', 'pa'] as const) expect(canOpen(role, '/partners'), role).toBe(true)
+  })
+})
+
 describe('who keeps the product list (20 October)', () => {
   it('lets Davy, Kelly and Chloe open Products', () => {
     for (const role of ['md', 'ops', 'pa'] as const) expect(canOpen(role, '/catalogue'), role).toBe(true)

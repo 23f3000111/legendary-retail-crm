@@ -3,6 +3,7 @@ import {
   emptyFilter,
   foldOrigins,
   partnersIn,
+  selectChannelMonth,
   selectChannelTotals,
   selectCountryTotals,
   selectDailySales,
@@ -132,5 +133,42 @@ describe('a period on Analytics', () => {
   it('draws the period day by day, today live', () => {
     const series = selectDailySeries(data, emptyFilter('2026-11-01', today), 'units')
     expect(series.map((p) => p.value)).toEqual([3, 8, 1, 0, 0, 0, 0, 1])
+  })
+})
+
+// 20 November, Finance's Revenue: "by channel should be working ... dealers and
+// Consignment should be seen". They report a month at a time, so the split is
+// a month's: the main stores' days, and each partner's month as keyed in.
+describe('a month by channel', () => {
+  const consignment = partnersIn('consignment')
+  const d: CrmData = {
+    ...data,
+    partnerSales: [
+      ...data.partnerSales,
+      { locationId: consignment[0].id, month: '2026-11', revenueMYR: 500, enteredBy: 'Kelly Tew', enteredAt: 'x' },
+      { locationId: consignment[1].id, month: '2026-10', revenueMYR: 700, enteredBy: 'Kelly Tew', enteredAt: 'x' },
+    ],
+  }
+
+  it('gives every channel, the partners with how many are keyed in', () => {
+    const rows = selectChannelMonth(d, '2026-11')
+    expect(rows.map((r) => [r.channel, r.revenue])).toEqual([
+      // The month so far: 12 on the 1st to the 7th, and today's one, live.
+      ['main', 13 * 188],
+      ['dealer', 1000],
+      ['consignment', 500],
+    ])
+    expect(rows[1].keyed).toEqual({ done: 1, of: partnersIn('dealer').length })
+    expect(rows[2].keyed).toEqual({ done: 1, of: consignment.length })
+    expect(rows[0].keyed).toBeUndefined()
+  })
+
+  it('still lists the partners in a month nobody has keyed in, at nothing', () => {
+    const rows = selectChannelMonth(d, '2026-09')
+    expect(rows.map((r) => [r.channel, r.revenue, r.keyed?.done])).toEqual([
+      ['main', 0, undefined],
+      ['dealer', 0, 0],
+      ['consignment', 0, 0],
+    ])
   })
 })

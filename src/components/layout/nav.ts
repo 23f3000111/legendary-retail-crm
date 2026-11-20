@@ -84,8 +84,9 @@ export const NAV: Record<Role, NavItem[]> = {
     { to: '/activity', label: 'Activity', icon: 'clock', secondary: true },
   ],
   finance: [
+    // Dealer sales is folded into Revenue for Finance, the dealers beside the
+    // consignment partners (20 November). Kelly, Davy and Chloe keep the page.
     { to: '/finance', label: 'Revenue', icon: 'wallet', end: true },
-    { to: '/partners', label: 'Dealer sales', icon: 'clipboard' },
     { to: '/locations', label: 'Stores', icon: 'globe' },
     { to: '/analytics', label: 'Analytics', icon: 'chart' },
     { to: '/orders', label: 'Orders', icon: 'doc' },

@@ -647,4 +647,17 @@ describe('Finance’s sales report: every store, day by day', () => {
     expect(rows('klia-t2')).toEqual(['2026-10-19 klia-t2 3 564', '2026-10-20 klia-t2 1 188'])
     expect(selectSalesReport(d, [date('between', '2026-10-18', today)], 'klia-t2')).toMatchObject({ units: 4, revenue: 752 })
   })
+
+  // 20 November, on Revenue: "unit should be in detailed in sales report".
+  it('says what the units were, product by product, by the same rules', () => {
+    const china: ReportRule = { id: 'n', field: 'nationality', op: 'equal', countryCodes: ['CN'] }
+    const r = selectSalesReport(d, [date('between', '2026-10-18', today), china])
+    expect(r.skus.map((s) => [s.skuId, s.units, s.revenue])).toEqual([
+      ['orchid-retail', 2, 376],
+      ['violet-retail', 2, 376],
+      ['wish-1-set', 1, 0],
+    ])
+    expect(r.skus.reduce((a, s) => a + s.units, 0)).toBe(r.units)
+    expect(r.skus.reduce((a, s) => a + s.revenue, 0)).toBe(r.revenue)
+  })
 })
