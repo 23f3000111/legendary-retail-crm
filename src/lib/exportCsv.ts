@@ -5,8 +5,15 @@
  */
 type Cell = string | number | null | undefined
 
+/** A figure, a minus or plus included: never taken for a formula. */
+const FIGURE = /^[-+]?\d[\d,]*(\.\d+)?$/
+
 const escape = (v: Cell): string => {
   const s = v === null || v === undefined ? '' : String(v)
+  // Typed text that starts like a formula (a reason for rejecting an order, a
+  // product's name) goes in as the words typed: a quote in front, so Excel
+  // shows it and never runs it.
+  if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s) && !FIGURE.test(s)) return `"'${s.replace(/"/g, '""')}"`
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
 }
 
