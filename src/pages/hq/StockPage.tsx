@@ -1,19 +1,26 @@
 import { useMemo, useState } from 'react'
 import { Panel, PanelBody, PanelHeader, Rule } from '../../components/ui/Panel'
-import { Button } from '../../components/ui/Button'
+import { Button, IconButton } from '../../components/ui/Button'
 import { Badge } from '../../components/ui/Badge'
 import { StatTile } from '../../components/ui/StatTile'
 import { DataTable, type Column } from '../../components/ui/DataTable'
 import { Modal } from '../../components/ui/Modal'
 import { StorePicker } from '../../components/StorePicker'
 import { StockItemDetail } from '../../components/StockItemDetail'
+import { ProductEditor } from '../../components/ProductEditor'
+import { ArrangeRange } from '../../components/ArrangeRange'
+import { PriceSheet } from '../../components/PriceSheet'
+import { TakeOffProduct } from '../../components/TakeOffProduct'
 import { ProgressBar } from '../../components/ui/Progress'
+import { useToasts } from '../../components/ui/Toast'
 import { useData } from '../../store/useData'
-import { useCurrentUser } from '../../store/useAuth'
+import { useCan, useCurrentUser } from '../../store/useAuth'
 import { selectStock, type StockRow } from '../../store/selectors'
 import { locationById, locationsInChannel } from '../../data/locations'
-import { skus } from '../../data/products'
-import { downloadCsv } from '../../lib/exportCsv'
+import { skuById, skus, type Sku } from '../../data/products'
+import { downloadCsvSections } from '../../lib/exportCsv'
+import { openPrintReport } from '../../lib/printReport'
+import { buildStockReport, stockCsvBlocks, stockFilename, stockPrintSpec } from '../../lib/stockReport'
 import { num } from '../../lib/format'
 
 const STATUS: Record<StockRow['status'], { label: string; tone: 'good' | 'warn' | 'critical' }> = {
@@ -30,11 +37,27 @@ const STATUS: Record<StockRow['status'], { label: string; tone: 'good' | 'warn' 
  * across the main stores. Nothing here is ever valued — once stock leaves the
  * warehouse it is no longer Legendary's, and SQL Accounting owns the money
  * (Q35). This is a count for visibility, and says so.
+ *
+ * **22 November.** Davy, Kelly and Chloe add, remove and re-price products
+ * here, top right ("Add, remove and adjust price option added top right and
+ * the products can be amended themselves"), and arrange them; each row has
+ * its own pencil and cross. It is the same range as the Products page, and
+ * the same records. Finance has no part in it. The export is a breakdown like
+ * Finance's reports: store by store, a subtotal under each and a grand total,
+ * as a CSV or a PDF. A store exports only its own shelf.
  */
 export function StockPage() {
   const data = useData()
   const user = useCurrentUser()
+  const capability = useCan()
+  const push = useToasts((s) => s.push)
   const isPromoter = user?.role === 'promoter'
+  /** Adding, removing, re-pricing and arranging products: Davy, Kelly and Chloe. */
+  const keeps = capability.canEdit && capability.manageCatalogue
+  const [editing, setEditing] = useState<Sku | 'new' | null>(null)
+  const [takingOff, setTakingOff] = useState<{ sku: Sku | null } | null>(null)
+  const [pricing, setPricing] = useState(false)
+  const [arranging, setArranging] = useState(false)
   const mainStores = locationsInChannel('main').filter((l) => l.status === 'open')
 
   const [locationId, setLocationId] = useState(
@@ -131,6 +154,41 @@ export function StockPage() {
           <span className="text-ink-3">—</span>
         ),
     },
+    // Each product amended on its own row (22 November).
+    ...(keeps
+      ? [
+          {
+            key: 'actions',
+            header: '',
+            align: 'right' as const,
+            width: '84px',
+            render: (r: StockRow) => {
+              const sku = skuById(r.skuId)
+              if (!sku) return null
+              return (
+                <div className="flex justify-end gap-0.5">
+                  <IconButton
+                    name="pencil"
+                    label={`Change ${sku.label}: prices, reorder level, case size`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setEditing(sku)
+                    }}
+                  />
+                  <IconButton
+                    name="x"
+                    label={`Take ${sku.label} off the range`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setTakingOff({ sku })
+                    }}
+                  />
+                </div>
+              )
+            },
+          },
+        ]
+      : []),
   ]
 
   const tone = (status?: StockRow['status']) =>
@@ -142,16 +200,19 @@ export function StockPage() {
           ? 'bg-warn/10 text-warn border-warn/25'
           : 'bg-surface-2 text-ink-2 border-line'
 
-  const exportMatrix = () =>
-    downloadCsv(
-      `legendary-stock-${data.today}.csv`,
-      ['As at', 'Product', ...mainStores.map((l) => l.name)],
-      skus.map((s) => [
-        data.today,
-        s.label,
-        ...mainStores.map((l) => matrix.get(l.id)?.find((r) => r.skuId === s.id)?.onHand ?? 0),
-      ]),
-    )
+  // The report, as Finance's are (22 November): store by store, a subtotal
+  // under each, a grand total. Head office has every main store; a store has
+  // only its own shelf.
+  const report = () => buildStockReport(data, isPromoter ? [locationId] : mainStores.map((l) => l.id))
+  const exportStock = () => {
+    const r = report()
+    downloadCsvSections(stockFilename(r), stockCsvBlocks(r))
+  }
+  const printStock = () => {
+    if (!openPrintReport(stockPrintSpec(report()))) {
+      push('The report could not open: allow pop-ups for this site, then try again.', 'critical')
+    }
+  }
 
   return (
     <div className="space-y-5">
@@ -166,26 +227,46 @@ export function StockPage() {
             record of what stock is worth.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {!isPromoter && (
-            <>
-              <StorePicker
-                value={locationId}
-                onChange={setLocationId}
-                className="h-9 w-[210px] text-[12.5px]"
-              />
-              <Button
-                variant={showMatrix ? 'primary' : 'secondary'}
-                icon="grid"
-                onClick={() => setShowMatrix((s) => !s)}
-              >
-                All stores
+        <div className="flex flex-col gap-2 sm:items-end">
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+            {!isPromoter && (
+              <>
+                <div className="w-[210px]">
+                  <StorePicker value={locationId} onChange={setLocationId} className="h-9 text-[12.5px]" />
+                </div>
+                <Button
+                  variant={showMatrix ? 'primary' : 'secondary'}
+                  icon="grid"
+                  onClick={() => setShowMatrix((s) => !s)}
+                >
+                  All stores
+                </Button>
+              </>
+            )}
+            <Button variant="secondary" icon="download" onClick={exportStock}>
+              CSV
+            </Button>
+            <Button variant="secondary" icon="printer" onClick={printStock}>
+              PDF report
+            </Button>
+          </div>
+          {/* Add, remove and adjust price, top right (22 November). */}
+          {keeps && (
+            <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+              <Button variant="secondary" icon="grip" onClick={() => setArranging(true)} disabled={arranging}>
+                Arrange
               </Button>
-            </>
+              <Button variant="secondary" icon="pencil" onClick={() => setPricing(true)}>
+                Adjust prices
+              </Button>
+              <Button variant="secondary" icon="x" onClick={() => setTakingOff({ sku: null })}>
+                Remove
+              </Button>
+              <Button variant="primary" icon="plus" onClick={() => setEditing('new')}>
+                Add a product
+              </Button>
+            </div>
           )}
-          <Button variant="secondary" icon="download" onClick={exportMatrix}>
-            Export
-          </Button>
         </div>
       </div>
 
@@ -214,11 +295,16 @@ export function StockPage() {
         />
       </div>
 
+      {arranging ? (
+        <ArrangeRange onDone={() => setArranging(false)} />
+      ) : (
       <Panel>
         <PanelHeader
           eyebrow={location?.name ?? 'Store'}
           title={`${rows.length} products`}
-          meta="Suggested quantities are rounded up to whole cases."
+          meta={`Suggested quantities are rounded up to whole cases.${
+            keeps ? ' The pencil on a row changes its prices, reorder level or case size; the cross takes it off the range, for every store.' : ''
+          }`}
         />
         <Rule />
         <PanelBody>
@@ -247,6 +333,7 @@ export function StockPage() {
           </Modal>
         </PanelBody>
       </Panel>
+      )}
 
       {showMatrix && !isPromoter && (
         <Panel>
@@ -302,6 +389,24 @@ export function StockPage() {
             </div>
           </PanelBody>
         </Panel>
+      )}
+
+      {keeps && (
+        <>
+          <ProductEditor
+            open={editing !== null}
+            onClose={() => setEditing(null)}
+            sku={editing && editing !== 'new' ? editing : undefined}
+            onSaved={(message) => push(message, 'good')}
+          />
+          <PriceSheet open={pricing} onClose={() => setPricing(false)} onSaved={(message) => push(message, 'good')} />
+          <TakeOffProduct
+            open={takingOff !== null}
+            onClose={() => setTakingOff(null)}
+            initial={takingOff?.sku ?? null}
+            onDone={(message, tone) => push(message, tone)}
+          />
+        </>
       )}
     </div>
   )

@@ -19,10 +19,11 @@ import {
   canClearAccounts,
   chainProgress,
   isOpen,
+  rejectionOf,
   seenBy,
 } from '../../lib/po-machine'
 import { locationById } from '../../data/locations'
-import { relativeDay } from '../../lib/dates'
+import { formatTimestamp, relativeDay, todayInMalaysia } from '../../lib/dates'
 import { downloadCsv } from '../../lib/exportCsv'
 import { num, rm } from '../../lib/format'
 import type { PurchaseOrder } from '../../data/types'
@@ -157,17 +158,26 @@ export function Orders() {
       key: 'progress',
       header: 'Progress',
       width: '160px',
-      render: (p) => (
-        <div>
-          <ProgressBar
-            value={chainProgress(p.status)}
-            tone={p.status === 'rejected' ? 'critical' : p.status === 'received' ? 'good' : 'primary'}
-          />
-          <p className="mt-1 text-[11px] text-ink-3">
-            {isOpen(p) ? `with ${STATUS_OWNER[p.status]}` : STATUS_LABEL[p.status]}
-          </p>
-        </div>
-      ),
+      render: (p) => {
+        const refused = rejectionOf(p)
+        return (
+          <div>
+            <ProgressBar
+              value={chainProgress(p.status)}
+              tone={p.status === 'rejected' ? 'critical' : p.status === 'received' ? 'good' : 'primary'}
+            />
+            <p className="mt-1 text-[11px] text-ink-3">
+              {isOpen(p) ? `with ${STATUS_OWNER[p.status]}` : STATUS_LABEL[p.status]}
+            </p>
+            {/* Why it was turned down, in the approver's words (22 November). */}
+            {refused?.note && (
+              <p className="mt-0.5 line-clamp-2 max-w-[200px] whitespace-normal text-[11px] leading-snug text-ink-2" title={refused.note}>
+                “{refused.note}”
+              </p>
+            )}
+          </div>
+        )
+      },
     },
     {
       key: 'flags',
@@ -186,20 +196,32 @@ export function Orders() {
         const primary =
           moves.find((m) => m.to !== 'rejected') ??
           (user && canClearAccounts(p, user.role) ? { to: 'accounts_cleared', label: 'Clear' } : undefined)
+        // Who turned it down, and when (22 November: "there should be a
+        // mention of who has rejected the order request").
+        const refused = rejectionOf(p)
         return (
-          <div className="flex items-center justify-end gap-2">
-            <StatusChip status={p.status} />
-            {capability.canEdit && primary && (
-              <Button
-                size="sm"
-                variant="primary"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  act(p, primary.to, primary.label)
-                }}
-              >
-                {primary.label}
-              </Button>
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center justify-end gap-2">
+              <StatusChip status={p.status} />
+              {capability.canEdit && primary && (
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    act(p, primary.to, primary.label)
+                  }}
+                >
+                  {primary.label}
+                </Button>
+              )}
+            </div>
+            {refused && (
+              <p className="text-right text-[11px] leading-tight text-ink-3">
+                by <span className="font-medium text-ink-2">{refused.by}</span>
+                <br />
+                <span className="readout">{formatTimestamp(refused.at)}</span>
+              </p>
             )}
           </div>
         )
@@ -210,17 +232,23 @@ export function Orders() {
   const exportRows = () =>
     downloadCsv(
       'legendary-purchase-orders.csv',
-      ['Order', 'Store', 'Raised', 'Status', 'Products', 'Units', 'Value MYR', 'Priority'],
-      rows.map((p) => [
-        p.id,
-        locationById(p.locationId)?.name ?? p.locationId,
-        p.createdAt.slice(0, 10),
-        STATUS_LABEL[p.status],
-        p.lines.length,
-        poUnits(p),
-        poValue(p),
-        p.priority,
-      ]),
+      ['Order', 'Store', 'Raised', 'Status', 'Products', 'Units', 'Value MYR', 'Priority', 'Rejected by', 'Rejected on', 'Reason'],
+      rows.map((p) => {
+        const refused = rejectionOf(p)
+        return [
+          p.id,
+          locationById(p.locationId)?.name ?? p.locationId,
+          p.createdAt.slice(0, 10),
+          STATUS_LABEL[p.status],
+          p.lines.length,
+          poUnits(p),
+          poValue(p),
+          p.priority,
+          refused?.by ?? '',
+          refused ? todayInMalaysia(new Date(refused.at)) : '',
+          refused?.note ?? '',
+        ]
+      }),
     )
 
   const openOrders = scoped.filter(isOpen)
@@ -293,7 +321,7 @@ export function Orders() {
       )}
 
       <Panel>
-        <PanelHeader eyebrow="Orders" title={`${rows.length} orders`} />
+        <PanelHeader eyebrow="Orders" title={`${rows.length} ${rows.length === 1 ? 'order' : 'orders'}`} />
         <Rule />
         <PanelBody>
           <DataTable

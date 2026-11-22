@@ -135,9 +135,10 @@ export function Closings() {
           value={channel}
           onChange={setChannel}
           options={[
+            // Main, then consignment, then dealers, as everywhere (22 November).
             { value: 'main', label: 'Main stores' },
-            { value: 'dealer', label: 'Dealers' },
             { value: 'consignment', label: 'Consignment' },
+            { value: 'dealer', label: 'Dealers' },
           ]}
         />
       </div>

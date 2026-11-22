@@ -12,7 +12,7 @@ import { StoreSalesModal, datesChoice } from './StoreSales'
 import { useData } from '../store/useData'
 import { useViews } from '../store/useViews'
 import { selectSalesReport, type ReportRow, type ReportRule } from '../store/selectors'
-import { CHANNEL_PLURAL, locationById, tradingLocations } from '../data/locations'
+import { CHANNEL_PLURAL, CHANNELS, locationById, tradingLocations } from '../data/locations'
 import { openPrintReport } from '../lib/printReport'
 import { countriesAlphabetical, countryByCode } from '../data/countries'
 import { skuLabel, skus } from '../data/products'
@@ -211,7 +211,7 @@ export function SalesReport() {
                     label={(id) => locationById(id)?.shortName ?? id}
                     options={
                       <>
-                        {(['main', 'dealer', 'consignment'] as const).map((channel) => (
+                        {CHANNELS.map((channel) => (
                           <optgroup key={channel} label={CHANNEL_PLURAL[channel]}>
                             {tradingLocations
                               .filter((l) => l.channel === channel)

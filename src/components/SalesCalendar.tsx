@@ -38,16 +38,21 @@ export function SalesCalendar({
   selected,
   onSelect,
   monthActions,
+  startMonth,
 }: {
   locationId?: string
   selected?: string
   onSelect?: (day: string) => void
+  /** The month it opens on, "2026-10": the month of the dates chosen above it (22 November). */
+  startMonth?: string
   /** More in the header, for the month on show: a store's month export. */
   monthActions?: (month: string) => ReactNode
 }) {
   const data = useData()
   const thisMonth = monthKey(data.today)
-  const [month, setMonth] = useState(() => (selected ? monthKey(selected) : thisMonth))
+  const [month, setMonth] = useState(() =>
+    startMonth && startMonth <= thisMonth ? startMonth : selected ? monthKey(selected) : thisMonth,
+  )
   const [open, setOpen] = useState<string | null>(null)
   /** A store tapped in the day's window: its pop-up, for that day (20 November). */
   const [storeDay, setStoreDay] = useState<{ id: string; day: string } | null>(null)

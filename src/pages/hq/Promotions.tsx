@@ -18,13 +18,12 @@ import {
   type PromotionMechanic,
   type PromotionState,
 } from '../../data/promotions'
-import { CHANNEL_PLURAL, locations, locationById, type Channel } from '../../data/locations'
+import { CHANNEL_PLURAL, CHANNELS, locations, locationById, type Channel } from '../../data/locations'
 import { addDays, formatDate } from '../../lib/dates'
 import { downloadCsv } from '../../lib/exportCsv'
 import { num } from '../../lib/format'
 
 const MECHANICS: PromotionMechanic[] = ['discount', 'bundle', 'gift', 'member', 'other']
-const CHANNELS: Channel[] = ['main', 'dealer', 'consignment']
 
 const STATE_TONE: Record<PromotionState, 'good' | 'active' | 'neutral'> = {
   running: 'good',

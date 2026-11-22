@@ -13,12 +13,15 @@ import { SalesCalendar } from '../../components/SalesCalendar'
 import { CountryDetailModal } from '../../components/CountryDetail'
 import { StoreSalesModal, datesChoice, monthChoice, windowChoices, type StorePeriodChoice } from '../../components/StoreSales'
 import { OutletOrderControl } from '../../components/OutletOrderControl'
+import { FromTo } from '../../components/FromTo'
 import { useOutletSort, type OutletSort } from '../../store/useOutletOrder'
+import { useViews } from '../../store/useViews'
 import { ChartFrame } from '../../components/charts/ChartFrame'
 import { Donut, DonutTable, type DonutSlice } from '../../components/charts/Donut'
 import { OriginRibbon, OriginTable } from '../../components/charts/OriginRibbon'
 import { SkuBars, SkuTable } from '../../components/charts/SkuBars'
 import { Sparkline } from '../../components/charts/Sparkline'
+import { SERIES } from '../../components/charts/palette'
 import { useData } from '../../store/useData'
 import { useCan, useCurrentUser } from '../../store/useAuth'
 import { canOpen } from '../../components/layout/nav'
@@ -35,15 +38,18 @@ import {
   selectNotFiled,
   selectOriginMix,
   selectPartnerMonth,
+  selectPartnerPeriod,
   selectSkuPerformance,
+  selectStoreTotals,
   selectToday,
   type PartnerChannel,
 } from '../../store/selectors'
 import { CHANNELS, locationById, MORNING_WATCHLIST, tradingLocations } from '../../data/locations'
 import { isOpen, STATUS_LABEL, STATUS_OWNER } from '../../lib/po-machine'
-import { addDays, formatDate, monthKey, monthLabel, relativeDay, shiftMonth, startOfMonth } from '../../lib/dates'
+import { addDays, formatDate, monthKey, monthLabel, relativeDay, shiftMonth, spanLabel, startOfMonth } from '../../lib/dates'
+import { restoreDates } from '../../lib/views'
 import { num, rm, rmCompact } from '../../lib/format'
-import type { CrmData } from '../../data/types'
+import type { CrmData, DateStr } from '../../data/types'
 
 /**
  * The leadership screen — Davy's, Kelly's and Chloe's, and the founder's.
@@ -67,6 +73,13 @@ import type { CrmData } from '../../data/types'
  * **A store opens in a pop-up first** (20 November: "it's ideal to have
  * pop-up everywhere with detailed details"): its figures for the window the
  * card or chart shows, and what is behind them, then Open full detail.
+ *
+ * **22 November.** Consignment sits on the left and the dealers on the right,
+ * as on Revenue and everywhere else, and both open on their figures. A From
+ * and To under the greeting takes consignment, the main stores, the dealers,
+ * the best sellers and the countries to those dates; the four boxes, who is
+ * selling today and the calendar stay as they are. Partners count a month
+ * when its 1st is in the dates.
  */
 
 /**
@@ -79,11 +92,15 @@ import type { CrmData } from '../../data/types'
  */
 const FOUNDER_ALERTS = ['missed_closing', 'correction_pending', 'target_risk']
 
-/** The chart palette has six hues; past six, the rest fold into one "Other" slice. */
+/**
+ * The ring draws as many slices as the palette has colours, so each matches
+ * its row in the figures (22 November: "make sure they all have different
+ * colour boxes"); past twelve, the rest fold into one "Other" slice.
+ */
 const toSlices = (rows: { key: string; label: string; value: number }[], other: (n: number) => string): DonutSlice[] => {
   const positive = rows.filter((r) => r.value > 0)
-  const head = positive.slice(0, 6)
-  const tail = positive.slice(6)
+  const head = positive.slice(0, SERIES.length)
+  const tail = positive.slice(SERIES.length)
   return [
     ...head,
     ...(tail.length ? [{ key: 'OTHER', label: other(tail.length), value: tail.reduce((a, r) => a + r.value, 0) }] : []),
@@ -99,7 +116,23 @@ export function Overview() {
   const open = (path: string) => (user && canOpen(user.role, path) ? path : undefined)
   const capability = useCan()
   const executive = user?.role === 'director'
-  const filter = useMemo(() => emptyFilter(addDays(data.today, -29), data.today), [data.today])
+  /**
+   * The dates chosen under the greeting (22 November: "Add the date filter"),
+   * kept for when you come back; none until chosen, and the page is as before.
+   */
+  const keep = useViews((s) => s.keep)
+  const [dates, setDatesState] = useState<{ from: DateStr; to: DateStr } | null>(() =>
+    restoreDates(useViews.getState().overview?.dates, data.today),
+  )
+  const setDates = (d: { from: DateStr; to: DateStr } | null) => {
+    setDatesState(d)
+    keep('overview', { dates: d })
+  }
+  const datesWords = dates ? spanLabel(dates) : ''
+  const filter = useMemo(
+    () => (dates ? emptyFilter(dates.from, dates.to) : emptyFilter(addDays(data.today, -29), data.today)),
+    [data.today, dates],
+  )
   /** A country opened from "Which countries bought". */
   const [country, setCountry] = useState<string | null>(null)
   /** A store opened from a card or a chart, on the days that showed it. */
@@ -112,7 +145,11 @@ export function Overview() {
   const openStore = (id: string, initial: string) => setOpened({ id, periods: windowChoices(data.today), initial })
   /** Who is selling: highest first, or the person's own order (20 November). */
   const order = useOutletSort('overview-selling', 'value')
-  const openPartner = (id: string, month: string) => setOpened({ id, periods: [monthChoice(month, data.today)] })
+  // A partner opens on the month shown, or on the dates chosen.
+  const openPartner = (id: string, month?: string) =>
+    setOpened({ id, periods: [month ? monthChoice(month, data.today) : datesChoice(filter.from, filter.to)] })
+  // A main store from the split opens on the month so far, or on the dates chosen.
+  const openMain = (id: string) => (dates ? setOpened({ id, periods: [datesChoice(dates.from, dates.to)] }) : openStore(id, 'monthToDate'))
 
   const mix = useMemo(() => selectOriginMix(data, filter), [data, filter])
   const rows = useMemo(() => selectLocationRows(data, filter), [data, filter])
@@ -136,15 +173,22 @@ export function Overview() {
 
   const mainRows = rows.filter((r) => r.channel === 'main')
 
-  // ── The three splits: dealers, main stores, consignment ─────────────────
+  // ── The three splits: consignment, main stores, dealers ─────────────────
 
   const mainMtd = useMemo(() => {
+    if (dates) {
+      return selectStoreTotals(data, { ...emptyFilter(dates.from, dates.to), channels: ['main'] }).map((s) => ({
+        key: s.locationId,
+        label: locationById(s.locationId)?.shortName ?? s.locationId,
+        value: s.revenue,
+      }))
+    }
     const byStore = new Map(monthToDate.byStore.map((s) => [s.locationId, s]))
     return tradingLocations
       .filter((l) => l.channel === 'main')
       .map((l) => ({ key: l.id, label: l.shortName, value: byStore.get(l.id)?.revenue ?? 0 }))
       .sort((a, b) => b.value - a.value)
-  }, [monthToDate])
+  }, [data, dates, monthToDate])
   const mainMtdTotal = mainMtd.reduce((a, r) => a + r.value, 0)
 
   return (
@@ -163,6 +207,28 @@ export function Overview() {
               ? `${tradingLocations.length} stores · yesterday and this month`
               : `${tradingLocations.length} stores · ${formatDate(data.today)}`}
           </p>
+          {/* From and To (22 November). The founder's version has none of the
+              sections they drive, so it has none. */}
+          {!executive && (
+            <div className="mt-3 flex flex-wrap items-end gap-2">
+              <FromTo
+                from={dates?.from ?? ''}
+                to={dates?.to ?? ''}
+                today={data.today}
+                onChange={(from, to) => setDates({ from, to })}
+                label="Overview"
+              />
+              {dates ? (
+                <Button size="sm" variant="secondary" icon="x" onClick={() => setDates(null)} className="mb-0.5">
+                  Clear dates
+                </Button>
+              ) : (
+                <p className="mb-1 max-w-[300px] text-[11.5px] leading-snug text-ink-3">
+                  Choose dates for consignment, the main stores, dealers, best sellers and countries.
+                </p>
+              )}
+            </div>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           {open('/analytics') && (
@@ -252,39 +318,44 @@ export function Overview() {
         </Panel>
       )}
 
-      {/* ── How the money splits: dealers, and the main stores ────────── */}
+      {/* ── How the money splits: consignment, the main stores, dealers ── */}
+      {/* Consignment on the left and the dealers on the right, as on Revenue
+          and across the CRM (22 November). */}
       {!executive && (
         <div className="grid gap-5 lg:grid-cols-2 xl:grid-cols-3">
-          <PartnerSplit data={data} channel="dealer" onOpen={openPartner} canKey={Boolean(open('/partners'))} />
+          <PartnerSplit data={data} channel="consignment" dates={dates} onOpen={openPartner} canKey={Boolean(open('/partners'))} />
 
           <ChartFrame
-            title="Main stores · month to date"
-            meta={`${formatDate(startOfMonth(data.today))} to today, with today's sales as they stand. Tap a store to open it.`}
+            title={dates ? `Main stores · ${datesWords}` : 'Main stores · month to date'}
+            meta={
+              dates
+                ? `${datesWords}${dates.to === data.today ? ", with today's sales as they stand" : ''}. Tap a store to open it.`
+                : `${formatDate(startOfMonth(data.today))} to today, with today's sales as they stand. Tap a store to open it.`
+            }
             height={230}
             grow
-            table={<DonutTable slices={mainMtd} format={rm} unitHeader="Revenue" onSelect={(id) => openStore(id, 'monthToDate')} />}
+            table={<DonutTable slices={mainMtd} format={rm} unitHeader="Revenue" onSelect={openMain} />}
           >
             <div className="flex h-full items-center justify-center">
               <Donut
                 slices={toSlices(mainMtd, (n) => `${n} other stores`)}
-                centreLabel="month to date"
+                centreLabel={dates ? 'the dates' : 'month to date'}
                 centreValue={rmCompact(mainMtdTotal)}
                 format={rm}
                 size={186}
-                onSelect={(id) => openStore(id, 'monthToDate')}
+                onSelect={openMain}
               />
             </div>
           </ChartFrame>
 
-          {/* Consignment beside the dealers and main stores, above the best sellers (16 November). */}
-          <PartnerSplit data={data} channel="consignment" onOpen={openPartner} canKey={Boolean(open('/partners'))} />
+          <PartnerSplit data={data} channel="dealer" dates={dates} onOpen={openPartner} canKey={Boolean(open('/partners'))} />
         </div>
       )}
 
       {!executive && (
         <ChartFrame
           title="Best sellers"
-          meta="The top 12 by revenue over the last 30 days. The chart colours them by collection."
+          meta={`The top 12 by revenue, ${dates ? datesWords : 'over the last 30 days'}. The chart colours them by collection.`}
           height={230}
           table={<SkuTable rows={skuRows.slice(0, 12)} totalLabel={skuRows.length > 12 ? 'Top 12 total' : 'Total'} />}
         >
@@ -296,7 +367,7 @@ export function Overview() {
       {!executive && (
         <ChartFrame
           title="Which countries bought"
-          meta={`${num(mix.reduce((a, s) => a + s.customers, 0))} customers with a country recorded, last 30 days. Tap a country to open it.`}
+          meta={`${num(mix.reduce((a, s) => a + s.customers, 0))} customers with a country recorded, ${dates ? datesWords : 'last 30 days'}. Tap a country to open it.`}
           height={110}
           note="Counted by customer: one sale is one customer, however much they bought. Recorded against every sale in the main stores; dealers and consignment partners do not capture nationality."
           table={<OriginTable slices={mix} onSelect={setCountry} />}
@@ -489,11 +560,15 @@ export function Overview() {
         <CountryDetailModal
           countryCode={country}
           filter={filter}
-          when="Last 30 days"
+          when={dates ? datesWords : 'Last 30 days'}
           onClose={() => setCountry(null)}
           onStore={(id) => {
             setCountry(null)
-            setOpened({ id, periods: [{ ...datesChoice(filter.from, filter.to), label: 'Last 30 days' }], countryCodes: [country] })
+            setOpened({
+              id,
+              periods: [dates ? datesChoice(filter.from, filter.to) : { ...datesChoice(filter.from, filter.to), label: 'Last 30 days' }],
+              countryCodes: [country],
+            })
           }}
         />
       )}
@@ -536,20 +611,24 @@ const CHANNEL_WORD: Record<PartnerChannel, { one: string; many: string }> = {
 /**
  * A channel's latest month on the overview, shown as soon as any partner of
  * the kind is keyed in (16 November): the partners keyed in so far, best
- * first, with how many that is; a waiting card until there are any.
+ * first, with how many that is; a waiting card until there are any. With
+ * dates chosen (22 November), its months whose 1st is in them instead.
  */
 function PartnerSplit({
   data,
   channel,
+  dates,
   onOpen,
   canKey,
 }: {
   data: CrmData
   channel: PartnerChannel
-  /** A partner tapped: its pop-up, for the month shown. */
-  onOpen: (id: string, month: string) => void
+  dates: { from: DateStr; to: DateStr } | null
+  /** A partner tapped: its pop-up, for the month shown, or for the dates (no month). */
+  onOpen: (id: string, month?: string) => void
   canKey: boolean
 }) {
+  if (dates) return <PartnerDates data={data} channel={channel} dates={dates} onOpen={(id) => onOpen(id)} />
   const month = latestPartnerMonth(data, channel)
   const rows = month ? selectPartnerMonth(data, channel, month).filter((r) => r.has) : []
   const total = partnersIn(channel).length
@@ -600,6 +679,72 @@ function PartnerSplit({
         </div>
       ) : (
         <WaitingForMonth data={data} channel={channel} month={shiftMonth(monthKey(data.today), -1)} canKey={canKey} />
+      )}
+    </ChartFrame>
+  )
+}
+
+/**
+ * A channel over the dates chosen on the Overview: each partner's months whose
+ * 1st is in them, highest first, as on Revenue. Dates holding no 1st say so.
+ */
+function PartnerDates({
+  data,
+  channel,
+  dates,
+  onOpen,
+}: {
+  data: CrmData
+  channel: PartnerChannel
+  dates: { from: DateStr; to: DateStr }
+  onOpen: (id: string) => void
+}) {
+  const p = selectPartnerPeriod(data, channel, dates.from, dates.to)
+  const word = CHANNEL_WORD[channel]
+  const title = channel === 'dealer' ? 'Dealers' : 'Consignment'
+  const many = word.many[0].toUpperCase() + word.many.slice(1)
+  const months = !p.months.length
+    ? null
+    : p.months.length === 1
+      ? monthLabel(p.months[0])
+      : `${monthLabel(p.months[0])} to ${monthLabel(p.months[p.months.length - 1])}`
+  const slices = p.rows
+    .filter((r) => r.months.length > 0)
+    .map((r) => ({ key: r.locationId, label: locationById(r.locationId)?.shortName ?? r.locationId, value: r.revenue }))
+  return (
+    <ChartFrame
+      title={`${title} · ${spanLabel(dates)}`}
+      meta={
+        months
+          ? `${p.withFigure} of ${partnersIn(channel).length} ${word.many} with a figure for ${months}. A month counts when its 1st is in the dates.`
+          : `${many} report a month at a time, counted on its 1st, and these dates hold no 1st.`
+      }
+      height={230}
+      grow
+      table={slices.length ? <DonutTable slices={slices} format={rm} unitHeader="Revenue" onSelect={onOpen} page={PAGE} /> : undefined}
+    >
+      {slices.length ? (
+        <div className="flex h-full items-center justify-center">
+          <Donut
+            slices={toSlices(slices, (n) => `${n} other ${word.many}`)}
+            centreLabel="the dates"
+            centreValue={rmCompact(p.total)}
+            format={rm}
+            size={186}
+            onSelect={onOpen}
+          />
+        </div>
+      ) : (
+        <div className="flex h-full flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-line px-4 text-center">
+          <p className="text-[13px] font-medium text-ink">
+            {months ? `No ${word.one} has a figure for ${months} yet` : 'No month starts in these dates'}
+          </p>
+          <p className="max-w-[340px] text-[12px] text-ink-3">
+            {months
+              ? 'A month shows as soon as one is keyed in.'
+              : 'Take in the 1st of a month, 1 Oct to 31 Oct say, to see the partners’ months.'}
+          </p>
+        </div>
       )}
     </ChartFrame>
   )

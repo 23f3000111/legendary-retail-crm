@@ -11,6 +11,7 @@ import { SalesBoxes } from '../../components/SalesBoxes'
 import { SalesCalendar } from '../../components/SalesCalendar'
 import { StoreSalesModal, datesChoice, windowChoices } from '../../components/StoreSales'
 import { OutletOrderControl } from '../../components/OutletOrderControl'
+import { FromTo } from '../../components/FromTo'
 import { useData } from '../../store/useData'
 import { useCurrentUser } from '../../store/useAuth'
 import { useViews } from '../../store/useViews'
@@ -58,6 +59,12 @@ const PERIODS: Period[] = ['today', 'yesterday', 'monthToDate', 'lastMonth']
  * **Open full detail** for its page. The dates and the channel shown are
  * kept when you leave the page and come back.
  *
+ * **22 November:** From and To sit at the top of the page, beside the
+ * exports ("make sure there is a date filter here"), and the calendar sits
+ * straight under the boxes ("move the calendar up below the boxes"), opening
+ * on the month of the dates chosen. Finance has no boxes and keeps the stores
+ * first, the calendar under them.
+ *
  * Finance opens on the stores themselves: no boxes (16 November).
  */
 export function Locations() {
@@ -87,6 +94,7 @@ export function Locations() {
     if (!from && !to) return setDates(null)
     setDates(chooseDates(from || to, to || from, data.today))
   }
+  const calendarMonth = dates ? monthKey(dates.to) : undefined
 
   const windows = salesWindows(data.today)
   const allRows = useMemo(() => selectStoreSales(data), [data])
@@ -277,7 +285,15 @@ export function Locations() {
             {tradingLocations.length} trading, {coming.length} opening soon.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-end gap-2">
+          {/* From and To at the top (22 November): the table and the exports
+              are those days alone, and the calendar opens on their month. */}
+          <FromTo from={dates?.from ?? ''} to={dates?.to ?? ''} today={data.today} onChange={pick} label="Stores" />
+          {dates && (
+            <Button size="sm" variant="secondary" icon="x" onClick={() => setDates(null)} className="mb-0.5">
+              Clear dates
+            </Button>
+          )}
           <Button variant="secondary" icon="download" onClick={exportRows}>
             CSV
           </Button>
@@ -289,6 +305,11 @@ export function Locations() {
 
       {!finance && <SalesBoxes />}
 
+      {/* The calendar under the boxes (22 November: "move the calendar up below the boxes").
+          Finance has no boxes and opens on the stores themselves (16 November), so
+          theirs stays under the table. */}
+      {!finance && <SalesCalendar key={calendarMonth ?? 'now'} startMonth={calendarMonth} />}
+
       <Panel>
         <PanelHeader
           eyebrow="Estate"
@@ -298,68 +319,36 @@ export function Locations() {
               ? `Only ${datesWords}: each store's sales, units and customers for those days. Days that have ended are as filed; today is live. Tap a store to see what is behind its figures.`
               : view === 'consignment' || view === 'dealer'
                 ? 'Dealers and consignment partners report a month at a time: last month is their figure, and the days show a dash. Tap one to open it.'
-                : `Today is live; yesterday and the month are as filed. ${view === 'main' ? 'Every main store at once' : `${PAGE} at a time`}; tap a store, or one of its figures, to see what is behind it.`
+                : `Today is live; yesterday and the month are as filed. ${view === 'main' ? 'Every main store at once' : `${PAGE} at a time`}; tap a store, or one of its figures, to see what is behind it. From and To at the top of the page show any other days.`
           }
           action={
-            <div className="flex flex-wrap items-center gap-2">
-              <TextInput
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search stores"
-                className="h-8 w-[170px] text-[12.5px]"
-              />
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <div className="w-[170px]">
+                <TextInput
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search stores"
+                  className="h-8 text-[12.5px]"
+                />
+              </div>
+              {/* Main, then consignment, then dealers, as everywhere (22 November). */}
               <SegmentedControl<View>
                 size="sm"
                 value={view}
                 onChange={setView}
                 options={[
                   { value: 'main', label: 'Main' },
-                  { value: 'dealer', label: 'Dealers' },
                   { value: 'consignment', label: 'Consignment' },
+                  { value: 'dealer', label: 'Dealers' },
                   { value: 'all', label: 'All' },
                 ]}
               />
+              <OutletOrderControl sort={order} channels={view === 'all' ? CHANNELS : [view]} />
             </div>
           }
         />
         <Rule />
         <PanelBody className="space-y-4">
-          {/* From and To (20 November): choose them and the table is those days alone. */}
-          <div className="flex flex-wrap items-end gap-x-3 gap-y-2 rounded-xl border border-line bg-surface-2 px-3 py-2.5">
-            <label className="block">
-              <span className="eyebrow mb-1 block">From</span>
-              <TextInput
-                type="date"
-                aria-label="From"
-                value={dates?.from ?? ''}
-                max={data.today}
-                onChange={(e) => pick(e.target.value, dates?.to ?? '')}
-                className="h-9 w-[156px] text-[12.5px]"
-              />
-            </label>
-            <label className="block">
-              <span className="eyebrow mb-1 block">To</span>
-              <TextInput
-                type="date"
-                aria-label="To"
-                value={dates?.to ?? ''}
-                max={data.today}
-                onChange={(e) => pick(dates?.from ?? '', e.target.value)}
-                className="h-9 w-[156px] text-[12.5px]"
-              />
-            </label>
-            {dates ? (
-              <Button size="sm" variant="secondary" icon="x" onClick={() => setDates(null)} className="mb-0.5">
-                Clear dates
-              </Button>
-            ) : (
-              <p className="mb-1.5 text-[12px] text-ink-3">Choose dates to see only those days. Until then: today, yesterday, the month and last month.</p>
-            )}
-            <div className="mb-0.5 ml-auto">
-              <OutletOrderControl sort={order} channels={view === 'all' ? CHANNELS : [view]} />
-            </div>
-          </div>
-
           {dates ? (
             chosenRows.length ? (
               <FiguresTable<StoreTotal>
@@ -403,7 +392,7 @@ export function Locations() {
         </PanelBody>
       </Panel>
 
-      <SalesCalendar />
+      {finance && <SalesCalendar key={calendarMonth ?? 'now'} startMonth={calendarMonth} />}
 
       {coming.length > 0 && (
         <Panel>

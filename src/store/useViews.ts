@@ -23,7 +23,9 @@ export interface Views {
    * dates of its consignment, dealers and By channel, each its own.
    */
   revenue?: { rules?: unknown; month?: string; dates?: Record<string, unknown> }
-  keep: <K extends 'analytics' | 'stores' | 'revenue'>(page: K, value: Views[K]) => void
+  /** The Overview: the dates chosen under the greeting, if any (22 November). */
+  overview?: { dates: { from: DateStr; to: DateStr } | null }
+  keep: <K extends 'analytics' | 'stores' | 'revenue' | 'overview'>(page: K, value: Views[K]) => void
   forget: () => void
 }
 
@@ -46,12 +48,12 @@ export const useViews = create<Views>()(
   persist(
     (set) => ({
       keep: (page, value) => set({ [page]: value } as Partial<Views>),
-      forget: () => set({ analytics: undefined, stores: undefined, revenue: undefined }),
+      forget: () => set({ analytics: undefined, stores: undefined, revenue: undefined, overview: undefined }),
     }),
     {
       name: 'legendary-crm-views-v1',
       storage: createJSONStorage(tab),
-      partialize: ({ analytics, stores, revenue }) => ({ analytics, stores, revenue }),
+      partialize: ({ analytics, stores, revenue, overview }) => ({ analytics, stores, revenue, overview }),
     },
   ),
 )

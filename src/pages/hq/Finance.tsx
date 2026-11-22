@@ -145,7 +145,7 @@ export function Finance() {
       <section className="space-y-3">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <p className="eyebrow">Dealers &amp; consignment</p>
+            <p className="eyebrow">Consignment &amp; dealers</p>
             <h2 className="mt-1 font-display text-[18px] font-semibold leading-tight tracking-tight text-ink">
               {keying ? `Key in ${monthLabel(month)}, a figure per partner` : 'Their sales, for the dates chosen'}
             </h2>
