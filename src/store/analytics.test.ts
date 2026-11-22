@@ -154,14 +154,15 @@ describe('a month by channel', () => {
 
   it('gives every channel, the partners with how many are keyed in', () => {
     const rows = selectChannelMonth(d, '2026-11')
+    // Main stores, then consignment, then dealers (22 November).
     expect(rows.map((r) => [r.channel, r.revenue])).toEqual([
       // The month so far: 12 on the 1st to the 7th, and today's one, live.
       ['main', 13 * 188],
-      ['dealer', 1000],
       ['consignment', 500],
+      ['dealer', 1000],
     ])
-    expect(rows[1].keyed).toEqual({ done: 1, of: partnersIn('dealer').length })
-    expect(rows[2].keyed).toEqual({ done: 1, of: consignment.length })
+    expect(rows[1].keyed).toEqual({ done: 1, of: consignment.length })
+    expect(rows[2].keyed).toEqual({ done: 1, of: partnersIn('dealer').length })
     expect(rows[0].keyed).toBeUndefined()
   })
 
@@ -169,8 +170,8 @@ describe('a month by channel', () => {
     const rows = selectChannelMonth(d, '2026-09')
     expect(rows.map((r) => [r.channel, r.revenue, r.keyed?.done])).toEqual([
       ['main', 0, undefined],
-      ['dealer', 0, 0],
       ['consignment', 0, 0],
+      ['dealer', 0, 0],
     ])
   })
 
@@ -180,10 +181,10 @@ describe('a month by channel', () => {
     expect(rows.map((r) => [r.channel, r.revenue])).toEqual([
       // 31 Oct's five, and the eight days of November with today's one live.
       ['main', 18 * 188],
-      ['dealer', 1000],
       ['consignment', 1200],
+      ['dealer', 1000],
     ])
-    expect(rows[2].keyed).toEqual({ done: 2, of: consignment.length })
+    expect(rows[1].keyed).toEqual({ done: 2, of: consignment.length })
     // The 2nd of October to the 31st holds no month's 1st.
     expect(selectChannelPeriod(d, '2026-10-02', '2026-10-31').map((r) => r.revenue)).toEqual([5 * 188, 0, 0])
   })

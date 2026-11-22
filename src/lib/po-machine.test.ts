@@ -10,6 +10,7 @@ import {
   isOpen,
   isPartial,
   poWriteRefusal,
+  rejectionOf,
   STATUS_CHAIN,
   TRANSITIONS,
 } from './po-machine'
@@ -223,5 +224,43 @@ describe('what the server lets an order become (20 October)', () => {
   it('lets a change that keeps the status through: an edit, or Finance’s clearance', () => {
     expect(poWriteRefusal('promoter', was('submitted'), was('submitted'))).toBeNull()
     expect(poWriteRefusal('finance', was('approved'), was('approved'))).toBeNull()
+  })
+})
+
+// 22 November: "in the rejected in order page there should be a mention of
+// who has rejected the order request".
+describe('who rejected an order', () => {
+  const ev = (status: PurchaseOrder['status'], actor: string, at: string, note?: string) => ({
+    status,
+    actor,
+    role: (status === 'rejected' ? 'ops' : 'promoter') as Role,
+    at,
+    ...(note ? { note } : {}),
+  })
+
+  it('names who turned it down, when, and why', () => {
+    const po = order({
+      status: 'rejected',
+      events: [ev('submitted', 'Yap Boon Ming', '2026-11-14T02:00:00Z'), ev('rejected', 'Kelly Tew', '2026-11-15T06:30:00Z', 'Enough stock on the shelf')],
+    })
+    expect(rejectionOf(po)).toEqual({ by: 'Kelly Tew', role: 'ops', at: '2026-11-15T06:30:00Z', note: 'Enough stock on the shelf' })
+  })
+
+  it('takes the latest refusal of an order sent again and turned down again', () => {
+    const po = order({
+      status: 'rejected',
+      events: [
+        ev('submitted', 'Yap Boon Ming', '2026-11-10T02:00:00Z'),
+        ev('rejected', 'Kelly Tew', '2026-11-11T02:00:00Z', 'Too many'),
+        ev('submitted', 'Yap Boon Ming', '2026-11-12T02:00:00Z'),
+        ev('rejected', 'Lim Davy', '2026-11-13T02:00:00Z', 'Still too many'),
+      ],
+    })
+    expect(rejectionOf(po)).toMatchObject({ by: 'Lim Davy', note: 'Still too many' })
+  })
+
+  it('says nothing of an order that is not rejected, even one refused before', () => {
+    const po = order({ status: 'submitted', events: [ev('rejected', 'Kelly Tew', '2026-11-11T02:00:00Z', 'Too many'), ev('submitted', 'Yap Boon Ming', '2026-11-12T02:00:00Z')] })
+    expect(rejectionOf(po)).toBeNull()
   })
 })

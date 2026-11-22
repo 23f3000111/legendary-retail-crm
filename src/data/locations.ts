@@ -268,8 +268,13 @@ export const CHANNEL_PLURAL: Record<Channel, string> = {
   consignment: 'Consignment',
 }
 
-/** Display order, used by every channel switch and every donut. */
-export const CHANNELS: Channel[] = ['main', 'dealer', 'consignment']
+/**
+ * Display order, used by every channel switch, list, picker, table and export:
+ * the main stores, then consignment, then the dealers (22 November: Finance's
+ * Revenue has consignment on the left and the dealers on the right — "swap to
+ * be consistent with the entire CRM").
+ */
+export const CHANNELS: Channel[] = ['main', 'consignment', 'dealer']
 
 export const regions: Region[] = [
   'Kuala Lumpur',

@@ -51,3 +51,12 @@ describe('who keeps the product list (20 October)', () => {
     for (const role of ['md', 'ops', 'pa'] as const) expect(canOpen(role, '/catalogue'), role).toBe(true)
   })
 })
+
+// 22 November: adding, removing and re-pricing products, and the stock export,
+// belong on "Kelly, Chloe and Davy's page" — the Stock page, which Chloe lacked.
+describe('who opens Stock (22 November)', () => {
+  it('lets Davy, Kelly and Chloe open it, and not Finance', () => {
+    for (const role of ['md', 'ops', 'pa'] as const) expect(canOpen(role, '/stock'), role).toBe(true)
+    expect(canOpen('finance', '/stock')).toBe(false)
+  })
+})

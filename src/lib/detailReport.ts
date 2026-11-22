@@ -148,7 +148,7 @@ export interface DetailReport {
 const sen = (n: number) => Math.round(n * 100) / 100
 const storeName = (id: string) => locationById(id)?.name ?? id
 const LAST = Number.MAX_SAFE_INTEGER
-/** The main stores, then the dealers, then consignment, as the app lists them. */
+/** The main stores, then consignment, then the dealers, as the app lists them. */
 const channelRank = (id: string) => {
   const channel = locationById(id)?.channel
   return channel ? CHANNELS.indexOf(channel) : CHANNELS.length

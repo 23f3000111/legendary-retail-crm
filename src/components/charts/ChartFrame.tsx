@@ -2,6 +2,15 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { Icon } from '../ui/icons'
 
+/**
+ * Whether a frame shows its figures: whenever it has some, until the chart is
+ * asked for. Only that choice is remembered, never "there were no figures
+ * yet". On the live site the page is drawn before the figures arrive, and
+ * that left the Overview's consignment and dealers on the ring (22 November:
+ * "should be default in figure on the page. NOT the pie chart").
+ */
+export const showsFigures = (table: ReactNode, chartChosen: boolean): boolean => Boolean(table) && !chartChosen
+
 export interface LegendItem {
   label: string
   color: string
@@ -45,7 +54,8 @@ export function ChartFrame({
 }) {
   // The figures are the first thing shown, the chart a tap away (client, 1
   // November: "the primary view must be the figures").
-  const [showTable, setShowTable] = useState(Boolean(table))
+  const [chartChosen, setChartChosen] = useState(false)
+  const showTable = showsFigures(table, chartChosen)
 
   return (
     <section className="panel flex flex-col">
@@ -60,7 +70,7 @@ export function ChartFrame({
           {action}
           {table && (
             <button
-              onClick={() => setShowTable((s) => !s)}
+              onClick={() => setChartChosen((c) => !c)}
               aria-pressed={showTable}
               title={showTable ? 'Show the chart' : 'Show the figures'}
               className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-line px-2 text-[11px] font-medium text-ink-3 transition-colors duration-200 hover:border-primary/40 hover:text-primary"
@@ -75,7 +85,7 @@ export function ChartFrame({
       <div className="rule mx-5" />
 
       <div className="px-5 pt-4">
-        {showTable && table ? (
+        {showTable ? (
           <div style={{ minHeight: height }}>{table}</div>
         ) : (
           <div

@@ -3,9 +3,9 @@
  * option for all the outlets, Consignment, Dealers, stores ... everywhere ...
  * so client can drag the things and placed as per their choice").
  *
- * Each kind is arranged on its own: the main stores, the dealers, the
- * consignment partners. A list in "My order" puts the main stores first, then
- * the dealers, then consignment. Within each, what the person arranged comes
+ * Each kind is arranged on its own: the main stores, the consignment
+ * partners, the dealers. A list in "My order" puts the main stores first, then
+ * consignment, then the dealers (22 November). Within each, what the person arranged comes
  * first, in their order, and anything they have not placed — a store that
  * opened since, say — after it in the usual order. An outlet in an
  * arrangement that is no longer there is simply passed over.

@@ -7,7 +7,8 @@ import { tradingLocations } from '../data/locations'
  * Consignment, Dealers, stores, in analytics page, everywhere ... so client
  * can drag the things and placed as per their choice". A person's own order:
  * what they arranged first, in that order, and the rest after in the usual
- * order; main stores, then dealers, then consignment.
+ * order; main stores, then consignment, then dealers (22 November: consignment
+ * on the left and dealers on the right, "consistent with the entire CRM").
  */
 
 const main = tradingLocations.filter((l) => l.channel === 'main').map((l) => l.id)
@@ -27,9 +28,9 @@ describe('outlets in a person’s own order', () => {
     expect(order(main, { main: arranged })).toEqual([main[3], main[0], ...main.filter((id) => !arranged.includes(id))])
   })
 
-  it('lists main stores, then dealers, then consignment', () => {
-    const mixed = [consignment[0], dealers[0], main[1], main[0]]
-    expect(order(mixed, { main: [main[1]] })).toEqual([main[1], main[0], dealers[0], consignment[0]])
+  it('lists main stores, then consignment, then dealers', () => {
+    const mixed = [dealers[0], consignment[0], main[1], main[0]]
+    expect(order(mixed, { main: [main[1]] })).toEqual([main[1], main[0], consignment[0], dealers[0]])
   })
 
   it('ignores an outlet arranged that is no longer there', () => {

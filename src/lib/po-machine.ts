@@ -152,6 +152,21 @@ export const availableTransitions = (po: PurchaseOrder, role: Role): Transition[
  */
 export const isApproverNote = (e: PoEvent): boolean => Boolean(e.note?.trim()) && (e.role === 'ops' || e.role === 'md')
 
+/**
+ * Who turned an order down, when and why (22 November: "in the rejected in
+ * order page there should be a mention of who has rejected the order
+ * request"). The latest refusal, while the order stands rejected: one sent
+ * again after a refusal is no longer rejected, and says nothing.
+ */
+export const rejectionOf = (
+  po: Pick<PurchaseOrder, 'status' | 'events'>,
+): { by: string; role: Role; at: string; note?: string } | null => {
+  if (po.status !== 'rejected') return null
+  const e = [...po.events].reverse().find((x) => x.status === 'rejected')
+  if (!e) return null
+  return { by: e.actor, role: e.role, at: e.at, ...(e.note?.trim() ? { note: e.note.trim() } : {}) }
+}
+
 export const isOpen = (po: Pick<PurchaseOrder, 'status'>): boolean =>
   po.status !== 'received' && po.status !== 'rejected' && po.status !== 'draft'
 

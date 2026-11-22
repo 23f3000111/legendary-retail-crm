@@ -74,6 +74,9 @@ export const NAV: Record<Role, NavItem[]> = {
     { to: '/locations', label: 'Stores', icon: 'globe' },
     { to: '/analytics', label: 'Analytics', icon: 'chart' },
     { to: '/catalogue', label: 'Products', icon: 'sparkle' },
+    // Adding, removing and re-pricing products and the stock export are on
+    // "Kelly, Chloe and Davy's page" (22 November): the Stock page.
+    { to: '/stock', label: 'Stock', icon: 'box' },
     { to: '/promotions', label: 'Promotions', icon: 'trophy' },
     // Her overview lists the orders in flight and the stores that did not
     // file, so she can open both. She approves neither (the company chart).
