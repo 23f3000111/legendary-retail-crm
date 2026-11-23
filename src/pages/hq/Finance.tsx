@@ -25,6 +25,7 @@ import { monthDates } from '../../lib/periods'
 import { restoreDates } from '../../lib/views'
 import { downloadCsv } from '../../lib/exportCsv'
 import { num, rm, rmCompact } from '../../lib/format'
+import { MONTH_RULE } from '../../lib/words'
 import type { DateStr } from '../../data/types'
 
 type DatesOf = 'consignment' | 'dealer' | 'channels'
@@ -152,7 +153,7 @@ export function Finance() {
             <p className="mt-1 max-w-2xl text-[12.5px] text-ink-2">
               {keying
                 ? 'One figure per partner for the month; type 0 for one that sold nothing. Margin rates are placeholders until you confirm them.'
-                : 'Each list has its own From and To. A partner reports a month at a time, and its month counts when its 1st is in the dates. Tap a partner for its months.'}
+                : `Each list has its own From and To. Partners report once a month. ${MONTH_RULE} Tap a partner to see its months.`}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -270,8 +271,7 @@ function ByChannel({
         title={when}
         meta={
           <>
-            Main stores as filed, today live; dealers and consignment as keyed in, a month counting when its 1st is in the
-            dates.
+            Main stores as filed, with today live. Consignment and dealers as keyed in. {MONTH_RULE}
             {unkeyed.length > 0 && (
               <span className="text-warn">
                 {' '}

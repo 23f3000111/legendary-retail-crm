@@ -276,7 +276,7 @@ export function StoreDetail() {
           <PanelHeader
             eyebrow="Months"
             title="Sales, month by month"
-            meta="Dealers and consignment partners report one figure a month, keyed in at head office."
+            meta="Consignment partners and dealers report one figure a month, keyed in at head office."
           />
           <Rule />
           <PanelBody>

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { Panel, PanelBody, PanelHeader, Rule } from '../../components/ui/Panel'
 import { Button } from '../../components/ui/Button'
@@ -44,10 +44,11 @@ import {
   selectToday,
   type PartnerChannel,
 } from '../../store/selectors'
-import { CHANNELS, locationById, MORNING_WATCHLIST, tradingLocations } from '../../data/locations'
+import { CHANNELS, locationById, MORNING_WATCHLIST, tradingLocations, type Channel } from '../../data/locations'
 import { isOpen, STATUS_LABEL, STATUS_OWNER } from '../../lib/po-machine'
 import { addDays, formatDate, monthKey, monthLabel, relativeDay, shiftMonth, spanLabel, startOfMonth } from '../../lib/dates'
 import { restoreDates } from '../../lib/views'
+import { MONTH_RULE } from '../../lib/words'
 import { num, rm, rmCompact } from '../../lib/format'
 import type { CrmData, DateStr } from '../../data/types'
 
@@ -73,6 +74,10 @@ import type { CrmData, DateStr } from '../../data/types'
  * **A store opens in a pop-up first** (20 November: "it's ideal to have
  * pop-up everywhere with detailed details"): its figures for the window the
  * card or chart shows, and what is behind them, then Open full detail.
+ *
+ * **23 November.** Under the sales come who is selling, each kind of outlet
+ * in its own colour, then the calendar; which countries bought goes below the
+ * calendar and the best sellers below that.
  *
  * **22 November.** Consignment sits on the left and the dealers on the right,
  * as on Revenue and everywhere else, and both open on their figures. A From
@@ -352,35 +357,7 @@ export function Overview() {
         </div>
       )}
 
-      {!executive && (
-        <ChartFrame
-          title="Best sellers"
-          meta={`The top 12 by revenue, ${dates ? datesWords : 'over the last 30 days'}. The chart colours them by collection.`}
-          height={230}
-          table={<SkuTable rows={skuRows.slice(0, 12)} totalLabel={skuRows.length > 12 ? 'Top 12 total' : 'Total'} />}
-        >
-          <SkuBars rows={skuRows.slice(0, 8)} />
-        </ChartFrame>
-      )}
-
-      {/* ── Country mix ───────────────────────────────────────────────── */}
-      {!executive && (
-        <ChartFrame
-          title="Which countries bought"
-          meta={`${num(mix.reduce((a, s) => a + s.customers, 0))} customers with a country recorded, ${dates ? datesWords : 'last 30 days'}. Tap a country to open it.`}
-          height={110}
-          note="Counted by customer: one sale is one customer, however much they bought. Recorded against every sale in the main stores; dealers and consignment partners do not capture nationality."
-          table={<OriginTable slices={mix} onSelect={setCountry} />}
-        >
-          <div className="flex h-full items-center">
-            <div className="w-full">
-              <OriginRibbon slices={mix} height={44} />
-            </div>
-          </div>
-        </ChartFrame>
-      )}
-
-      {/* ── Who is selling ────────────────────────────────────────────── */}
+      {/* ── Who is selling, straight under the sales (23 November) ─────── */}
       {!executive ? (
         <Panel>
           <PanelHeader
@@ -401,6 +378,7 @@ export function Overview() {
           <Rule />
           <PanelBody className="space-y-6">
             <Ranking
+              channel="main"
               title="Main stores · today so far"
               // Every main store at once (16 November: "All my stores").
               all
@@ -501,6 +479,35 @@ export function Overview() {
       {/* The sales report came off this page (asked on 1 November, after
           Revision 9). It is on Stores and Analytics, which the founder opens too. */}
       <SalesCalendar />
+
+      {/* ── Which countries bought, below the calendar (23 November) ───── */}
+      {!executive && (
+        <ChartFrame
+          title="Which countries bought"
+          meta={`${num(mix.reduce((a, s) => a + s.customers, 0))} customers with a country recorded, ${dates ? datesWords : 'last 30 days'}. Tap a country to open it.`}
+          height={110}
+          note="Counted by customer: one sale is one customer, however much they bought. Recorded against every sale in the main stores; consignment partners and dealers do not capture nationality."
+          table={<OriginTable slices={mix} onSelect={setCountry} />}
+        >
+          <div className="flex h-full items-center">
+            <div className="w-full">
+              <OriginRibbon slices={mix} height={44} />
+            </div>
+          </div>
+        </ChartFrame>
+      )}
+
+      {/* ── Best sellers, further down (23 November) ─────────────────── */}
+      {!executive && (
+        <ChartFrame
+          title="Best sellers"
+          meta={`The top 12 by revenue, ${dates ? datesWords : 'over the last 30 days'}. The chart colours them by collection.`}
+          height={230}
+          table={<SkuTable rows={skuRows.slice(0, 12)} totalLabel={skuRows.length > 12 ? 'Top 12 total' : 'Total'} />}
+        >
+          <SkuBars rows={skuRows.slice(0, 8)} />
+        </ChartFrame>
+      )}
 
       {/* ── Supply ────────────────────────────────────────────────────── */}
       {!executive && (
@@ -716,8 +723,8 @@ function PartnerDates({
       title={`${title} · ${spanLabel(dates)}`}
       meta={
         months
-          ? `${p.withFigure} of ${partnersIn(channel).length} ${word.many} with a figure for ${months}. A month counts when its 1st is in the dates.`
-          : `${many} report a month at a time, counted on its 1st, and these dates hold no 1st.`
+          ? `${p.withFigure} of ${partnersIn(channel).length} ${word.many} with a figure for ${months}. ${MONTH_RULE}`
+          : `${many} report once a month, and no month begins within these dates.`
       }
       height={230}
       grow
@@ -737,12 +744,12 @@ function PartnerDates({
       ) : (
         <div className="flex h-full flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-line px-4 text-center">
           <p className="text-[13px] font-medium text-ink">
-            {months ? `No ${word.one} has a figure for ${months} yet` : 'No month starts in these dates'}
+            {months ? `No ${word.one} has a figure for ${months} yet` : 'No month begins within these dates'}
           </p>
           <p className="max-w-[340px] text-[12px] text-ink-3">
             {months
               ? 'A month shows as soon as one is keyed in.'
-              : 'Take in the 1st of a month, 1 Oct to 31 Oct say, to see the partners’ months.'}
+              : 'Include the first day of a month, for example 1 Oct to 31 Oct, to see the partners’ months.'}
           </p>
         </div>
       )}
@@ -800,7 +807,7 @@ function PartnerRanking({
   if (!month) {
     return (
       <div>
-        <p className="eyebrow mb-2">{label}</p>
+        <ChannelHeading channel={channel}>{label}</ChannelHeading>
         <div className="h-[120px]">
           <WaitingForMonth
             data={data}
@@ -816,6 +823,7 @@ function PartnerRanking({
   const total = partnersIn(channel).length
   return (
     <Ranking
+      channel={channel}
       title={`${label} · ${monthLabel(month)}${keyedIn.length < total ? ` · ${keyedIn.length} of ${total} keyed in` : ''}`}
       onOpen={(id) => onOpen(id, month)}
       order={order}
@@ -830,14 +838,51 @@ function PartnerRanking({
   )
 }
 
+/**
+ * Each kind of outlet in its own colour on Who is selling (23 November: "the
+ * headings and boxes should be different colour oriented"): pink for the main
+ * stores, cyan for consignment, green for the dealers. The names say what
+ * each is, so the colour is never the only sign.
+ */
+const CHANNEL_TONE: Record<Channel, { heading: string; box: string; rank: string }> = {
+  main: {
+    heading: 'bg-[#A21CAF]',
+    box: 'border-[#F5D0FE] border-l-[#A21CAF] bg-[#FDF4FF] hover:border-[#D946EF] hover:border-l-[#A21CAF]',
+    rank: 'text-[#A21CAF]',
+  },
+  consignment: {
+    heading: 'bg-[#0E7490]',
+    box: 'border-[#A5F3FC] border-l-[#0E7490] bg-[#ECFEFF] hover:border-[#06B6D4] hover:border-l-[#0E7490]',
+    rank: 'text-[#0E7490]',
+  },
+  dealer: {
+    heading: 'bg-[#047857]',
+    box: 'border-[#A7F3D0] border-l-[#047857] bg-[#ECFDF5] hover:border-[#10B981] hover:border-l-[#047857]',
+    rank: 'text-[#047857]',
+  },
+}
+
+function ChannelHeading({ channel, children }: { channel: Channel; children: ReactNode }) {
+  return (
+    <p
+      className={`mb-2.5 inline-flex items-center rounded-lg px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide2 text-white [print-color-adjust:exact] ${CHANNEL_TONE[channel].heading}`}
+    >
+      {children}
+    </p>
+  )
+}
+
 /** A league: rank, name, figure, ten at a time unless `all`. Each card opens the outlet's pop-up. */
 function Ranking({
+  channel,
   title,
   rows,
   all = false,
   onOpen,
   order,
 }: {
+  /** Whose colour it wears. */
+  channel: Channel
   title: string
   all?: boolean
   onOpen: (id: string) => void
@@ -862,7 +907,7 @@ function Ranking({
   const { visible, more } = usePaged(ranked, { page: all ? undefined : PAGE })
   return (
     <div>
-      <p className="eyebrow mb-2">{title}</p>
+      <ChannelHeading channel={channel}>{title}</ChannelHeading>
       <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {visible.map((r, i) => (
           <li key={r.locationId}>
@@ -871,7 +916,7 @@ function Ranking({
             <button
               type="button"
               onClick={() => onOpen(r.locationId)}
-              className="group flex w-full flex-wrap items-start gap-x-3 rounded-xl border border-line bg-surface-2 px-3.5 py-3 text-left transition-all duration-200 hover:border-primary/45 hover:shadow-glass sm:block"
+              className={`group flex w-full flex-wrap items-start gap-x-3 rounded-xl border border-l-[3px] px-3.5 py-3 text-left transition-all duration-200 hover:shadow-glass [print-color-adjust:exact] sm:block ${CHANNEL_TONE[channel].box}`}
             >
               {r.above && (
                 <p
@@ -881,7 +926,7 @@ function Ranking({
                 </p>
               )}
               <div className="flex min-w-0 flex-1 items-start gap-2">
-                <span className="readout mt-0.5 w-4 shrink-0 text-[11px] text-ink-3">{i + 1}</span>
+                <span className={`readout mt-0.5 w-4 shrink-0 text-[11px] font-semibold ${CHANNEL_TONE[channel].rank}`}>{i + 1}</span>
                 <div className="min-w-0 flex-1">
                   <p className="flex items-center gap-1 truncate text-[13px] font-medium leading-tight text-ink">
                     <span className="truncate">{r.name}</span>
@@ -890,12 +935,12 @@ function Ranking({
                       className="h-3 w-3 shrink-0 text-ink-3 transition-transform group-hover:translate-x-0.5 group-hover:text-primary"
                     />
                   </p>
-                  <p className="text-[11px] text-ink-3">{r.place}</p>
+                  <p className="text-[11px] text-ink-2">{r.place}</p>
                 </div>
               </div>
               <div className="max-w-[55%] shrink-0 text-right sm:mt-2 sm:max-w-none sm:text-left">
                 <p className="readout text-[15px] font-semibold leading-tight text-ink">{rm(r.revenue)}</p>
-                <p className="mt-0.5 truncate text-[11px] text-ink-3">{r.detail}</p>
+                <p className="mt-0.5 truncate text-[11px] text-ink-2">{r.detail}</p>
               </div>
             </button>
           </li>

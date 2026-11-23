@@ -10,6 +10,7 @@ import { selectPartnerPeriod, type PartnerChannel, type PartnerPeriodRow } from 
 import { locationById } from '../data/locations'
 import { formatDate, monthLabel } from '../lib/dates'
 import { num, rm } from '../lib/format'
+import { MONTH_RULE } from '../lib/words'
 import type { DateStr } from '../data/types'
 
 /**
@@ -57,7 +58,7 @@ export function PartnerPeriodPanel({
         meta={
           p.months.length
             ? `${num(p.withFigure)} of ${num(p.rows.length)} with a figure for ${p.months.map(monthLabel).join(', ')}.`
-            : 'No month starts in these dates. A partner reports a month at a time, and its month counts when its 1st is in the dates.'
+            : `No month begins within these dates. Partners report once a month. ${MONTH_RULE}`
         }
         action={<OutletOrderControl sort={order} channels={[channel]} />}
       />

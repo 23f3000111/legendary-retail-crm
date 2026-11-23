@@ -318,7 +318,7 @@ export function Locations() {
             dates
               ? `Only ${datesWords}: each store's sales, units and customers for those days. Days that have ended are as filed; today is live. Tap a store to see what is behind its figures.`
               : view === 'consignment' || view === 'dealer'
-                ? 'Dealers and consignment partners report a month at a time: last month is their figure, and the days show a dash. Tap one to open it.'
+                ? 'Consignment partners and dealers report a month at a time: last month is their figure, and the days show a dash. Tap one to open it.'
                 : `Today is live; yesterday and the month are as filed. ${view === 'main' ? 'Every main store at once' : `${PAGE} at a time`}; tap a store, or one of its figures, to see what is behind it. From and To at the top of the page show any other days.`
           }
           action={

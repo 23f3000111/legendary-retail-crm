@@ -421,7 +421,7 @@ export function detailCsvBlocks(r: DetailReport, heading: (string | number)[][] 
   blocks.push({ title: 'PRODUCT SALES LISTING', headers: LISTING_HEADERS, rows: listing })
   if (r.partners.length) {
     blocks.push({
-      title: 'DEALERS AND CONSIGNMENT (KEYED IN MONTHLY)',
+      title: 'CONSIGNMENT AND DEALERS (KEYED IN MONTHLY)',
       headers: ['Month', 'Partner', 'Code', 'Net sales MYR'],
       rows: [
         ...r.partners.map((p) => [p.month, storeName(p.locationId), code(p.locationId), p.revenue]),
@@ -539,7 +539,7 @@ export function detailPrintSpec(r: DetailReport, opts: { title: string; subtitle
 
   if (r.partners.length) {
     sections.push({
-      title: 'Dealers and consignment, keyed in monthly',
+      title: 'Consignment and dealers, keyed in monthly',
       headers: ['Month', 'Partner', 'Net sales'],
       right: [false, false, true],
       rows: r.partners.map((p) => [monthLabel(p.month), storeName(p.locationId), rm(p.revenue)]),
@@ -606,7 +606,7 @@ export function detailPrintSpec(r: DetailReport, opts: { title: string; subtitle
     title: opts.title,
     subtitle: opts.subtitle,
     boxes: [
-      { label: 'Sales', value: rm(r.totals.revenue), note: r.partners.length ? 'dealers’ and consignment months included' : undefined },
+      { label: 'Sales', value: rm(r.totals.revenue), note: r.partners.length ? 'consignment and dealers’ months included' : undefined },
       { label: 'Units', value: num(r.totals.units) },
       { label: 'Customers', value: num(r.totals.customers) },
       r.payment.length

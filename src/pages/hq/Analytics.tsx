@@ -39,6 +39,7 @@ import {
   type Metric,
 } from '../../store/selectors'
 import { CHANNELS, CHANNEL_PLURAL, locationById } from '../../data/locations'
+import { oneChannelNote } from '../../lib/words'
 import { countryByCode } from '../../data/countries'
 import { addDays, formatDate } from '../../lib/dates'
 import { buildDetailReport, detailCsvBlocks, detailFilename, detailPrintSpec } from '../../lib/detailReport'
@@ -244,7 +245,10 @@ export function Analytics() {
             <Single
               label="Channel"
               value={`${CHANNEL_PLURAL[oneChannel.channel]} only`}
-              note={`${format(value(oneChannel))}, all of it. A dealer's or consignment partner's month counts when its 1st is in the dates.`}
+              note={oneChannelNote(
+                oneChannel.channel,
+                metric === 'units' ? `${format(value(oneChannel))} units` : format(value(oneChannel)),
+              )}
             />
           )}
           {oneCountry && (
@@ -319,7 +323,7 @@ export function Analytics() {
               title="Which countries bought"
               meta={`${num(countries.reduce((a, c) => a + c.customers, 0))} customers with a country recorded, ${period}. Every country, ${PAGE} at a time. Tap one to open it.`}
               height={240}
-              note="Counted by customer: one sale is one customer. Main stores only — dealers and consignment partners do not capture nationality."
+              note="Counted by customer: one sale is one customer. Main stores only: consignment partners and dealers do not capture nationality."
               table={
                 <FiguresTable
                   rows={countries}
@@ -381,7 +385,7 @@ export function Analytics() {
             title="Products"
             meta={`Every product sold, ${period}: its units and sales for the whole period, in the range's order, ${PAGE} at a time. The chart ranks the best twelve.`}
             height={280}
-            note="Narrowed by the filter's stores, products and countries. A dealer's or consignment partner's month keyed in at head office has no products behind it, so it is not in this table."
+            note="Narrowed by the filter's stores, products and countries. A consignment partner's or dealer's month keyed in at head office has no products behind it, so it is not in this table."
             table={
               <FiguresTable
                 rows={skus}

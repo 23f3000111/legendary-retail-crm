@@ -173,7 +173,7 @@ export function SalesReport() {
       <PanelHeader
         eyebrow="Sales report"
         title="Every store, day by day"
-        meta={`${when}. Days that have ended are as filed; today is as it stands. Tap a row to see that store's day: what sold, at what price, and who bought. Dealers and consignment report a month at a time, below.`}
+        meta={`${when}. Days that have ended are as filed; today is as it stands. Tap a row to see that store's day: what sold, at what price, and who bought. Consignment and dealers report a month at a time, below.`}
         action={
           <div className="flex flex-wrap gap-1.5">
             <Button size="sm" variant="secondary" icon="download" onClick={exportReport} disabled={!report.rows.length}>
