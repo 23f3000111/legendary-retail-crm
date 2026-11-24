@@ -66,6 +66,9 @@ import { num, rm, rmCompact } from '../../lib/format'
  * come back ("then comeback to analytics then the filter I put gone"), and a
  * store opens in a pop-up first — its figures for these dates, what is behind
  * them — with **Open full detail** for its page.
+ *
+ * 24 November, Davy's Analytics: "by store section first then which country
+ * bought then products section". The graphs stay at the foot.
  */
 /** One line of what would otherwise be a section of one; a country or a store opens. */
 function Single({ label, value, note, onOpen }: { label: string; value: React.ReactNode; note: string; onOpen?: () => void }) {
@@ -241,14 +244,12 @@ export function Analytics() {
       {/* The single lines, where a whole section would hold only one. */}
       {!empty && singles > 0 && (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {oneChannel && (
+          {singleStore && (
             <Single
-              label="Channel"
-              value={`${CHANNEL_PLURAL[oneChannel.channel]} only`}
-              note={oneChannelNote(
-                oneChannel.channel,
-                metric === 'units' ? `${format(value(oneChannel))} units` : format(value(oneChannel)),
-              )}
+              label="Store"
+              value={locationById(singleStore.locationId)?.shortName ?? singleStore.locationId}
+              note={`${rm(singleStore.revenue)} · ${num(singleStore.customers)} ${singleStore.customers === 1 ? 'customer' : 'customers'}`}
+              onOpen={() => setStore({ id: singleStore.locationId })}
             />
           )}
           {oneCountry && (
@@ -264,19 +265,21 @@ export function Analytics() {
               onOpen={() => setCountry(oneCountry.countryCode)}
             />
           )}
+          {oneChannel && (
+            <Single
+              label="Channel"
+              value={`${CHANNEL_PLURAL[oneChannel.channel]} only`}
+              note={oneChannelNote(
+                oneChannel.channel,
+                metric === 'units' ? `${format(value(oneChannel))} units` : format(value(oneChannel)),
+              )}
+            />
+          )}
           {oneProduct && (
             <Single
               label="Product"
               value={oneProduct.label}
               note={`${num(oneProduct.units)} units · ${rm(oneProduct.revenue)}`}
-            />
-          )}
-          {singleStore && (
-            <Single
-              label="Store"
-              value={locationById(singleStore.locationId)?.shortName ?? singleStore.locationId}
-              note={`${rm(singleStore.revenue)} · ${num(singleStore.customers)} ${singleStore.customers === 1 ? 'customer' : 'customers'}`}
-              onOpen={() => setStore({ id: singleStore.locationId })}
             />
           )}
         </div>
@@ -293,126 +296,7 @@ export function Analytics() {
         </Panel>
       ) : (
         <>
-          {focusCountry && countryBasket.length > 0 && (
-            <Panel>
-              <PanelHeader
-                eyebrow="Country basket"
-                title={`What ${countryByCode(focusCountry)?.name} bought`}
-                meta={`${period}. Taken from the country recorded against each sale in the main stores.`}
-              />
-              <Rule />
-              <PanelBody>
-                <FiguresTable
-                  rows={countryBasket}
-                  rowKey={(r) => r.skuId}
-                  page={PAGE}
-                  pageKey={JSON.stringify(filter)}
-                  columns={[
-                    { header: 'Product', render: (r) => r.label },
-                    { header: 'Units', align: 'right', render: (r) => num(r.units), total: num(countryBasket.reduce((a, r) => a + r.units, 0)) },
-                    { header: 'Sales', align: 'right', render: (r) => rm(r.revenue), total: rm(countryBasket.reduce((a, r) => a + r.revenue, 0)) },
-                  ]}
-                />
-              </PanelBody>
-            </Panel>
-          )}
-
-          <div className={`grid gap-5 ${!oneCountry && !oneChannel ? 'lg:grid-cols-2' : ''}`}>
-            {!oneCountry && (
-            <ChartFrame
-              title="Which countries bought"
-              meta={`${num(countries.reduce((a, c) => a + c.customers, 0))} customers with a country recorded, ${period}. Every country, ${PAGE} at a time. Tap one to open it.`}
-              height={240}
-              note="Counted by customer: one sale is one customer. Main stores only: consignment partners and dealers do not capture nationality."
-              table={
-                <FiguresTable
-                  rows={countries}
-                  rowKey={(c) => c.countryCode}
-                  page={PAGE}
-                  pageKey={JSON.stringify(filter)}
-                  onRowClick={(c) => setCountry(c.countryCode)}
-                  empty="No country recorded on these dates."
-                  columns={[
-                    {
-                      header: 'Country',
-                      render: (c) => (
-                        <span className="flex items-center gap-2">
-                          <Flag code={c.countryCode} size={16} fallback={c.flag} />
-                          {c.name}
-                          <Icon name="chevronRight" className="h-3 w-3 text-ink-3" />
-                        </span>
-                      ),
-                    },
-                    { header: 'Customers', align: 'right', render: (c) => num(c.customers), total: num(countries.reduce((a, c) => a + c.customers, 0)) },
-                    { header: 'Units', align: 'right', render: (c) => num(c.units), total: num(countries.reduce((a, c) => a + c.units, 0)) },
-                    { header: 'Sales', align: 'right', render: (c) => rm(c.revenue), total: rm(countries.reduce((a, c) => a + c.revenue, 0)) },
-                    { header: 'Share', align: 'right', render: (c) => `${c.share.toFixed(1)}%`, total: '100.0%' },
-                  ]}
-                />
-              }
-            >
-              <div className="flex h-full items-center">
-                <div className="w-full">
-                  <OriginRibbon slices={foldOrigins(countries, 6)} height={58} />
-                </div>
-              </div>
-            </ChartFrame>
-            )}
-
-            {!oneChannel && (
-            <ChartFrame
-              title={`${METRIC_LABEL[metric]} by channel`}
-              meta={period}
-              height={240}
-              table={<DonutTable slices={channelSlices} format={format} unitHeader={METRIC_LABEL[metric]} />}
-            >
-              <div className="flex h-full items-center justify-center">
-                <Donut
-                  slices={channelSlices}
-                  centreLabel={METRIC_LABEL[metric]}
-                  centreValue={formatCompact(value(totals))}
-                  format={format}
-                  size={176}
-                />
-              </div>
-            </ChartFrame>
-            )}
-          </div>
-
-          {/* ── Every product: its total for the dates, in the range's order ── */}
-          {!oneProduct && (
-          <ChartFrame
-            title="Products"
-            meta={`Every product sold, ${period}: its units and sales for the whole period, in the range's order, ${PAGE} at a time. The chart ranks the best twelve.`}
-            height={280}
-            note="Narrowed by the filter's stores, products and countries. A consignment partner's or dealer's month keyed in at head office has no products behind it, so it is not in this table."
-            table={
-              <FiguresTable
-                rows={skus}
-                rowKey={(r) => r.skuId}
-                page={PAGE}
-                pageKey={JSON.stringify([filter, metric])}
-                empty="No product sold on these dates."
-                columns={[
-                  { header: 'Product', render: (r) => r.label },
-                  ...(metric === 'units'
-                    ? [
-                        { header: 'Units', align: 'right' as const, render: (r: (typeof skus)[number]) => num(r.units), total: num(skus.reduce((a, r) => a + r.units, 0)) },
-                        { header: 'Sales', align: 'right' as const, render: (r: (typeof skus)[number]) => rm(r.revenue), total: rm(skus.reduce((a, r) => a + r.revenue, 0)) },
-                      ]
-                    : [
-                        { header: 'Sales', align: 'right' as const, render: (r: (typeof skus)[number]) => rm(r.revenue), total: rm(skus.reduce((a, r) => a + r.revenue, 0)) },
-                        { header: 'Units', align: 'right' as const, render: (r: (typeof skus)[number]) => num(r.units), total: num(skus.reduce((a, r) => a + r.units, 0)) },
-                      ]),
-                ]}
-              />
-            }
-          >
-            <SkuBars rows={bars} metric={metric} />
-          </ChartFrame>
-          )}
-
-          {/* ── Every store: its total for the dates ─────────────────────── */}
+          {/* ── Every store, first (24 November): its total for the dates ──── */}
           {!singleStore && (
           <Panel>
             <PanelHeader
@@ -501,6 +385,126 @@ export function Analytics() {
               {storePage.more}
             </PanelBody>
           </Panel>
+          )}
+
+          {/* ── Then the countries: which bought, beside the channels ────── */}
+          {focusCountry && countryBasket.length > 0 && (
+            <Panel>
+              <PanelHeader
+                eyebrow="Country basket"
+                title={`What ${countryByCode(focusCountry)?.name} bought`}
+                meta={`${period}. Taken from the country recorded against each sale in the main stores.`}
+              />
+              <Rule />
+              <PanelBody>
+                <FiguresTable
+                  rows={countryBasket}
+                  rowKey={(r) => r.skuId}
+                  page={PAGE}
+                  pageKey={JSON.stringify(filter)}
+                  columns={[
+                    { header: 'Product', render: (r) => r.label },
+                    { header: 'Units', align: 'right', render: (r) => num(r.units), total: num(countryBasket.reduce((a, r) => a + r.units, 0)) },
+                    { header: 'Sales', align: 'right', render: (r) => rm(r.revenue), total: rm(countryBasket.reduce((a, r) => a + r.revenue, 0)) },
+                  ]}
+                />
+              </PanelBody>
+            </Panel>
+          )}
+
+          <div className={`grid gap-5 ${!oneCountry && !oneChannel ? 'lg:grid-cols-2' : ''}`}>
+            {!oneCountry && (
+            <ChartFrame
+              title="Which countries bought"
+              meta={`${num(countries.reduce((a, c) => a + c.customers, 0))} customers with a country recorded, ${period}. Every country, ${PAGE} at a time. Tap one to open it.`}
+              height={240}
+              note="Counted by customer: one sale is one customer. Main stores only: consignment partners and dealers do not capture nationality."
+              table={
+                <FiguresTable
+                  rows={countries}
+                  rowKey={(c) => c.countryCode}
+                  page={PAGE}
+                  pageKey={JSON.stringify(filter)}
+                  onRowClick={(c) => setCountry(c.countryCode)}
+                  empty="No country recorded on these dates."
+                  columns={[
+                    {
+                      header: 'Country',
+                      render: (c) => (
+                        <span className="flex items-center gap-2">
+                          <Flag code={c.countryCode} size={16} fallback={c.flag} />
+                          {c.name}
+                          <Icon name="chevronRight" className="h-3 w-3 text-ink-3" />
+                        </span>
+                      ),
+                    },
+                    { header: 'Customers', align: 'right', render: (c) => num(c.customers), total: num(countries.reduce((a, c) => a + c.customers, 0)) },
+                    { header: 'Units', align: 'right', render: (c) => num(c.units), total: num(countries.reduce((a, c) => a + c.units, 0)) },
+                    { header: 'Sales', align: 'right', render: (c) => rm(c.revenue), total: rm(countries.reduce((a, c) => a + c.revenue, 0)) },
+                    { header: 'Share', align: 'right', render: (c) => `${c.share.toFixed(1)}%`, total: '100.0%' },
+                  ]}
+                />
+              }
+            >
+              <div className="flex h-full items-center">
+                <div className="w-full">
+                  <OriginRibbon slices={foldOrigins(countries, 6)} height={58} />
+                </div>
+              </div>
+            </ChartFrame>
+            )}
+
+            {!oneChannel && (
+            <ChartFrame
+              title={`${METRIC_LABEL[metric]} by channel`}
+              meta={period}
+              height={240}
+              table={<DonutTable slices={channelSlices} format={format} unitHeader={METRIC_LABEL[metric]} />}
+            >
+              <div className="flex h-full items-center justify-center">
+                <Donut
+                  slices={channelSlices}
+                  centreLabel={METRIC_LABEL[metric]}
+                  centreValue={formatCompact(value(totals))}
+                  format={format}
+                  size={176}
+                />
+              </div>
+            </ChartFrame>
+            )}
+          </div>
+
+          {/* ── Then every product: its total for the dates, in the range's order ── */}
+          {!oneProduct && (
+          <ChartFrame
+            title="Products"
+            meta={`Every product sold, ${period}: its units and sales for the whole period, in the range's order, ${PAGE} at a time. The chart ranks the best twelve.`}
+            height={280}
+            note="Narrowed by the filter's stores, products and countries. A consignment partner's or dealer's month keyed in at head office has no products behind it, so it is not in this table."
+            table={
+              <FiguresTable
+                rows={skus}
+                rowKey={(r) => r.skuId}
+                page={PAGE}
+                pageKey={JSON.stringify([filter, metric])}
+                empty="No product sold on these dates."
+                columns={[
+                  { header: 'Product', render: (r) => r.label },
+                  ...(metric === 'units'
+                    ? [
+                        { header: 'Units', align: 'right' as const, render: (r: (typeof skus)[number]) => num(r.units), total: num(skus.reduce((a, r) => a + r.units, 0)) },
+                        { header: 'Sales', align: 'right' as const, render: (r: (typeof skus)[number]) => rm(r.revenue), total: rm(skus.reduce((a, r) => a + r.revenue, 0)) },
+                      ]
+                    : [
+                        { header: 'Sales', align: 'right' as const, render: (r: (typeof skus)[number]) => rm(r.revenue), total: rm(skus.reduce((a, r) => a + r.revenue, 0)) },
+                        { header: 'Units', align: 'right' as const, render: (r: (typeof skus)[number]) => num(r.units), total: num(skus.reduce((a, r) => a + r.units, 0)) },
+                      ]),
+                ]}
+              />
+            }
+          >
+            <SkuBars rows={bars} metric={metric} />
+          </ChartFrame>
           )}
 
           {/* ── The graphs, at the foot of the page ──────────────────────── */}
