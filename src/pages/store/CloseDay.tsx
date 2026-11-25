@@ -1018,7 +1018,7 @@ function ClosingForm({
               )
             ) : firstCount ? (
               <Badge tone={stillToCount > 0 ? 'warn' : 'good'} icon={stillToCount > 0 ? 'alert' : 'check'}>
-                {stillToCount > 0 ? `${stillToCount} still to count` : 'All counted'}
+                {stillToCount > 0 ? `${stillToCount} still to count` : 'All filled in'}
               </Badge>
             ) : changedCounts > 0 ? (
               <Badge tone="warn">{changedCounts} changed</Badge>

@@ -23,7 +23,10 @@ import { can, seedPeople, ROLE_LABEL, type Person, type Role } from '../data/peo
 import { formatDate, monthKey, monthLabel, todayInMalaysia } from '../lib/dates'
 import {
   applyCatalogue,
+  collectionRecord,
+  collections,
   entryOf,
+  MAX_COLLECTION_NAME,
   newCodeFor,
   products,
   skuById,
@@ -32,6 +35,7 @@ import {
   TIER_LABEL,
   type CatalogueEntry,
   type CollectionId,
+  type MadeCollection,
   type ProductOrder,
   type Variant,
 } from '../data/products'
@@ -83,10 +87,10 @@ export const PARTNER_KEYERS: Role[] = ['md', 'ops', 'pa', 'finance']
 export interface ProductInput {
   /** The line being changed. Absent for a new one. */
   skuId?: string
-  /** A new line of a fragrance already on the range… */
+  /** A new line of a product already on the range… */
   productId?: string
-  /** …or of a new fragrance. */
-  newProduct?: { name: string; collectionId: CollectionId }
+  /** …or of a new product, in a collection there already or one being made (25 November). */
+  newProduct?: { name: string; collectionId?: CollectionId; newCollection?: string }
   variant?: Variant
   size?: string
   retailPriceMYR: number
@@ -1178,6 +1182,8 @@ export const useData = create<DataState>()((set, get) => {
       const promotion2 = input.promotion2MYR && input.promotion2MYR > 0 ? input.promotion2MYR : undefined
 
       let entry: CatalogueEntry
+      /** The collection being made with it, if one is. */
+      let madeCollection = ''
       if (existing) {
         const { promotion2MYR: _p, canGoFree: _f, ...kept } = entryOf(existing)
         void _p, _f
@@ -1196,14 +1202,30 @@ export const useData = create<DataState>()((set, get) => {
         let productId = input.productId ?? ''
         let product: CatalogueEntry['product']
         if (input.newProduct) {
+          const { newCollection, collectionId } = input.newProduct
           const name = input.newProduct.name.trim()
-          if (!name) return { ok: false, error: 'A new fragrance needs a name.' }
+          if (!name) return { ok: false, error: 'A new product needs a name.' }
           const same = products.find((p) => p.name.toLowerCase() === name.toLowerCase())
           if (same) return { ok: false, error: `${same.name} is already on the range — choose it from the list.` }
+          let collection: MadeCollection | undefined
+          if (newCollection !== undefined) {
+            const title = newCollection.trim()
+            if (!title) return { ok: false, error: 'A new collection needs a name.' }
+            if (title.length > MAX_COLLECTION_NAME) {
+              return { ok: false, error: `Keep the collection’s name to ${MAX_COLLECTION_NAME} letters.` }
+            }
+            const there = collections.find((c) => c.name.toLowerCase() === title.toLowerCase())
+            if (there) return { ok: false, error: `${there.name} is already a collection — choose it from the list.` }
+            collection = { id: unique(slug(title), (id) => collections.some((c) => c.id === id)), name: title }
+            madeCollection = title
+          } else {
+            collection = collections.find((c) => c.id === collectionId)
+            if (!collection) return { ok: false, error: 'Choose the collection, or make a new one.' }
+          }
           productId = unique(slug(name), (id) => products.some((p) => p.id === id))
-          product = { id: productId, name, collectionId: input.newProduct.collectionId }
+          product = { id: productId, name, ...collectionRecord(collection) }
         }
-        if (!productId) return { ok: false, error: 'Choose the fragrance.' }
+        if (!productId) return { ok: false, error: 'Choose the product, or make a new one.' }
         if (!size) return { ok: false, error: 'Give the size, like 30ml or Set.' }
         const twin = skus.find(
           (s) => s.productId === productId && s.variant === variant && s.size.toLowerCase() === size.toLowerCase(),
@@ -1261,13 +1283,15 @@ export const useData = create<DataState>()((set, get) => {
         entityId: entry.skuId,
         detail: existing
           ? changes.join(' · ')
-          : entry.variant === 'vial'
-            ? 'Given free, counted every night'
-            : entry.variant === 'tester'
-              ? 'A tester: ordered, never sold or counted'
-              : `Retail ${rm(entry.retailPriceMYR)} · Promotion ${rm(entry.promotionPriceMYR)}${
-                  entry.promotion2MYR ? ` · Promotion 2 ${rm(entry.promotion2MYR)}` : ''
-                }`,
+          : `${madeCollection ? `New collection ${madeCollection} · ` : ''}${
+              entry.variant === 'vial'
+                ? 'Given free, counted every night'
+                : entry.variant === 'tester'
+                  ? 'A tester: ordered, never sold or counted'
+                  : `Retail ${rm(entry.retailPriceMYR)} · Promotion ${rm(entry.promotionPriceMYR)}${
+                      entry.promotion2MYR ? ` · Promotion 2 ${rm(entry.promotion2MYR)}` : ''
+                    }`
+            }`,
       })
       return { ok: true }
     },

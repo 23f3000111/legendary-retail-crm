@@ -42,7 +42,8 @@
  * on the location, not on the product.
  */
 
-export type CollectionId = 'signature' | 'nyonya' | 'three-wishes' | 'spirit'
+/** One of the four built in, or one head office made (25 November). */
+export type CollectionId = string
 
 export type Variant = 'retail' | 'set' | 'travel' | 'vial' | 'tester'
 
@@ -489,12 +490,59 @@ export const inBuiltInOrder = <T extends { id: string }>(list: T[]): T[] =>
 export let skus: Sku[] = rangeSort(BUILT_IN_SKUS)
 products = byFirstLine(BUILT_IN_PRODUCTS, skus)
 
-export const collections: { id: CollectionId; name: string; slot: 1 | 2 | 3 | 4 }[] = [
+export interface Collection {
+  id: CollectionId
+  name: string
+  /** Which of the chart's colours is its own. */
+  slot: number
+}
+
+/** The client's own four, the ones the server knows. */
+const BUILT_IN_COLLECTIONS: Collection[] = [
   { id: 'signature', name: 'Signature', slot: 1 },
   { id: 'nyonya', name: 'Nyonya', slot: 2 },
   { id: 'three-wishes', name: '3 Wishes', slot: 3 },
   { id: 'spirit', name: 'Spirit', slot: 4 },
 ]
+
+/**
+ * The four, then any head office made, by name. Rebuilt by `applyCatalogue`:
+ * a collection is there while a product's record says it is in it.
+ */
+export let collections: Collection[] = BUILT_IN_COLLECTIONS
+
+const isBuiltInCollection = (id: CollectionId) => BUILT_IN_COLLECTIONS.some((c) => c.id === id)
+
+export const MAX_COLLECTION_NAME = 40
+
+/** A collection head office made, as a product's record carries it. */
+export interface MadeCollection {
+  id: string
+  name: string
+}
+
+/**
+ * The collection a record says head office made, if what it says makes sense.
+ * The server does not check this part of a record, so it is checked here.
+ */
+const madeCollection = (v: unknown): MadeCollection | null => {
+  if (typeof v !== 'object' || v === null) return null
+  const { id, name } = v as { id?: unknown; name?: unknown }
+  if (typeof id !== 'string' || !/^[a-z0-9][a-z0-9-]{0,60}$/.test(id) || isBuiltInCollection(id)) return null
+  if (typeof name !== 'string' || !name.trim() || name.trim().length > MAX_COLLECTION_NAME) return null
+  return { id, name: name.trim() }
+}
+
+/**
+ * How a product's record says which collection it is in. The server takes only
+ * the four built in, so one head office made goes beside the first of them.
+ */
+export const collectionRecord = (
+  collection: MadeCollection,
+): { collectionId: CollectionId; collection?: MadeCollection } =>
+  isBuiltInCollection(collection.id)
+    ? { collectionId: collection.id }
+    : { collectionId: BUILT_IN_COLLECTIONS[0].id, collection: { id: collection.id, name: collection.name } }
 
 export const skuById = (id: string) => skus.find((s) => s.id === id)
 
@@ -535,8 +583,8 @@ derive()
 export interface CatalogueEntry {
   /** The line: one already on the range, or a new one's own id. */
   skuId: string
-  /** A new fragrance, added with its first line. */
-  product?: { id: string; name: string; collectionId: CollectionId }
+  /** A new product, added with its first line; `collection` where head office made that too. */
+  product?: { id: string; name: string; collectionId: CollectionId; collection?: MadeCollection }
   productId: string
   variant: Variant
   /** "30ml", "Set (new)", "Travel Kit". A vial's is "3ml". */
@@ -593,14 +641,36 @@ const withEntry = (sku: Sku, e: CatalogueEntry): Sku => {
  * where they have; without it the range is in the client's order.
  */
 export function applyCatalogue(entries: CatalogueEntry[], order: string[] = []): void {
+  const news = entries.filter((e) => e.product && !BUILT_IN_PRODUCTS.some((p) => p.id === e.product!.id))
+
+  // The collections head office made, by name, so everybody lists and colours
+  // them the same. Any of a product's records may say which it is in: one
+  // saved from a page older than collections says nothing, and takes nothing
+  // away.
+  const made = new Map<string, MadeCollection>()
+  const madeFor = new Map<string, string>()
+  for (const e of news) {
+    const c = madeCollection(e.product!.collection)
+    if (!c) continue
+    if (!made.has(c.id)) made.set(c.id, c)
+    if (!madeFor.has(e.product!.id)) madeFor.set(e.product!.id, c.id)
+  }
+  collections = [
+    ...BUILT_IN_COLLECTIONS,
+    ...[...made.values()]
+      .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+      .map((c, i) => ({ ...c, slot: BUILT_IN_COLLECTIONS.length + 1 + i })),
+  ]
+
   const added = new Map<string, Product>()
-  for (const e of entries) {
-    if (!e.product || BUILT_IN_PRODUCTS.some((p) => p.id === e.product!.id)) continue
-    added.set(e.product.id, {
-      id: e.product.id,
-      name: e.product.name,
-      collection: collections.find((c) => c.id === e.product!.collectionId)?.name ?? '',
-      collectionId: e.product.collectionId,
+  for (const e of news) {
+    const product = e.product!
+    const collectionId = madeFor.get(product.id) ?? product.collectionId
+    added.set(product.id, {
+      id: product.id,
+      name: product.name,
+      collection: collections.find((c) => c.id === collectionId)?.name ?? '',
+      collectionId,
       family: '',
       audience: 'Unisex',
     })
@@ -654,8 +724,16 @@ export const entryOf = (sku: Sku): CatalogueEntry => {
   const product = isAddedProduct(sku.productId) ? productById(sku.productId) : undefined
   return {
     skuId: sku.id,
-    // A fragrance head office added travels with each of its lines.
-    ...(product ? { product: { id: product.id, name: product.name, collectionId: product.collectionId } } : {}),
+    // A product head office added travels with each of its lines, and its collection with it.
+    ...(product
+      ? {
+          product: {
+            id: product.id,
+            name: product.name,
+            ...collectionRecord({ id: product.collectionId, name: product.collection }),
+          },
+        }
+      : {}),
     productId: sku.productId,
     variant: sku.variant,
     size: sku.size,

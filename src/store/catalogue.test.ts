@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { useData } from './useData'
 import { settle, signInAs, startFixture, written } from './testing'
-import { applyCatalogue, countedSkus, sellableSkus, skuById, skus, tiersFor, type CatalogueEntry, type ProductOrder } from '../data/products'
+import { applyCatalogue, collections, countedSkus, productById, products, sellableSkus, skuById, skus, tiersFor, type CatalogueEntry, type ProductOrder } from '../data/products'
+import { emptyFilter, skuIdsFor } from './selectors'
 import type { LocalBackend } from '../api/local'
 import type { PutDoc } from '../api/backend'
 import { movedLines } from '../lib/catalogue'
@@ -223,5 +224,62 @@ describe('what a new order moved', () => {
     expect(movedLines(['a', 'b', 'c', 'd', 'e'], ['d', 'a', 'b', 'c', 'e'])).toEqual(['d'])
     expect(movedLines(['a', 'b', 'c'], ['a', 'b', 'c'])).toEqual([])
     expect(movedLines(['a', 'b', 'c', 'd'], ['b', 'a', 'd', 'c'])).toHaveLength(2)
+  })
+})
+
+// 25 November: "put add collection, make new collection, make new product
+// dropdown in add a product card".
+describe('making a collection', () => {
+  const base = { variant: 'retail' as const, size: '30ml', retailPriceMYR: 238, promotionPriceMYR: 188, reorderPoint: 24, caseSize: 12 }
+  const festive = { ...base, newProduct: { name: 'Moonlight', newCollection: 'Festive' } }
+
+  it('comes with its first product, kept by the server and logged', async () => {
+    expect(save().saveProduct(festive).ok).toBe(true)
+    expect(collections.map((c) => c.name)).toContain('Festive')
+    const moonlight = sellableSkus.find((s) => s.label === 'Moonlight · 30ml')!
+    expect(productById(moonlight.productId)).toMatchObject({ name: 'Moonlight', collection: 'Festive' })
+    expect(written()[0].detail).toMatch(/^New collection Festive · Retail RM 238/)
+
+    await settle()
+    // Read back from the server as anybody else would.
+    applyCatalogue([])
+    signInAs(lb, 'davy')
+    expect(collections.map((c) => c.name)).toContain('Festive')
+  })
+
+  it('takes a second product, chosen from the list like any other', () => {
+    save().saveProduct(festive)
+    const id = collections.find((c) => c.name === 'Festive')!.id
+    expect(save().saveProduct({ ...base, newProduct: { name: 'Starlight', collectionId: id } }).ok).toBe(true)
+    expect(products.filter((p) => p.collectionId === id).map((p) => p.name).sort()).toEqual(['Moonlight', 'Starlight'])
+    expect(collections.filter((c) => c.name === 'Festive')).toHaveLength(1)
+  })
+
+  it('keeps its collection when its price changes, and when it is taken off and put back', () => {
+    save().saveProduct(festive)
+    const sku = sellableSkus.find((s) => s.label === 'Moonlight · 30ml')!
+    expect(save().saveProduct({ skuId: sku.id, retailPriceMYR: 258, promotionPriceMYR: 198, reorderPoint: 24, caseSize: 12 }).ok).toBe(true)
+    expect(save().removeProduct(sku.id).ok).toBe(true)
+    expect(save().restoreProduct(sku.id).ok).toBe(true)
+    expect(productById(sku.productId)?.collection).toBe('Festive')
+  })
+
+  it('refuses a collection with no name, one there already, and a product with no collection', () => {
+    const made = (newProduct: { name: string; newCollection?: string; collectionId?: string }) =>
+      save().saveProduct({ ...base, newProduct }).error
+    expect(made({ name: 'Moonlight', newCollection: ' ' })).toMatch(/collection needs a name/)
+    expect(made({ name: 'Moonlight', newCollection: 'spirit' })).toMatch(/Spirit is already a collection/)
+    expect(made({ name: 'Moonlight', newCollection: 'x'.repeat(41) })).toMatch(/40/)
+    expect(made({ name: 'Moonlight' })).toMatch(/Choose the collection/)
+    expect(made({ name: 'Moonlight', collectionId: 'gone' })).toMatch(/Choose the collection/)
+    expect(collections).toHaveLength(4)
+  })
+
+  it('narrows the figures like any other collection', () => {
+    save().saveProduct(festive)
+    const id = collections.find((c) => c.name === 'Festive')!.id
+    const f = { ...emptyFilter('2026-01-01', '2026-12-31'), collectionIds: [id] }
+    const sku = sellableSkus.find((s) => s.label === 'Moonlight · 30ml')!
+    expect([...skuIdsFor(f)]).toEqual([sku.id])
   })
 })

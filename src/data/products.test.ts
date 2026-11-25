@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   applyCatalogue,
+  collectionOfSku,
+  collections,
   countedSkus,
+  entryOf,
   hasListPrice,
   inBuiltInOrder,
   inClientOrder,
@@ -501,5 +504,88 @@ describe('the order of the range (Revision 10)', () => {
       'violet-retail',
       'mahsuri-retail',
     ])
+  })
+})
+
+// 25 November, of Add a product: "put add collection, make new collection,
+// make new product dropdown". A collection head office makes travels with its
+// products; the server knows only the four built in, so beside it goes one of
+// those.
+describe('collections head office makes', () => {
+  afterEach(() => applyCatalogue([]))
+  const line = (over: Partial<CatalogueEntry> & { productId: string; name: string; collection?: unknown }): CatalogueEntry => {
+    const { name, collection, ...rest } = over
+    return {
+      skuId: `${over.productId}-retail`,
+      product: {
+        id: over.productId,
+        name,
+        collectionId: 'signature',
+        ...(collection !== undefined ? { collection: collection as { id: string; name: string } } : {}),
+      },
+      variant: 'retail',
+      size: '30ml',
+      code: `LGD-${over.productId.slice(0, 3).toUpperCase()}-R30`,
+      retailPriceMYR: 238,
+      promotionPriceMYR: 188,
+      reorderPoint: 24,
+      caseSize: 12,
+      ...rest,
+    }
+  }
+
+  it('joins the four, with a colour of its own, and its product is in it', () => {
+    applyCatalogue([line({ productId: 'moonlight', name: 'Moonlight', collection: { id: 'festive', name: 'Festive' } })])
+    expect(collections.map((c) => c.name)).toEqual(['Signature', 'Nyonya', '3 Wishes', 'Spirit', 'Festive'])
+    expect(collections[4]).toMatchObject({ id: 'festive', slot: 5 })
+    expect(products.find((p) => p.id === 'moonlight')).toMatchObject({ collection: 'Festive', collectionId: 'festive' })
+    expect(collectionOfSku('moonlight-retail')).toBe('festive')
+  })
+
+  it('lists several by name, the same for everybody, and none twice', () => {
+    applyCatalogue([
+      line({ productId: 'sunrise', name: 'Sunrise', collection: { id: 'raya', name: 'Raya' } }),
+      line({ productId: 'moonlight', name: 'Moonlight', collection: { id: 'festive', name: 'Festive' } }),
+      line({ productId: 'starlight', name: 'Starlight', collection: { id: 'festive', name: 'Festive' } }),
+    ])
+    expect(collections.slice(4).map((c) => [c.name, c.slot])).toEqual([
+      ['Festive', 5],
+      ['Raya', 6],
+    ])
+  })
+
+  it('goes back to the four when its products are gone', () => {
+    applyCatalogue([line({ productId: 'moonlight', name: 'Moonlight', collection: { id: 'festive', name: 'Festive' } })])
+    applyCatalogue([])
+    expect(collections).toHaveLength(4)
+  })
+
+  it('is carried by each of its product’s records, beside a collection the server knows', () => {
+    applyCatalogue([line({ productId: 'moonlight', name: 'Moonlight', collection: { id: 'festive', name: 'Festive' } })])
+    expect(entryOf(skuById('moonlight-retail')!).product).toEqual({
+      id: 'moonlight',
+      name: 'Moonlight',
+      collectionId: 'signature',
+      collection: { id: 'festive', name: 'Festive' },
+    })
+    // A product in one of the four carries no more than it did.
+    applyCatalogue([line({ productId: 'jasmine', name: 'Jasmine' })])
+    expect(entryOf(skuById('jasmine-retail')!).product).toEqual({ id: 'jasmine', name: 'Jasmine', collectionId: 'signature' })
+  })
+
+  it('holds while any of its product’s records says so: one saved from an older page does not lose it', () => {
+    applyCatalogue([
+      line({ productId: 'moonlight', name: 'Moonlight', collection: { id: 'festive', name: 'Festive' } }),
+      line({ productId: 'moonlight', name: 'Moonlight', skuId: 'moonlight-set', variant: 'set', size: 'Set' }),
+    ])
+    expect(products.find((p) => p.id === 'moonlight')?.collection).toBe('Festive')
+  })
+
+  it('reads a record that makes no sense as the collection beside it', () => {
+    for (const collection of [null, 'festive', {}, { id: 'Not An Id', name: 'Festive' }, { id: 'festive', name: ' ' }, { id: 'spirit', name: 'Mine' }]) {
+      applyCatalogue([line({ productId: 'moonlight', name: 'Moonlight', collection })])
+      expect(collections, JSON.stringify(collection)).toHaveLength(4)
+      expect(products.find((p) => p.id === 'moonlight')?.collection, JSON.stringify(collection)).toBe('Signature')
+    }
   })
 })

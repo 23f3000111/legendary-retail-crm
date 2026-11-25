@@ -4,10 +4,9 @@ import { Button } from './ui/Button'
 import { ChipToggle, Field, NumberInput, Select, TextInput } from './ui/Field'
 import { Icon } from './ui/icons'
 import { useData } from '../store/useData'
-import { collections, products, VARIANT_LABEL, type CollectionId, type Sku, type Variant } from '../data/products'
+import { collections, MAX_COLLECTION_NAME, VARIANT_LABEL, type Sku, type Variant } from '../data/products'
+import { MAKE_NEW, NOTHING_CHOSEN, pickCollection, pickProduct, productGroups, type AddChoice } from '../lib/addProduct'
 import { moneyInput } from '../lib/format'
-
-const NEW = '__new'
 
 const KINDS: { value: Variant; label: string }[] = [
   { value: 'retail', label: VARIANT_LABEL.retail },
@@ -21,10 +20,13 @@ const KINDS: { value: Variant; label: string }[] = [
  * Adding a product to the range, or changing one's prices and reorder level
  * (client, 20 October). Davy, Kelly and Chloe only.
  *
- * A new line is a size or kit of a fragrance already on the range, or the
- * first line of a new fragrance. Once it is on the range, what it is stays as
- * it was — every sale, count and order names it — and only its prices, its
- * reorder level and its case size change.
+ * A new line is a size or kit of a product already on the range, or the first
+ * line of a new product. Two dropdowns say which (25 November: "put add
+ * collection, make new collection, make new product dropdown"): the product's
+ * name, ending in *Make a new product*, and the collection it is added to,
+ * ending in *Make a new collection*. Once a line is on the range, what it is
+ * stays as it was — every sale, count and order names it — and only its
+ * prices, its reorder level and its case size change.
  */
 export function ProductEditor({
   open,
@@ -39,9 +41,9 @@ export function ProductEditor({
   onSaved: (message: string) => void
 }) {
   const saveProduct = useData((s) => s.saveProduct)
-  const [productId, setProductId] = useState('')
+  const [choice, setChoice] = useState<AddChoice>(NOTHING_CHOSEN)
   const [name, setName] = useState('')
-  const [collectionId, setCollectionId] = useState<CollectionId>('signature')
+  const [collectionName, setCollectionName] = useState('')
   const [variant, setVariant] = useState<Variant>('retail')
   const [size, setSize] = useState('')
   const [retail, setRetail] = useState('')
@@ -56,9 +58,9 @@ export function ProductEditor({
   // What is on record each time it opens, or a blank form for a new one.
   useEffect(() => {
     if (!open) return
-    setProductId(sku?.productId ?? '')
+    setChoice(NOTHING_CHOSEN)
     setName('')
-    setCollectionId('signature')
+    setCollectionName('')
     setVariant(sku?.variant ?? 'retail')
     setSize(sku?.size ?? '')
     setRetail(sku ? moneyInput(sku.retailPriceMYR) : '')
@@ -79,9 +81,16 @@ export function ProductEditor({
     const result = saveProduct({
       ...(sku
         ? { skuId: sku.id }
-        : productId === NEW
-          ? { newProduct: { name, collectionId }, variant, size }
-          : { productId, variant, size }),
+        : choice.productId === MAKE_NEW
+          ? {
+              newProduct:
+                choice.collectionId === MAKE_NEW
+                  ? { name, newCollection: collectionName }
+                  : { name, collectionId: choice.collectionId },
+              variant,
+              size,
+            }
+          : { productId: choice.productId, variant, size }),
       retailPriceMYR: priced ? number(retail) : 0,
       promotionPriceMYR: priced ? number(promotion) : 0,
       promotion2MYR: priced && promotion2.trim() ? Number(promotion2) : null,
@@ -90,7 +99,13 @@ export function ProductEditor({
       caseSize: number(caseSize),
     })
     if (!result.ok) return setError(result.error ?? 'That could not be saved.')
-    onSaved(sku ? `${sku.label} changed` : 'Product added to the range')
+    onSaved(
+      sku
+        ? `${sku.label} changed`
+        : choice.collectionId === MAKE_NEW
+          ? `${name.trim()} added to the range, in a new collection: ${collectionName.trim()}`
+          : 'Product added to the range',
+    )
     onClose()
   }
 
@@ -119,37 +134,49 @@ export function ProductEditor({
       <div className="space-y-3">
         {!sku && (
           <>
-            <Field label="Fragrance">
-              <Select value={productId} onChange={(e) => setProductId(e.target.value)}>
-                <option value="">Choose…</option>
-                {collections.map((c) => (
-                  <optgroup key={c.id} label={c.name}>
-                    {products
-                      .filter((p) => p.collectionId === c.id)
-                      .map((p) => (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Product name">
+                <Select value={choice.productId} onChange={(e) => setChoice((c) => pickProduct(c, e.target.value))}>
+                  <option value="">Choose…</option>
+                  {productGroups(choice).map((g) => (
+                    <optgroup key={g.id} label={g.name}>
+                      {g.products.map((p) => (
                         <option key={p.id} value={p.id}>
                           {p.name}
                         </option>
                       ))}
-                  </optgroup>
-                ))}
-                <option value={NEW}>A new fragrance…</option>
-              </Select>
-            </Field>
-            {productId === NEW && (
+                    </optgroup>
+                  ))}
+                  <option value={MAKE_NEW}>Make a new product…</option>
+                </Select>
+              </Field>
+              <Field label="Collection">
+                <Select value={choice.collectionId} onChange={(e) => setChoice((c) => pickCollection(c, e.target.value))}>
+                  <option value="">Add to a collection…</option>
+                  {collections.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                  <option value={MAKE_NEW}>Make a new collection…</option>
+                </Select>
+              </Field>
+            </div>
+            {choice.productId === MAKE_NEW && (
               <div className="grid gap-3 sm:grid-cols-2">
-                <Field label="Its name">
+                <Field label="New product’s name">
                   <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="Jasmine" />
                 </Field>
-                <Field label="Collection">
-                  <Select value={collectionId} onChange={(e) => setCollectionId(e.target.value as CollectionId)}>
-                    {collections.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
+                {choice.collectionId === MAKE_NEW && (
+                  <Field label="New collection’s name" hint="It is made with this product, its first.">
+                    <TextInput
+                      value={collectionName}
+                      maxLength={MAX_COLLECTION_NAME}
+                      onChange={(e) => setCollectionName(e.target.value)}
+                      placeholder="Festive"
+                    />
+                  </Field>
+                )}
               </div>
             )}
             <div className="grid gap-3 sm:grid-cols-2">
