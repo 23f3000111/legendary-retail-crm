@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { countsFromBoxes, shelfExpected, shelfRows, splitCount } from './counting'
+import { countsFromBoxes, shelfExpected, shelfRows, splitCount, startingBoxes } from './counting'
 import { applyCatalogue, COUNT_GROUPS, entryOf, groupOf, skuById } from '../data/products'
 import { selectStock } from '../store/selectors'
 import type { StockRow } from '../store/selectors'
@@ -169,5 +169,41 @@ describe('what the shelf should hold at the close', () => {
     const expected = shelfExpected(shelf, new Map(), new Map([['dream-vial', 24]]))
     const three = shelfRows(shelf).find((r) => r.key === 'group:spirit-2-vials')!
     expect(three.skus.reduce((a, s) => a + expected.get(s.skuId)!, 0)).toBe(131)
+  })
+})
+
+// The client's Revision #9 again, 25 November: "After promoter receive stock
+// for PO, the received quantity automatically adds into the closing quantity."
+// A store that had never counted (TRX), or a product new to a store, started
+// with an empty box whatever had been received.
+describe('what each box starts at', () => {
+  const shelf = (counts: Record<string, number>): StockRow[] =>
+    stock().map((s) => ({ ...s, counted: s.skuId in counts, onHand: counts[s.skuId] ?? 0 }))
+  const boxes = (counts: Record<string, number>, sold: [string, number][], arrived: [string, number][]) => {
+    const rows = shelf(counts)
+    return startingBoxes(shelfRows(rows), shelfExpected(rows, new Map(sold), new Map(arrived)), new Map(arrived))
+  }
+
+  it('is what a counted line should hold, the delivery in it', () => {
+    expect(boxes({ 'orchid-retail': 20 }, [['orchid-retail', 3]], [['orchid-retail', 24]])['orchid-retail']).toBe('41')
+  })
+
+  it('is what was received, less what sold, for a line the store has never counted', () => {
+    const b = boxes({}, [['orchid-retail', 1]], [['orchid-retail', 48]])
+    expect(b['orchid-retail']).toBe('47')
+  })
+
+  it('is empty for a line that was never counted and never received: nothing is known of it', () => {
+    const b = boxes({ 'orchid-retail': 20 }, [['man-retail', 1]], [['orchid-retail', 48]])
+    expect(b['man-retail']).toBe('')
+    expect(boxes({}, [], [['orchid-retail', 48]])['violet-retail']).toBe('')
+  })
+
+  it('is the three’s total once every vial of it is known, and empty until then', () => {
+    const all: [string, number][] = [['passion-vial', 10], ['dream-vial', 24], ['life-vial', 12]]
+    expect(boxes({}, [], all)['group:spirit-2-vials']).toBe('46')
+    expect(boxes({}, [], [['dream-vial', 24]])['group:spirit-2-vials']).toBe('')
+    // Two counted before, the third new to the store and just received.
+    expect(boxes({ 'passion-vial': 10, 'life-vial': 12 }, [], [['dream-vial', 24]])['group:spirit-2-vials']).toBe('46')
   })
 })

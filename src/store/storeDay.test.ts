@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { partnersIn, selectPartnerMonths, selectStoreDay, storeDayRows } from './selectors'
+import { filedDayRows, partnersIn, selectPartnerMonths, selectStoreDay, storeDayRows } from './selectors'
 import { applyCatalogue, countedSkus } from '../data/products'
 import type { Closing, CrmData, SaleLine } from '../data/types'
 
@@ -150,5 +150,28 @@ describe('a dealer’s months', () => {
       { month: '2026-10', revenue: 1000, keyed: data.partnerSales[0] },
     ])
     expect(selectPartnerMonths(data, 'bsas')).toEqual([])
+  })
+})
+
+// 25 November: on a closed day that is still today, the heading read the day
+// as filed and the Price and Sales columns read the counter, so a sale changed
+// after closing left the two disagreeing.
+describe('a closed day, as it was filed', () => {
+  it('reads its sales, what it took off the shelf and its counts from the closing alone', () => {
+    const rows = filedDayRows(closing)
+    const at = (id: string) => rows.find((r) => r.skuId === id)!
+    expect(rows.map((r) => r.skuId)).toEqual(countedSkus.map((s) => s.id))
+    expect(at('orchid-retail')).toMatchObject({ units: 3, revenue: 574, deducted: 3, onHand: 20 })
+    expect(at('man-retail')).toMatchObject({ units: 1, deducted: 2, onHand: 5 })
+    expect(rows.reduce((a, r) => a + r.revenue, 0)).toBe(closing.revenueMYR)
+  })
+
+  it('does so for today too, whatever the counter says since', () => {
+    const filedToday: Closing = { ...closing, id: `bsas-${today}`, period: today, submittedAt: `${today}T22:05:00+08:00` }
+    const d: CrmData = { ...data, closings: [closing, filedToday] }
+    // The counter has a Violet and an Orchid rung up since.
+    expect(row(selectStoreDay(d, 'bsas', today), 'violet-retail').units).toBe(1)
+    expect(filedDayRows(filedToday).find((r) => r.skuId === 'violet-retail')!.units).toBe(0)
+    expect(filedDayRows(filedToday).reduce((a, r) => a + r.revenue, 0)).toBe(762)
   })
 })

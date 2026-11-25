@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { selectArrivals, selectArrivalsForClosing, selectOnHandAtOrder } from './selectors'
+import { selectArrivals, selectArrivalsForClosing, selectOnHandAtOrder, selectSoldSinceCount, selectSuggestedPoLines } from './selectors'
 import { isApproverNote } from '../lib/po-machine'
 import type { Closing, CrmData, PoEvent, PurchaseOrder } from '../data/types'
 
@@ -147,5 +147,59 @@ describe('what arrived at a store between two counts', () => {
     }
     expect(selectArrivalsForClosing(d, 'melaka', '2026-11-09', ninth.submittedAt).get('dream-vial')).toBe(24)
     expect(selectArrivalsForClosing(d, 'melaka', '2026-11-10').get('dream-vial')).toBe(6)
+  })
+})
+
+// The client's Revision #9, 25 November. What arrives is added to the count;
+// what sold since has to come off it too, the days nobody closed included.
+describe('what sold since the last count, on days that were never closed', () => {
+  const line = (skuId: string, qty: number) => ({ skuId, qty })
+  const unfiled = {
+    '2026-11-07': [line('orchid-retail', 9)], // before the last count: in it already
+    '2026-11-09': [line('orchid-retail', 2), line('man-retail', 1)],
+    '2026-11-10': [line('orchid-retail', 3)],
+  }
+
+  it('adds up those days, not the ones before the count, the day itself or after it', () => {
+    const sold = selectSoldSinceCount(data([eighth], order([sent('2026-11-09T03:49:00.000Z')])), unfiled, 'melaka', '2026-11-10')
+    expect([...sold.entries()]).toEqual([
+      ['orchid-retail', 2],
+      ['man-retail', 1],
+    ])
+  })
+
+  it('takes in every earlier day for a store that has never counted', () => {
+    const sold = selectSoldSinceCount(data([], order([sent('2026-11-09T03:49:00.000Z')])), unfiled, 'melaka', '2026-11-11')
+    expect(sold.get('orchid-retail')).toBe(14)
+  })
+
+  it('is nothing where every day was closed', () => {
+    expect(selectSoldSinceCount(data([eighth], order([sent('2026-11-09T03:49:00.000Z')])), undefined, 'melaka', '2026-11-10').size).toBe(0)
+  })
+})
+
+// On the same page, Ask HQ for stock asked again for what had just arrived:
+// it was no longer on its way, and not yet counted.
+describe('what is suggested after a delivery', () => {
+  const low = closing('2026-11-09', '2026-11-09T22:00:00+08:00', { 'orchid-retail': 3 })
+  const arrived = (qty: number): PurchaseOrder => ({
+    ...order([sent('2026-11-07T03:00:00.000Z')]),
+    status: 'received',
+    lines: [{ skuId: 'orchid-retail', qtyRequested: qty, qtyApproved: qty, qtyShipped: qty }],
+    events: [sent('2026-11-07T03:00:00.000Z'), { status: 'received', actor: 'x', role: 'promoter', at: '2026-11-10T04:00:00.000Z' }],
+  })
+  const suggested = (po: PurchaseOrder) =>
+    selectSuggestedPoLines(data([low], po), 'melaka').find((l) => l.skuId === 'orchid-retail')?.qtyRequested
+
+  it('asks for a low product, as it did', () => {
+    expect(suggested(order([sent('2026-11-09T03:49:00.000Z')]))).toBe(48)
+  })
+
+  it('does not ask again for what was received since the last count', () => {
+    expect(suggested(arrived(48))).toBeUndefined()
+  })
+
+  it('asks only for what is still short when less came', () => {
+    expect(suggested(arrived(12))).toBe(36)
   })
 })

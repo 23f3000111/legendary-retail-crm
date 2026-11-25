@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Panel, PanelBody, PanelHeader, Rule } from '../../components/ui/Panel'
 import { Button } from '../../components/ui/Button'
@@ -14,11 +14,12 @@ import { useData } from '../../store/useData'
 import { useCan, useCurrentUser } from '../../store/useAuth'
 import { useToasts } from '../../components/ui/Toast'
 import {
+  filedDayRows,
   selectArrivalsForClosing,
   selectClosingFor,
   selectClosingOutOfStep,
+  selectSoldSinceCount,
   selectStock,
-  selectStoreDay,
   selectSuggestedPoLines,
   storeDayRows,
 } from '../../store/selectors'
@@ -30,7 +31,7 @@ import { formatDate, formatTimestamp } from '../../lib/dates'
 import { moneyInput, num } from '../../lib/format'
 import { newId, newOrderId } from '../../lib/ids'
 import { closingEditMode, CORRECTION_WINDOW_DAYS, type ClosingEditMode } from '../../lib/editing'
-import { countsFromBoxes, shelfExpected, shelfRows } from '../../lib/counting'
+import { countsFromBoxes, isKnown, shelfExpected, shelfRows, startingBoxes } from '../../lib/counting'
 import { clock, describeLineChanges, describeClosingChanges, figuresOf, money, toSen } from '../../lib/changes'
 import type { Result } from '../../api/backend'
 import type {
@@ -188,7 +189,7 @@ function FiledDay({
   const href = closeHref(location.id, day, data.today, !atCounter)
   const units = filed.lines.reduce((a, l) => a + l.qty, 0)
   // The day as filed, product by product, to look back on (20 November).
-  const dayRows = useMemo(() => selectStoreDay(data, location.id, day).rows, [data, location.id, day])
+  const dayRows = useMemo(() => filedDayRows(filed), [filed])
   // Kelly or Davy, looking at a day a store has asked to correct: decide it here.
   const decides = waiting && capability.approveCorrections
 
@@ -409,8 +410,19 @@ function ClosingForm({
     [data, locationId, day, mode, filed?.submittedAt],
   )
 
-  /** What the shelf should hold now: the opening count, with what arrived, less the day's sales. */
-  const expected = useMemo(() => shelfExpected(stock, soldToday, arrivals), [stock, soldToday, arrivals])
+  // Sold since that count on earlier days nobody closed: off the shelf, and in
+  // no count yet (25 November).
+  const soldEarlier = useMemo(
+    () => selectSoldSinceCount(data, data.unfiledLines[locationId], locationId, day),
+    [data, locationId, day],
+  )
+
+  /** What the shelf should hold now: the opening count, with what arrived, less what sold since. */
+  const expected = useMemo(() => {
+    const sold = new Map(soldEarlier)
+    for (const [skuId, qty] of soldToday) sold.set(skuId, (sold.get(skuId) ?? 0) + qty)
+    return shelfExpected(stock, sold, arrivals)
+  }, [stock, soldToday, soldEarlier, arrivals])
   const expectedOf = (skuId: string) => expected.get(skuId) ?? 0
 
   /**
@@ -431,6 +443,10 @@ function ClosingForm({
    *
    * The same goes, one product at a time, for anything added to the range
    * since the store last counted: its box starts empty, marked new.
+   *
+   * Except what the store has confirmed receiving (25 November: "the received
+   * quantity automatically adds into the closing quantity"): that much is
+   * known, so its box starts at what arrived, less what sold.
    */
   const firstCount = stock.length > 0 && stock.every((s) => !s.counted)
 
@@ -444,12 +460,12 @@ function ClosingForm({
   // total.
   const [counted, setCounted] = useState<Record<string, string>>(() => {
     const was = new Map((start?.stockCount ?? []).map((s) => [s.skuId, s.counted]))
+    const fresh = startingBoxes(rows, expected, arrivals)
     return Object.fromEntries(
       rows.map((row) => {
         const ids = row.skus.map((s) => s.skuId)
         if (ids.every((id) => was.has(id))) return [row.key, String(ids.reduce((a, id) => a + was.get(id)!, 0))]
-        const blank = firstCount || row.skus.some((s) => !s.counted) || mode !== 'new'
-        return [row.key, blank ? '' : String(row.skus.reduce((a, s) => a + expectedOf(s.skuId), 0))]
+        return [row.key, mode === 'new' ? fresh[row.key] : '']
       }),
     )
   })
@@ -482,6 +498,8 @@ function ClosingForm({
   const [showLines, setShowLines] = useState(false)
   /** The sale open in the editor: its key, or 'new' for one that was missed. */
   const [editingSale, setEditingSale] = useState<string | null>(null)
+  /** The day, product by product, further down the page (25 November). */
+  const dayTable = useRef<HTMLDivElement>(null)
 
   /** Every line on the order, whether the app suggested it or the promoter added it. */
   const orderRows = useMemo(() => poRows.map((r) => r.skuId), [poRows])
@@ -689,6 +707,8 @@ function ClosingForm({
       ? ids.reduce((a, id) => a + countOnRecord.get(id)!, 0)
       : undefined
     const allCounted = row.skus.every((s) => s.counted)
+    // Counted here before, or confirmed received since: what it should be is known.
+    const known = row.skus.every((s) => isKnown(s, arrivals))
     return {
       key: row.key,
       label: row.group?.label ?? row.skus[0].label,
@@ -696,8 +716,11 @@ function ClosingForm({
       code: row.group ? row.group.members : row.skus[0].code,
       group: Boolean(row.group),
       sold: row.skus.reduce((a, s) => a + (soldToday.get(s.skuId) ?? 0), 0),
+      // Sold since the last count on days nobody closed: already off what it should be.
+      earlier: row.skus.reduce((a, s) => a + (soldEarlier.get(s.skuId) ?? 0), 0),
       // Confirmed received since the last count: already in what it should be.
       received: row.skus.reduce((a, s) => a + (arrivals.get(s.skuId) ?? 0), 0),
+      known,
       expected,
       value,
       was,
@@ -708,13 +731,45 @@ function ClosingForm({
       changed:
         value !== '' &&
         (mode === 'new'
-          ? !firstCount && allCounted && Number(value) !== expected
+          ? known && Number(value) !== expected
           : was !== undefined && Number(value) !== was),
     }
   })
   const changedCounts = shelf.filter((s) => s.changed).length
   const stillToCount = shelf.filter((s) => s.value === '').length
   const anyReceived = shelf.some((s) => s.received > 0)
+  const anyKnown = shelf.some((s) => s.known)
+
+  /** What a phone's card says of a line, a dot between each part. */
+  const shelfNote = (s: (typeof shelf)[number]): ReactNode[] => [
+    ...(s.received > 0
+      ? [
+          <span key="received" className="font-medium text-good">
+            Received +{num(s.received)}
+          </span>,
+        ]
+      : []),
+    ...(s.sold > 0 ? [`Sold ${num(s.sold)}`] : []),
+    ...(s.earlier > 0 ? [`${num(s.earlier)} sold on days not closed`] : []),
+    ...(s.known
+      ? [
+          <span key="expected">
+            should be <span className="readout font-medium text-ink-2">{num(s.expected)}</span>
+          </span>,
+        ]
+      : mode !== 'new'
+        ? s.was === undefined
+          ? ['Not counted that day']
+          : []
+        : firstCount
+          ? ['Type what is on the shelf']
+          : [
+              <span key="new" className="font-medium text-primary">
+                New — type what is on the shelf
+              </span>,
+            ]),
+    ...(mode !== 'new' && s.changed && s.was !== undefined ? [`filed ${num(s.was)}`] : []),
+  ]
   const setCount = (skuId: string, value: string) => setCounted((v) => ({ ...v, [skuId]: value }))
 
   // The day, product by product, as it will be filed: the sales as they
@@ -820,13 +875,22 @@ function ClosingForm({
           <>
             <Rule />
             <PanelBody>
-              <button
-                onClick={() => setShowLines((v) => !v)}
-                className="flex items-center gap-1.5 text-[12.5px] text-primary hover:underline"
-              >
-                <Icon name={showLines ? 'chevronDown' : 'chevronRight'} className="h-3.5 w-3.5" />
-                {showLines ? 'Hide the sales' : 'See the sales'}
-              </button>
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+                <button
+                  onClick={() => setShowLines((v) => !v)}
+                  className="flex items-center gap-1.5 text-[12.5px] text-primary hover:underline"
+                >
+                  <Icon name={showLines ? 'chevronDown' : 'chevronRight'} className="h-3.5 w-3.5" />
+                  {showLines ? 'Hide the sales' : 'See the sales'}
+                </button>
+                <button
+                  onClick={() => dayTable.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                  className="flex items-center gap-1.5 text-[12.5px] text-primary hover:underline"
+                >
+                  <Icon name="arrowDown" className="h-3.5 w-3.5" />
+                  Deducted stock and sales, product by product
+                </button>
+              </div>
               {showLines && (
                 <ul className="mt-3 space-y-2">
                   {sales.map(([key, group]) => {
@@ -934,7 +998,11 @@ function ClosingForm({
             mode !== 'new'
               ? 'Each box holds the count that was filed.'
               : firstCount
-                ? 'Nothing has been counted at this store yet, so tonight every product is counted from scratch. From tomorrow the boxes fill themselves in and you only change what is different.'
+                ? `Nothing has been counted at this store yet, so tonight every product is counted.${
+                    anyReceived
+                      ? ' What you confirmed receiving is already in its box, less what has sold: check it, and type the rest.'
+                      : ''
+                  } From tomorrow the boxes fill themselves in and you only change what is different.`
                 : anyReceived
                   ? "Each box already holds what the shelf should have after today's sales, with the stock you confirmed receiving added in. If what you count matches, leave it."
                   : "Each box already holds what the shelf should have after today's sales. If what you count matches, leave it."
@@ -980,26 +1048,12 @@ function ClosingForm({
                   <p className="truncate text-[13px] leading-tight text-ink">{s.label}</p>
                   {s.group && <p className="text-[11px] text-ink-3">{s.code}, counted together</p>}
                   <p className="mt-1 text-[11.5px] text-ink-3">
-                    {s.received > 0 && !firstCount && !s.fresh ? (
-                      <span className="font-medium text-good">Received +{num(s.received)} · </span>
-                    ) : null}
-                    {s.sold > 0 ? `Sold ${num(s.sold)}${firstCount ? '' : ' · '}` : ''}
-                    {firstCount ? (
-                      s.sold > 0 || mode !== 'new' ? '' : 'Type what is on the shelf'
-                    ) : s.fresh ? (
-                      mode === 'new' ? (
-                        <span className="font-medium text-primary">New — type what is on the shelf</span>
-                      ) : s.was === undefined ? (
-                        'Not counted that day'
-                      ) : (
-                        ''
-                      )
-                    ) : (
-                      <>
-                        should be <span className="readout font-medium text-ink-2">{num(s.expected)}</span>
-                      </>
-                    )}
-                    {mode !== 'new' && s.changed && s.was !== undefined ? ` · filed ${num(s.was)}` : ''}
+                    {shelfNote(s).map((part, i) => (
+                      <span key={i}>
+                        {i > 0 ? ' · ' : ''}
+                        {part}
+                      </span>
+                    ))}
                   </p>
                 </div>
                 <div className="w-[84px] shrink-0">
@@ -1022,9 +1076,9 @@ function ClosingForm({
                 <tr className="border-b border-line">
                   {[
                     'Product',
-                    ...(anyReceived && !firstCount ? ['Received'] : []),
+                    ...(anyReceived ? ['Received'] : []),
                     'Sold',
-                    firstCount ? '' : 'Should be',
+                    anyKnown ? 'Should be' : '',
                     mode === 'new' ? '' : 'Filed',
                     'On the shelf',
                   ].map((h, i) => (
@@ -1044,7 +1098,9 @@ function ClosingForm({
                       <p className="text-[13px] leading-tight text-ink">
                         {s.label}
                         {s.fresh && mode === 'new' && (
-                          <span className="ml-2 text-[11px] font-medium text-primary">New — count it</span>
+                          <span className="ml-2 text-[11px] font-medium text-primary">
+                            {s.known ? 'New to this store' : 'New — count it'}
+                          </span>
                         )}
                       </p>
                       {s.group ? (
@@ -1053,16 +1109,19 @@ function ClosingForm({
                         <p className="readout text-[10.5px] text-ink-3">{s.code}</p>
                       )}
                     </td>
-                    {anyReceived && !firstCount && (
+                    {anyReceived && (
                       <td className={`readout py-2 pr-3 text-right text-[13px] ${s.received > 0 ? 'font-medium text-good' : 'text-ink-3'}`}>
                         {s.received > 0 ? `+${num(s.received)}` : '—'}
                       </td>
                     )}
                     <td className={`readout py-2 pr-3 text-right text-[13px] ${s.sold > 0 ? 'text-ink' : 'text-ink-3'}`}>
                       {s.sold > 0 ? num(s.sold) : '—'}
+                      {s.earlier > 0 && (
+                        <span className="block text-[10.5px] text-ink-3">+{num(s.earlier)} on days not closed</span>
+                      )}
                     </td>
                     <td className="readout py-2 pr-3 text-right text-[13px] text-ink-2">
-                      {firstCount || s.fresh ? '' : num(s.expected)}
+                      {s.known ? num(s.expected) : ''}
                     </td>
                     <td className="readout py-2 pr-3 text-right text-[13px] text-ink-3">
                       {mode === 'new' ? '' : s.was === undefined ? '—' : num(s.was)}
@@ -1087,17 +1146,19 @@ function ClosingForm({
       </Panel>
 
       {/* ── The day, product by product (20 November) ───────────────────── */}
-      <Panel>
-        <PanelHeader
-          eyebrow="The day, product by product"
-          title={`${num(dayRows.reduce((a, r) => a + r.deducted, 0))} off the shelf · ${money(revenue)} sold`}
-          meta="What each product went for, what the day took off the shelf, what it sold, and the count you are closing with. Tap a product to see what came in and what went out."
-        />
-        <Rule />
-        <PanelBody>
-          <DayStockTable locationId={locationId} rows={dayRows} />
-        </PanelBody>
-      </Panel>
+      <div ref={dayTable} className="scroll-mt-28">
+        <Panel>
+          <PanelHeader
+            eyebrow="The day, product by product"
+            title={`${num(dayRows.reduce((a, r) => a + r.deducted, 0))} off the shelf · ${money(revenue)} sold`}
+            meta="What each product went for, what the day took off the shelf, what it sold, and the count you are closing with. Tap a product to see what came in and what went out."
+          />
+          <Rule />
+          <PanelBody>
+            <DayStockTable locationId={locationId} rows={dayRows} />
+          </PanelBody>
+        </Panel>
+      </div>
 
       {/* ── Ask HQ for stock ──────────────────────────────────────────── */}
       {mode === 'new' ? (

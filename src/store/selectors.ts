@@ -775,6 +775,10 @@ export const selectStock = (data: CrmData, locationId: string, asOf?: DateStr): 
     for (const l of po.lines) inbound.set(l.skuId, (inbound.get(l.skuId) ?? 0) + effectiveQty(l))
   }
 
+  // Received since that count: no longer on its way and in no count yet, but
+  // on the shelf, so it is not asked for again (25 November).
+  const arrived = asOf ? new Map<string, number>() : selectArrivalsForClosing(data, locationId, addDays(data.today, 1))
+
   const soldOf = (skuId: string) =>
     recent.reduce(
       (a, c) => a + c.lines.filter((l) => l.skuId === skuId).reduce((s, l) => s + l.qty, 0),
@@ -801,7 +805,7 @@ export const selectStock = (data: CrmData, locationId: string, asOf?: DateStr): 
 
     // Three weeks of cover, never below the reorder point, rounded to cases.
     const target = Math.max(s.reorderPoint * 2, Math.ceil(velocity * 21))
-    const gap = Math.max(0, target - onHand - (inbound.get(s.id) ?? 0))
+    const gap = Math.max(0, target - onHand - (arrived.get(s.id) ?? 0) - (inbound.get(s.id) ?? 0))
     const product = productById(s.productId)
 
     return {
@@ -1074,6 +1078,29 @@ export const selectArrivalsForClosing = (
     if (arrived > day || when > until) continue
     if (last && (arrived < last.period || (arrived === last.period && !(when > countedAt)))) continue
     for (const l of po.lines) out.set(l.skuId, (out.get(l.skuId) ?? 0) + effectiveQty(l))
+  }
+  return out
+}
+
+/**
+ * What sold on earlier days that were never closed, since a store's last count
+ * before `day`: off the shelf, and in no count yet. It comes off what the
+ * shelf should hold, as a delivery since then goes on (25 November). `unfiled`
+ * is the store's sales on the days it did not close.
+ */
+export const selectSoldSinceCount = (
+  data: Pick<CrmData, 'closings'>,
+  unfiled: Record<DateStr, { skuId: string; qty: number }[]> | undefined,
+  locationId: string,
+  day: DateStr,
+): Map<string, number> => {
+  const last = data.closings
+    .filter((c) => c.locationId === locationId && c.period < day && c.stockCount.length > 0)
+    .reduce<DateStr | undefined>((a, c) => (!a || c.period > a ? c.period : a), undefined)
+  const out = new Map<string, number>()
+  for (const [d, lines] of Object.entries(unfiled ?? {})) {
+    if (d >= day || (last && d <= last)) continue
+    for (const l of lines) out.set(l.skuId, (out.get(l.skuId) ?? 0) + l.qty)
   }
   return out
 }
@@ -2210,6 +2237,20 @@ export const storeDayRows = (
     }
   })
 }
+
+/**
+ * A closed day exactly as it was filed: its sales, what it took off the shelf
+ * and its counts, all from the closing. The counter may have moved on since —
+ * a sale changed after today was closed — and must not be read into it
+ * (25 November).
+ */
+export const filedDayRows = (closing: Closing): StoreDayRow[] =>
+  storeDayRows(
+    closing.lines,
+    [...closing.lines, ...closing.writeOffs],
+    new Map(closing.stockCount.map((c) => [c.skuId, c.counted])),
+    basisOf(closing.locationId),
+  )
 
 // ── Dealers and consignment, month by month ─────────────────────────────────
 

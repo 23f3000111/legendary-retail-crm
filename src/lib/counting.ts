@@ -59,6 +59,35 @@ export function shelfExpected(
 }
 
 /**
+ * Whether what a line should hold is known: this store has counted it, or has
+ * confirmed receiving it since. Nothing else can say what is on the shelf.
+ */
+export const isKnown = (s: Pick<StockRow, 'skuId' | 'counted'>, arrived: Map<string, number>): boolean =>
+  s.counted || (arrived.get(s.skuId) ?? 0) > 0
+
+/**
+ * What each box starts at, on a day being closed for the first time: what the
+ * shelf should hold, where that is known. A store that has never counted, or a
+ * product new to it, starts at what it confirmed receiving, less what sold
+ * (25 November: "the received quantity automatically adds into the closing
+ * quantity"); with nothing received either, the box starts empty and is typed.
+ * A three's box waits until every vial of it is known.
+ */
+export const startingBoxes = (
+  rows: ShelfRow[],
+  expected: Map<string, number>,
+  arrived: Map<string, number>,
+): Record<string, string> =>
+  Object.fromEntries(
+    rows.map((row) => [
+      row.key,
+      row.skus.every((s) => isKnown(s, arrived))
+        ? String(row.skus.reduce((a, s) => a + (expected.get(s.skuId) ?? 0), 0))
+        : '',
+    ]),
+  )
+
+/**
  * One count shared across several lines, in proportion to `weights`: when it
  * matches their total each gets exactly its weight, and a difference is
  * spread by share, the largest remainders first. With nothing to go by — a
