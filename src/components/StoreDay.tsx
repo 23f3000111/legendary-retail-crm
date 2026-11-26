@@ -76,7 +76,7 @@ export function StoreDay({ locationId, day }: { locationId: string; day: string 
           filed
             ? `Filed by ${filed.submittedBy} at ${formatTimestamp(filed.submittedAt)}${
                 filed.editedBy && filed.editedAt ? ` · changed by ${filed.editedBy} at ${formatTimestamp(filed.editedAt)}` : ''
-              }. Price is what each product went for that day. Deducted is what the day took off the shelf: sold, plus any tester, damage or sample. On hand is the count at that day's close. Tap a product to see what came in and what went out.`
+              }. Price is what each product went for that day. Deducted is what the day took off the shelf: sold, plus any tester, damage or sample — and for a vial, what its count says went, where that is more than was rung up. On hand is the count at that day's close. Tap a product to see what came in and what went out.`
             : d.live
               ? 'Today, as it stands. The shelf is counted when the day is closed.'
               : 'Nothing was filed for this day.'

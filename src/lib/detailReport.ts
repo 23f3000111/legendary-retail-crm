@@ -18,6 +18,8 @@ import {
   keyedMonths,
   locationMatches,
   narrowsByProduct,
+  offTheShelf,
+  selectArrivalsForClosing,
   selectStoreTotals,
   skuIdsFor,
   type Filter,
@@ -291,8 +293,14 @@ export function buildDetailReport(data: CrmData, f: Filter): DetailReport {
     })
   const stock: StockDetailRow[] = []
   for (const c of closings) {
+    // As the store's page has it: a vial's from its count, where more went than was rung up (26 November).
     const off = new Map<string, number>()
-    for (const l of [...c.lines, ...c.writeOffs]) off.set(l.skuId, (off.get(l.skuId) ?? 0) + l.qty)
+    const shelf = offTheShelf(
+      [...c.lines, ...c.writeOffs],
+      c.stockCount,
+      selectArrivalsForClosing(data, c.locationId, c.period, c.submittedAt),
+    )
+    for (const l of shelf) off.set(l.skuId, (off.get(l.skuId) ?? 0) + l.qty)
     const rows = c.stockCount
       .filter((s) => allowed.has(s.skuId))
       .map((s) => {

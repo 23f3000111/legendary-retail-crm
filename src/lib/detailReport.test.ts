@@ -172,6 +172,22 @@ describe('the rest of the report', () => {
     ])
   })
 
+  // The client's Revision #10, 26 November: "Please help to confirm ALL stores
+  // vial will update the deducted stock everyday". The export says what the page does.
+  it('takes a vial’s Deducted from its count where more went than was rung up', () => {
+    const vials = closing('bsas', day, [sale('orchid-vial', 1, 0, 'v', 'CN', 'foc')], { cash: 0, ewallet: 0, card: 0 }, {
+      stockCount: [
+        { skuId: 'orchid-retail', opening: 23, counted: 15 },
+        { skuId: 'orchid-vial', opening: 96, counted: 90 },
+      ],
+    })
+    const r = buildDetailReport({ ...data, closings: [vials] }, oneDay)
+    expect(r.stock.map((s) => [s.skuId, s.deducted, s.onHand])).toEqual([
+      ['orchid-retail', 0, 15],
+      ['orchid-vial', 6, 90],
+    ])
+  })
+
   it('sums the customers by country', () => {
     const r = buildDetailReport(data, oneDay)
     expect(r.customers.map((c) => [c.countryCode, c.customers, c.units, c.revenue])).toEqual([

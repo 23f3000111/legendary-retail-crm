@@ -15,6 +15,7 @@ import { useCan, useCurrentUser } from '../../store/useAuth'
 import { useToasts } from '../../components/ui/Toast'
 import {
   filedDayRows,
+  offTheShelf,
   selectArrivalsForClosing,
   selectClosingFor,
   selectClosingOutOfStep,
@@ -188,8 +189,12 @@ function FiledDay({
   const waiting = correction?.status === 'pending'
   const href = closeHref(location.id, day, data.today, !atCounter)
   const units = filed.lines.reduce((a, l) => a + l.qty, 0)
-  // The day as filed, product by product, to look back on (20 November).
-  const dayRows = useMemo(() => filedDayRows(filed), [filed])
+  // The day as filed, product by product, to look back on (20 November). A
+  // vial's Deducted is measured on its count, against what had come in.
+  const dayRows = useMemo(
+    () => filedDayRows(filed, selectArrivalsForClosing(data, location.id, day, filed.submittedAt)),
+    [data, filed, location.id, day],
+  )
   // Kelly or Davy, looking at a day a store has asked to correct: decide it here.
   const decides = waiting && capability.approveCorrections
 
@@ -773,8 +778,18 @@ function ClosingForm({
   const setCount = (skuId: string, value: string) => setCounted((v) => ({ ...v, [skuId]: value }))
 
   // The day, product by product, as it will be filed: the sales as they
-  // stand, what left the shelf, and the counts in the boxes (20 November).
-  const dayRows = storeDayRows(lines, [...lines, ...(filed?.writeOffs ?? [])], boxCounts, basis)
+  // stand, what left the shelf, and the counts in the boxes (20 November). A
+  // vial's Deducted follows its box: what the shelf held, with what came in,
+  // less what is counted now, where that is more than was rung up (26 November).
+  const countedSoFar = stock
+    .filter((s) => boxCounts.has(s.skuId))
+    .map((s) => ({ skuId: s.skuId, opening: s.onHand, counted: boxCounts.get(s.skuId)! }))
+  const dayRows = storeDayRows(
+    lines,
+    offTheShelf([...lines, ...(filed?.writeOffs ?? [])], countedSoFar, arrivals),
+    boxCounts,
+    basis,
+  )
 
   const heading =
     mode === 'new'

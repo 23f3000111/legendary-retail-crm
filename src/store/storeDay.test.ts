@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { filedDayRows, partnersIn, selectPartnerMonths, selectStoreDay, storeDayRows } from './selectors'
+import { filedDayRows, offTheShelf, partnersIn, selectPartnerMonths, selectStoreDay, storeDayRows } from './selectors'
 import { applyCatalogue, countedSkus } from '../data/products'
-import type { Closing, CrmData, SaleLine } from '../data/types'
+import type { Closing, CrmData, PurchaseOrder, SaleLine } from '../data/types'
 
 /**
  * Revision 10, Finance's store page: "the On Hand quantity, show the closing
@@ -173,5 +173,89 @@ describe('a closed day, as it was filed', () => {
     expect(row(selectStoreDay(d, 'bsas', today), 'violet-retail').units).toBe(1)
     expect(filedDayRows(filedToday).find((r) => r.skuId === 'violet-retail')!.units).toBe(0)
     expect(filedDayRows(filedToday).reduce((a, r) => a + r.revenue, 0)).toBe(762)
+  })
+})
+
+// The client's Revision #10, 26 November, Finance's store page: "Please help to
+// confirm ALL stores vial will update the deducted stock everyday". Vials are
+// given away with a purchase and many counters never ring them up, so their
+// Deducted read 0 while the count fell every night.
+describe('what a vial took off the shelf', () => {
+  const vialDay: Closing = {
+    ...closing,
+    id: `bsas-${filedDay}-vials`,
+    lines: [
+      sale('orchid-retail', 2, 188, 'a', 'CN'),
+      sale('orchid-vial', 2, 0, 'a', 'CN', 'foc'),
+      sale('violet-vial', 5, 0, 'b', 'MY', 'foc'),
+    ],
+    stockCount: [
+      // A bottle's count is not its Deducted: that is what sold and was written off.
+      { skuId: 'orchid-retail', opening: 23, counted: 15 },
+      // Down 6 on the count, 2 rung up.
+      { skuId: 'orchid-vial', opening: 96, counted: 90 },
+      // Down 3 on the count, 5 rung up.
+      { skuId: 'violet-vial', opening: 72, counted: 69 },
+      // Never rung up; 24 came in, and 30 are on the shelf.
+      { skuId: 'mahsuri-vial', opening: 10, counted: 30 },
+      // More on the shelf than before and nothing came in that the app knows of.
+      { skuId: 'passion-vial', opening: 33, counted: 40 },
+    ],
+    writeOffs: [],
+  }
+  const off = (arrived: [string, number][] = []) =>
+    new Map(
+      offTheShelf([...vialDay.lines, ...vialDay.writeOffs], vialDay.stockCount, new Map(arrived)).reduce(
+        (m, l) => m.set(l.skuId, (m.get(l.skuId) ?? 0) + l.qty),
+        new Map<string, number>(),
+      ),
+    )
+
+  it('is what its count says went, where that is more than was rung up', () => {
+    expect(off().get('orchid-vial')).toBe(6)
+  })
+
+  it('is what was rung up, where that is more than the count says', () => {
+    expect(off().get('violet-vial')).toBe(5)
+  })
+
+  it('takes in what arrived since the last count, and is never below nothing', () => {
+    expect(off([['mahsuri-vial', 24]]).get('mahsuri-vial')).toBe(4)
+    expect(off().get('passion-vial')).toBeUndefined()
+  })
+
+  it('leaves a bottle at what sold and was written off, whatever its count', () => {
+    expect(off().get('orchid-retail')).toBe(2)
+  })
+
+  it('says nothing more where nothing was counted', () => {
+    const lines = [...vialDay.lines]
+    expect(offTheShelf(lines, null, new Map())).toEqual(lines)
+  })
+
+  it('reads so on the store’s page and on the promoter’s closed day, a delivery before the closing included', () => {
+    const delivered: PurchaseOrder = {
+      id: 'PO-261102-VIAL',
+      locationId: 'bsas',
+      createdBy: 'x',
+      createdAt: '2026-11-01T03:00:00.000Z',
+      priority: 'standard',
+      notes: '',
+      status: 'received',
+      lines: [{ skuId: 'mahsuri-vial', qtyRequested: 24, qtyApproved: 24, qtyShipped: 24 }],
+      // 2 November, 13:00 in Malaysia: before the day was filed at 22:05.
+      events: [{ status: 'received', actor: 'x', role: 'promoter', at: '2026-11-02T05:00:00.000Z' }],
+    }
+    const d: CrmData = { ...data, closings: [vialDay], purchaseOrders: [delivered] }
+    const page = selectStoreDay(d, 'bsas', filedDay)
+    expect(row(page, 'orchid-vial')).toMatchObject({ units: 2, deducted: 6, onHand: 90 })
+    expect(row(page, 'mahsuri-vial')).toMatchObject({ units: 0, deducted: 4, onHand: 30 })
+    expect(row(page, 'orchid-retail')).toMatchObject({ deducted: 2, onHand: 15 })
+    expect(filedDayRows(vialDay, new Map([['mahsuri-vial', 24]]))).toEqual(page.rows)
+  })
+
+  it('is what was rung up on a day still open, with nothing counted yet', () => {
+    const d: CrmData = { ...data, liveLines: { bsas: [sale('orchid-vial', 1, 0, 'z', 'SG', 'foc')] } }
+    expect(row(selectStoreDay(d, 'bsas', today), 'orchid-vial')).toMatchObject({ deducted: 1, onHand: null })
   })
 })

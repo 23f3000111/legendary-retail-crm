@@ -43,7 +43,7 @@ import { linesDiffer } from '../lib/changes'
 import { rangeIndex } from '../lib/range'
 import { addDays, dateRange, daysBetween, monthKey, shiftMonth, spanDays, startOfMonth, todayInMalaysia, type DateSpan } from '../lib/dates'
 import { effectiveQty, isOpen } from '../lib/po-machine'
-import type { Alert, Closing, CrmData, DateStr, PartnerSales, PurchaseOrder, SaleLine, Tender } from '../data/types'
+import type { Alert, Closing, CrmData, DateStr, PartnerSales, PurchaseOrder, SaleLine, StockCount, Tender } from '../data/types'
 
 /** Where a line the range does not know sits in a list: at the end. */
 const LAST_IN_RANGE = Number.MAX_SAFE_INTEGER
@@ -2168,7 +2168,13 @@ export const selectStoreDay = (data: CrmData, locationId: string, day: DateStr):
   const detail = selectDayDetail(data, day, locationId)
   const rows = storeDayRows(
     lines,
-    closing ? [...closing.lines, ...closing.writeOffs] : lines,
+    closing
+      ? offTheShelf(
+          [...closing.lines, ...closing.writeOffs],
+          closing.stockCount,
+          selectArrivalsForClosing(data, locationId, day, closing.submittedAt),
+        )
+      : lines,
     closing ? new Map(closing.stockCount.map((c) => [c.skuId, c.counted])) : null,
     basisOf(locationId),
   )
@@ -2242,15 +2248,48 @@ export const storeDayRows = (
  * A closed day exactly as it was filed: its sales, what it took off the shelf
  * and its counts, all from the closing. The counter may have moved on since —
  * a sale changed after today was closed — and must not be read into it
- * (25 November).
+ * (25 November). `arrived` is what came in since the count before it and
+ * before it was filed, which a vial's count is measured against.
  */
-export const filedDayRows = (closing: Closing): StoreDayRow[] =>
+export const filedDayRows = (closing: Closing, arrived: Map<string, number> = new Map()): StoreDayRow[] =>
   storeDayRows(
     closing.lines,
-    [...closing.lines, ...closing.writeOffs],
+    offTheShelf([...closing.lines, ...closing.writeOffs], closing.stockCount, arrived),
     new Map(closing.stockCount.map((c) => [c.skuId, c.counted])),
     basisOf(closing.locationId),
   )
+
+/**
+ * What left the shelf, line by line, for the Deducted column: what was sold
+ * and written off — and for a vial, what its count says went, where that is
+ * more (26 November, the client's Revision #10: "Please help to confirm ALL
+ * stores vial will update the deducted stock everyday").
+ *
+ * Vials are given away with a purchase, and many counters never ring them up,
+ * so their Deducted read 0 while their count fell every night. The count says
+ * what the shelf held at the last count, plus what arrived since, less what is
+ * on it at the close. On the day after a day nobody closed, that is both days.
+ * A bottle's Deducted stays what was sold and written off: a count that is
+ * short of that is a difference to look into, not stock that was deducted.
+ * Where nothing was counted (`counts` null) it is what was recorded.
+ */
+export const offTheShelf = (
+  recorded: { skuId: string; qty: number }[],
+  counts: Pick<StockCount, 'skuId' | 'opening' | 'counted'>[] | null,
+  arrived: Map<string, number>,
+): { skuId: string; qty: number }[] => {
+  if (!counts) return recorded
+  const rungUp = new Map<string, number>()
+  for (const l of recorded) rungUp.set(l.skuId, (rungUp.get(l.skuId) ?? 0) + l.qty)
+  const more = counts
+    .filter((c) => isFoc(skuById(c.skuId)))
+    .map((c) => ({
+      skuId: c.skuId,
+      qty: c.opening + (arrived.get(c.skuId) ?? 0) - c.counted - (rungUp.get(c.skuId) ?? 0),
+    }))
+    .filter((l) => l.qty > 0)
+  return more.length ? [...recorded, ...more] : recorded
+}
 
 // ── Dealers and consignment, month by month ─────────────────────────────────
 
