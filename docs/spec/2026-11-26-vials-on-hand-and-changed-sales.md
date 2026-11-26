@@ -51,8 +51,8 @@ closing as the boxes are typed, on a closed day, and in the CSV and PDF
 
 - **A count that put every product at 0 is no count** (`countOfNothing`).
   - The Stock page and the alerts read that store as not counted. Its lines
-    show **Not counted** instead of out of stock, and nothing is suggested
-    for it.
+    show **Not counted** instead of out of stock, and no top-up is suggested
+    for it, on the Stock page or on its closing's order, until it counts.
   - Its day on the store's page and in the exports shows no on-hand figure,
     with a note saying why. The promoter's closed day says the same.
   - The next closing says *Count everything tonight*: every box starts
