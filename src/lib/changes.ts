@@ -9,7 +9,7 @@
 import { countryName, MALAYSIA_SEGMENT_LABEL } from '../data/countries'
 import { groupOf, lineUnitPrice, skuLabel, TIER_LABEL, type PriceBasis } from '../data/products'
 import { num, rm } from './format'
-import type { Closing, ClosingFigures, PurchaseOrder, SaleLine } from '../data/types'
+import type { Closing, ClosingFigures, PurchaseOrder, SaleLine, Tender } from '../data/types'
 
 /** Whole ringgit, unless there are sen to show. */
 export const money = (n: number): string => rm(n)
@@ -31,6 +31,43 @@ export const figuresOf = (c: Closing): ClosingFigures => ({
   lines: c.lines.map((l, i) => (l.id ? l : { ...l, id: `${c.id}-line-${i}` })),
   stockCount: c.stockCount,
 })
+
+/**
+ * How a day was paid once its sales come to `revenue`, the way the closing
+ * itself works it out: the cash and e-wallet as typed, the card the rest. Never
+ * more cash or e-wallet than there were sales — where the sales now come to
+ * less, the cash comes down first — and never a card below nothing.
+ */
+export function tenderFor(was: Tender | undefined, revenue: number): Tender {
+  const ewallet = toSen(Math.min(was?.ewallet ?? 0, revenue))
+  const cash = toSen(Math.max(0, Math.min(was?.cash ?? 0, revenue - ewallet)))
+  return { cash, ewallet, card: toSen(Math.max(0, revenue - cash - ewallet)) }
+}
+
+/**
+ * A filed day's figures once one of its sales has changed (26 November, the
+ * client's Revision #10: "If promoter changes any sales, it won't reflect in
+ * the final closing of the day"). The sale's lines as they were come off and
+ * its lines as they are go on — matched by id, so every other line the closing
+ * carries stays exactly as it was, whether or not this device holds its sale
+ * record. The total and the card follow; the counts stay as they were counted.
+ */
+export function withSale(
+  figures: ClosingFigures,
+  before: SaleLine[],
+  after: SaleLine[],
+  basis: PriceBasis,
+): ClosingFigures {
+  const now = new Map(after.filter((l) => l.id).map((l) => [l.id!, l]))
+  const gone = new Set(before.map((l) => l.id).filter((id): id is string => Boolean(id) && !now.has(id!)))
+  const kept = figures.lines
+    .filter((l) => !(l.id && gone.has(l.id)))
+    .map((l) => (l.id && now.has(l.id) ? now.get(l.id)! : l))
+  const added = after.filter((l) => !l.id || !figures.lines.some((k) => k.id === l.id))
+  const lines = [...kept, ...added]
+  const revenueMYR = toSen(lines.reduce((a, l) => a + l.qty * lineUnitPrice(l, basis), 0))
+  return { ...figures, lines, revenueMYR, tender: tenderFor(figures.tender, revenueMYR) }
+}
 
 /** "Promotion RM 188" — the price a line went for, as a person would say it. */
 const priceWords = (l: SaleLine, basis: PriceBasis): string =>

@@ -59,6 +59,7 @@ import {
   describeLineChanges,
   describeOrderChanges,
   figuresOf,
+  withSale,
 } from '../lib/changes'
 import { deriveAlerts } from './selectors'
 import type {
@@ -505,6 +506,42 @@ export const useData = create<DataState>()((set, get) => {
     if (gone.length) remove('sale_line', gone)
   }
 
+  /**
+   * Today's closing, kept up with the counter (26 November, the client's
+   * Revision #10: "If promoter changes any sales, it won't reflect in the final
+   * closing of the day"). Once the day is filed, a sale rung up, changed or
+   * taken back goes into the closing at once: `before` is the sale's lines as
+   * they were, `after` as they are. The total and the card follow; the cash as
+   * typed and the counts stay (`withSale`). Only by someone who may change the
+   * closing outright, and not while a correction waits on it.
+   *
+   * This used to be left to the store: the screens said the closing no longer
+   * matched and asked for it to be brought up to date, and nobody did.
+   */
+  const followSales = (locationId: string, day: DateStr | undefined, before: SaleLine[], after: SaleLine[]) => {
+    const state = get()
+    if (!day || day !== state.today) return
+    const closing = state.closings.find((c) => c.locationId === locationId && c.period === day && c.periodType === 'day')
+    if (!closing || closing.correction?.status === 'pending') return
+    const who = me()
+    if (!who || closingEditMode(who, getSession()?.locationId, closing, state.today) !== 'direct') return
+
+    const basis = basisOf(locationId)
+    const was = figuresOf(closing)
+    const figures = withSale(was, before, after, basis)
+    const changes = describeClosingChanges(was, figures, basis)
+    if (changes.length === 0) return
+    putClosing({ ...closing, ...figures, editedBy: who.name, editedAt: new Date().toISOString() })
+    get().record({
+      kind: 'closing',
+      action: 'closing.sales_followed',
+      summary: `Brought the ${formatDate(day)} closing for ${locationName(locationId)} up to date with its sales — ${rm(closing.revenueMYR)} → ${rm(figures.revenueMYR)}`,
+      entityId: closing.id,
+      locationId,
+      detail: changes.join(' · '),
+    })
+  }
+
   return {
     ...empty(),
     unfiledLines: {},
@@ -573,6 +610,7 @@ export const useData = create<DataState>()((set, get) => {
           ? `Customer from ${countryName(countryCode)}${segment ? ` · ${MALAYSIA_SEGMENT_LABEL[segment]}` : ''}`
           : undefined,
       })
+      followSales(locationId, day, [], stamped)
     },
 
     removeSaleLine: (lineId) => {
@@ -586,6 +624,7 @@ export const useData = create<DataState>()((set, get) => {
         entityId: removed.saleId ?? lineId,
         locationId: removed.locationId,
       })
+      if (removed.locationId) followSales(removed.locationId, removed.day, [removed], [])
     },
 
     removeSale: (saleId) => {
@@ -604,6 +643,7 @@ export const useData = create<DataState>()((set, get) => {
         locationId: lines[0].locationId,
         detail: lines[0].countryCode ? `Customer from ${countryName(lines[0].countryCode)}` : undefined,
       })
+      if (lines[0].locationId) followSales(lines[0].locationId, lines[0].day, lines, [])
     },
 
     updateSale: ({ saleId, lines, countryCode, segment }) => {
@@ -665,6 +705,7 @@ export const useData = create<DataState>()((set, get) => {
         locationId,
         detail: changes.join(' · '),
       })
+      followSales(locationId, day, before, next)
       return { ok: true }
     },
 

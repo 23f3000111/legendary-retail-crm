@@ -5,6 +5,8 @@ import {
   describeOrderChanges,
   figuresOf,
   linesDiffer,
+  tenderFor,
+  withSale,
 } from './changes'
 import type { Closing, ClosingFigures, PoLine, SaleLine } from '../data/types'
 
@@ -173,5 +175,64 @@ describe('an order changed', () => {
     expect(describeOrderChanges(before, po([['orchid-retail', 12], ['man-retail', 12]]))).toEqual([
       'Took off Violet · 30ml (12)',
     ])
+  })
+})
+
+// The client's Revision #10, 26 November: "If promoter changes any sales, it
+// won't reflect in the final closing of the day." Once today is closed, a sale
+// rung up, changed or taken back changes the closing with it.
+describe('a closing, once a sale changes after it was filed', () => {
+  it('swaps the sale’s lines as they were for the lines as they are, and the total follows', () => {
+    const other = line({ id: 'l2', saleId: 's2', skuId: 'man-retail', qty: 1 })
+    const filed = figures({ lines: [line(), other], revenueMYR: 564, tender: { cash: 300, ewallet: 0, card: 264 } })
+    const after = withSale(filed, [line()], [line({ qty: 1 })], 'promotion')
+    expect(after.lines).toEqual([line({ qty: 1 }), other])
+    expect(after.revenueMYR).toBe(376)
+    // The cash as typed; the card is the rest of the day's sales.
+    expect(after.tender).toEqual({ cash: 300, ewallet: 0, card: 76 })
+    // The counts are as they were counted.
+    expect(after.stockCount).toBe(filed.stockCount)
+  })
+
+  it('adds a sale rung up after the closing, and takes off one taken back', () => {
+    const late = line({ id: 'l9', saleId: 's9', skuId: 'violet-retail', qty: 1 })
+    const added = withSale(figures(), [], [late], 'promotion')
+    expect(added.lines.map((l) => l.id)).toEqual(['l1', 'l9'])
+    expect(added.revenueMYR).toBe(564)
+    expect(added.tender).toEqual({ cash: 376, ewallet: 0, card: 188 })
+
+    const takenBack = withSale(added, [late], [], 'promotion')
+    expect(takenBack.lines.map((l) => l.id)).toEqual(['l1'])
+    expect(takenBack.revenueMYR).toBe(376)
+    expect(takenBack.tender).toEqual({ cash: 376, ewallet: 0, card: 0 })
+  })
+
+  it('keeps every other line it carries, even one no sale record stands behind', () => {
+    const old = { ...line({ saleId: undefined }), id: undefined }
+    const filed = figures({ lines: [old], revenueMYR: 376 })
+    const late = line({ id: 'l9', saleId: 's9', qty: 1 })
+    expect(withSale(filed, [], [late], 'promotion').lines).toEqual([old, late])
+  })
+
+  it('brings the cash down to the sales when they now come to less than it', () => {
+    const filed = figures({ revenueMYR: 376, tender: { cash: 376, ewallet: 0, card: 0 } })
+    const after = withSale(filed, [line()], [line({ qty: 1 })], 'promotion')
+    expect(after.tender).toEqual({ cash: 188, ewallet: 0, card: 0 })
+  })
+})
+
+describe('how a day was paid, once its sales come to a new total', () => {
+  it('keeps the cash and e-wallet as typed, the card the rest', () => {
+    expect(tenderFor({ cash: 100, ewallet: 50, card: 238 }, 500)).toEqual({ cash: 100, ewallet: 50, card: 350 })
+  })
+
+  it('never says more was taken than was sold, nor a card below nothing', () => {
+    expect(tenderFor({ cash: 400, ewallet: 50, card: 0 }, 300)).toEqual({ cash: 250, ewallet: 50, card: 0 })
+    expect(tenderFor({ cash: 400, ewallet: 50, card: 0 }, 20)).toEqual({ cash: 0, ewallet: 20, card: 0 })
+    expect(tenderFor(undefined, 188)).toEqual({ cash: 0, ewallet: 0, card: 188 })
+  })
+
+  it('works to the sen', () => {
+    expect(tenderFor({ cash: 10.1, ewallet: 0, card: 0 }, 30.3)).toEqual({ cash: 10.1, ewallet: 0, card: 20.2 })
   })
 })

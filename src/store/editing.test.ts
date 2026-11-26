@@ -28,6 +28,8 @@ const closing = (id: string): Closing => {
 const backendDoc = <T,>(kind: string, id: string): T | undefined =>
   lb.allDocs().find((d) => d.kind === kind && d.id === id && !d.deleted)?.doc as T | undefined
 const lastAction = () => written()[0]
+/** The newest line about a sale: today is closed in the sample, so a line about the closing follows it. */
+const saleAction = () => written().find((e) => e.kind === 'sale')!
 const atKlia = () => signInAs(lb, 'teokoknian', 'klia-t2')
 
 /** A sale rung up at KLIA T2 today, and its lines. */
@@ -63,10 +65,10 @@ describe('a sale, changed at the counter', () => {
     expect(sale.find((l) => l.id === line.id)).toMatchObject({ qty: 1, unitPriceMYR: 238, by: 'teokoknian' })
     expect(sale.every((l) => l.editedBy === 'Teo Kok Nian')).toBe(true)
 
-    expect(lastAction().action).toBe('sale.edited')
-    expect(lastAction().detail).toMatch(/Orchid · 30ml: 2 → 1/)
-    expect(lastAction().detail).toMatch(/Added 1 × Violet · 30ml/)
-    expect(lastAction().detail).toMatch(/China → Singapore/)
+    expect(saleAction().action).toBe('sale.edited')
+    expect(saleAction().detail).toMatch(/Orchid · 30ml: 2 → 1/)
+    expect(saleAction().detail).toMatch(/Added 1 × Violet · 30ml/)
+    expect(saleAction().detail).toMatch(/China → Singapore/)
 
     await settle()
     expect(backendDoc<SaleLine>('sale_line', line.id!)?.qty).toBe(1)
@@ -82,14 +84,14 @@ describe('a sale, changed at the counter', () => {
     await settle()
     expect(backendDoc('sale_line', lines[1].id!)).toBeUndefined()
     expect(backendDoc('sale_line', lines[0].id!)).toBeDefined()
-    expect(lastAction().detail).toBe('Took off 1 × Man · 50ml')
+    expect(saleAction().detail).toBe('Took off 1 × Man · 50ml')
   })
 
   it('rings a vial up free, and counts it as a unit sold at RM 0', () => {
     atKlia()
     const [line] = ringUp([{ skuId: 'orchid-vial', qty: 2, priceTier: 'foc', unitPriceMYR: 0 }])
     expect(line).toMatchObject({ priceTier: 'foc', unitPriceMYR: 0, qty: 2 })
-    expect(lastAction().summary).toMatch(/free of charge/)
+    expect(saleAction().summary).toMatch(/free of charge/)
   })
 
   it('takes RM 0 as an "Other" price — something given away — but not a missing one', () => {
@@ -121,7 +123,7 @@ describe('a sale, changed at the counter', () => {
     expect(result.error).toMatch(/delete the sale/i)
   })
 
-  it('says so when the closing no longer matches, until the closing is brought up to date', () => {
+  it('keeps today’s closing up with the sales, so it never stops matching them', () => {
     atKlia()
     ringUp([{ skuId: 'orchid-retail', qty: 1, priceTier: 'promotion', unitPriceMYR: 188 }])
     // Filed with today's sales as they are now…
@@ -131,9 +133,73 @@ describe('a sale, changed at the counter', () => {
     expect(useData.getState().editClosing({ closingId: filed.id, figures }).ok).toBe(true)
     expect(selectClosingOutOfStep(useData.getState(), 'klia-t2')).toBe(false)
 
-    // …then one more customer.
+    // …then one more customer (26 November: the closing follows).
     ringUp([{ skuId: 'violet-retail', qty: 1, priceTier: 'promotion', unitPriceMYR: 188 }])
-    expect(selectClosingOutOfStep(useData.getState(), 'klia-t2')).toBe(true)
+    expect(selectClosingOutOfStep(useData.getState(), 'klia-t2')).toBe(false)
+    expect(closing(filed.id).revenueMYR).toBe(376)
+  })
+})
+
+// The client's Revision #10, 26 November: "If promoter changes any sales, it
+// won't reflect in the final closing of the day." Today is closed at KLIA T2
+// in the sample; what the counter does next goes into its closing.
+describe('today’s closing, once a sale changes after it was filed', () => {
+  const todays = () => closing(`klia-t2-${today}`)
+
+  it('takes in a sale rung up after it: the total and the card go up, the cash and counts stay', async () => {
+    atKlia()
+    const was = todays()
+    const [line] = ringUp([{ skuId: 'violet-retail', qty: 2, priceTier: 'promotion', unitPriceMYR: 188 }])
+    const now = todays()
+    expect(now.lines).toHaveLength(was.lines.length + 1)
+    expect(now.lines[now.lines.length - 1]).toMatchObject({ id: line.id, skuId: 'violet-retail', qty: 2 })
+    expect(now.revenueMYR).toBe(was.revenueMYR + 376)
+    expect(now.tender).toEqual({ ...was.tender!, card: was.tender!.card + 376 })
+    expect(now.stockCount).toEqual(was.stockCount)
+    expect(now).toMatchObject({ submittedBy: was.submittedBy, editedBy: 'Teo Kok Nian' })
+
+    expect(lastAction()).toMatchObject({ kind: 'closing', action: 'closing.sales_followed', entityId: was.id })
+    expect(lastAction().detail).toContain(`Sales RM ${was.revenueMYR.toLocaleString('en-MY')}`)
+    expect(lastAction().detail).toContain('Added 2 × Violet · 30ml')
+    expect(useData.getState().lastError).toBeNull()
+
+    await settle()
+    expect(backendDoc<Closing>('closing', was.id)?.revenueMYR).toBe(was.revenueMYR + 376)
+    expect(useData.getState().lastError).toBeNull()
+  })
+
+  it('follows a sale changed, and one taken back, without losing the lines it already had', () => {
+    atKlia()
+    const was = todays()
+    const [line] = ringUp([{ skuId: 'orchid-retail', qty: 2, priceTier: 'promotion', unitPriceMYR: 188 }])
+
+    expect(useData.getState().updateSale({ saleId: line.saleId!, lines: [{ ...line, qty: 1 }], countryCode: 'CN' }).ok).toBe(true)
+    expect(todays().lines.find((l) => l.id === line.id)?.qty).toBe(1)
+    expect(todays().revenueMYR).toBe(was.revenueMYR + 188)
+    expect(lastAction().detail).toContain('Orchid · 30ml: 2 → 1')
+
+    useData.getState().removeSale(line.saleId!)
+    expect(todays().lines).toHaveLength(was.lines.length)
+    expect(todays().revenueMYR).toBe(was.revenueMYR)
+    expect(todays().tender).toEqual(was.tender)
+  })
+
+  it('leaves a day that is not closed, and a day that has gone, alone', () => {
+    signInAs(lb, 'teokoknian', 'pavilion-5')
+    const before = useData.getState().closings.length
+    useData.getState().recordSale({
+      locationId: 'pavilion-5',
+      lines: [{ skuId: 'orchid-retail', qty: 1, priceTier: 'promotion', unitPriceMYR: 188 }],
+      countryCode: 'CN',
+    })
+    expect(useData.getState().closings).toHaveLength(before)
+    expect(lastAction().kind).toBe('sale')
+
+    atKlia()
+    const yesterdays = closing(`klia-t2-${yesterday}`)
+    const [line] = ringUp([{ skuId: 'orchid-retail', qty: 1, priceTier: 'promotion', unitPriceMYR: 188 }])
+    expect(line.day).toBe(today)
+    expect(closing(yesterdays.id)).toEqual(yesterdays)
   })
 })
 

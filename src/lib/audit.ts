@@ -65,6 +65,7 @@ export const AUDIT_ACTION_LABEL: Record<string, string> = {
   'sale.removed': 'Sale taken back',
   'closing.filed': 'Day closed',
   'closing.edited': 'Closing changed',
+  'closing.sales_followed': 'Closing brought up to date with the sales',
   'correction.requested': 'Correction asked for',
   'correction.withdrawn': 'Correction request taken back',
   'correction.approved': 'Correction approved',

@@ -658,7 +658,8 @@ describe('recording a whole basket', () => {
     const dealerLines = useData.getState().liveLines['dlr-beauty-scent']
     const line = dealerLines[dealerLines.length - 1]
     expect(line?.countryCode).toBeUndefined()
-    expect(written()[0].detail).toBeUndefined()
+    // The sale's own line: the dealer filed today, so its closing takes the sale in after it (26 November).
+    expect(written().find((e) => e.kind === 'sale')!.detail).toBeUndefined()
   })
 
   it('shows a sale to a colleague at the same store, and to nobody at another', async () => {
