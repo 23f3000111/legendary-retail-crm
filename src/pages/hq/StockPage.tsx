@@ -101,17 +101,22 @@ export function StockPage() {
       key: 'cover',
       header: 'Days left',
       width: '130px',
-      render: (r) => (
-        <div>
-          <p className="readout text-[12px] text-ink-2">
-            {r.daysCover === null ? 'not moving' : `${r.daysCover.toFixed(1)} days`}
-          </p>
-          <ProgressBar
-            className="mt-1"
-            value={r.daysCover === null ? 0 : Math.min(1, r.daysCover / 21)}
-          />
-        </div>
-      ),
+      // Nothing counted, nothing to go by (26 November: a store that counted
+      // nothing reads as not counted, not as days of stock).
+      render: (r) =>
+        r.counted ? (
+          <div>
+            <p className="readout text-[12px] text-ink-2">
+              {r.daysCover === null ? 'not moving' : `${r.daysCover.toFixed(1)} days`}
+            </p>
+            <ProgressBar
+              className="mt-1"
+              value={r.daysCover === null ? 0 : Math.min(1, r.daysCover / 21)}
+            />
+          </div>
+        ) : (
+          <span className="text-ink-3">—</span>
+        ),
     },
     {
       key: 'velocity',
@@ -136,11 +141,14 @@ export function StockPage() {
       header: 'Status',
       align: 'right',
       width: '124px',
-      render: (r) => (
-        <Badge tone={STATUS[r.status].tone} icon={r.status === 'ok' ? 'check' : 'alert'}>
-          {STATUS[r.status].label}
-        </Badge>
-      ),
+      render: (r) =>
+        r.counted ? (
+          <Badge tone={STATUS[r.status].tone} icon={r.status === 'ok' ? 'check' : 'alert'}>
+            {STATUS[r.status].label}
+          </Badge>
+        ) : (
+          <Badge tone="neutral">Not counted</Badge>
+        ),
     },
     {
       key: 'suggested',

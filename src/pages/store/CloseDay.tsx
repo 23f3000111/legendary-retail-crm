@@ -609,7 +609,8 @@ function ClosingForm({
   // Every product at 0 on a day that sold is no count (26 November): KLIA T2
   // filed that for weeks. Filing it, or changing the counts to it, is refused.
   const countsChanged = mode !== 'new' && [...boxCounts.entries()].some(([id, n]) => countOnRecord.get(id) !== n)
-  if (units > 0 && nothingCounted(rows, counted) && (mode === 'new' || countsChanged)) {
+  const allAtZero = units > 0 && nothingCounted(rows, counted) && (mode === 'new' || countsChanged)
+  if (allAtZero) {
     problems.push(
       `Every product is at 0, though ${num(units)} ${units === 1 ? 'was' : 'were'} sold ${isToday ? 'today' : 'that day'} — count what is on the shelf and type it in.`,
     )
@@ -919,7 +920,7 @@ function ClosingForm({
       <Panel>
         <PanelHeader
           eyebrow={isToday ? "Today's sales" : `Sales on ${formatDate(day)}`}
-          title={lines.length === 0 ? 'No sales recorded' : `${money(revenue)} from ${num(units)} units`}
+          title={lines.length === 0 ? 'No sales recorded' : `${money(revenue)} from ${num(units)} ${units === 1 ? 'unit' : 'units'}`}
           meta={
             lines.length === 0
               ? 'A quiet day can still be closed — the count and the top-up matter just as much.'
@@ -1098,6 +1099,10 @@ function ClosingForm({
                   As filed
                 </Badge>
               )
+            ) : allAtZero ? (
+              <Badge tone="warn" icon="alert">
+                Every product at 0
+              </Badge>
             ) : firstCount || stillToCount > 0 ? (
               <Badge tone={stillToCount > 0 ? 'warn' : 'good'} icon={stillToCount > 0 ? 'alert' : 'check'}>
                 {stillToCount > 0 ? `${stillToCount} still to count` : 'All filled in'}
