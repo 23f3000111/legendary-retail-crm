@@ -111,6 +111,17 @@ export function StoreDay({ locationId, day }: { locationId: string; day: string 
           </Notice>
         )}
 
+        {/* 26 November, the client's Revision #10: "For KLIA T2, On hand quantity not displaying". */}
+        {d.countOfNothing && filed && (
+          <Notice tone="warn" icon="alert">
+            <b>
+              {store?.shortName ?? 'This store'} filed every product at 0 on {formatDate(day)}
+              {filed.lines.length ? `, though ${num(filed.lines.reduce((a, l) => a + l.qty, 0))} sold that day` : ''}.
+            </b>{' '}
+            That is not a count, so nothing shows as on hand. Its next closing starts with every box empty, to be counted.
+          </Notice>
+        )}
+
         <section>
           <p className="eyebrow mb-2">Stock</p>
           <DayStockTable locationId={locationId} rows={d.rows} onHandHeader={d.live ? 'On hand' : 'On hand at close'} />

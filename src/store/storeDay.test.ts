@@ -259,3 +259,19 @@ describe('what a vial took off the shelf', () => {
     expect(row(selectStoreDay(d, 'bsas', today), 'orchid-vial')).toMatchObject({ deducted: 1, onHand: null })
   })
 })
+
+// The client's Revision #10, 26 November: "For KLIA T2, On hand quantity not
+// displaying". It filed every product at 0, so its page said 0 of everything.
+describe('a day filed with every product at 0', () => {
+  const zeroed: Closing = { ...closing, stockCount: closing.stockCount.map((s) => ({ ...s, counted: 0 })) }
+
+  it('shows nothing counted rather than nothing on the shelf, and says why', () => {
+    const d = selectStoreDay({ ...data, closings: [zeroed] }, 'bsas', filedDay)
+    expect(d.countOfNothing).toBe(true)
+    expect(d.rows.every((r) => r.onHand === null)).toBe(true)
+    // What sold and was written off still left the shelf.
+    expect(row(d, 'orchid-retail')).toMatchObject({ units: 3, deducted: 3 })
+    expect(filedDayRows(zeroed)).toEqual(d.rows)
+    expect(selectStoreDay(data, 'bsas', filedDay).countOfNothing).toBe(false)
+  })
+})

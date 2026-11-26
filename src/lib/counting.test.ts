@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { countsFromBoxes, shelfExpected, shelfRows, splitCount, startingBoxes } from './counting'
+import { countsFromBoxes, knownLines, nothingCounted, shelfExpected, shelfRows, splitCount, startingBoxes } from './counting'
 import { applyCatalogue, COUNT_GROUPS, entryOf, groupOf, skuById } from '../data/products'
 import { selectStock } from '../store/selectors'
 import type { StockRow } from '../store/selectors'
@@ -181,7 +181,8 @@ describe('what each box starts at', () => {
     stock().map((s) => ({ ...s, counted: s.skuId in counts, onHand: counts[s.skuId] ?? 0 }))
   const boxes = (counts: Record<string, number>, sold: [string, number][], arrived: [string, number][]) => {
     const rows = shelf(counts)
-    return startingBoxes(shelfRows(rows), shelfExpected(rows, new Map(sold), new Map(arrived)), new Map(arrived))
+    const known = knownLines(rows, new Map(arrived), new Map(sold))
+    return startingBoxes(shelfRows(rows), shelfExpected(rows, new Map(sold), new Map(arrived)), known)
   }
 
   it('is what a counted line should hold, the delivery in it', () => {
@@ -205,5 +206,55 @@ describe('what each box starts at', () => {
     expect(boxes({}, [], [['dream-vial', 24]])['group:spirit-2-vials']).toBe('')
     // Two counted before, the third new to the store and just received.
     expect(boxes({ 'passion-vial': 10, 'life-vial': 12 }, [], [['dream-vial', 24]])['group:spirit-2-vials']).toBe('46')
+  })
+})
+
+// The client's Revision #10, 26 November: "For KLIA T2, On hand quantity not
+// displaying (Help to make sure ALL stores shows correct on hand quantity)".
+// KLIA T2 filed every product at 0 from 3 October on, selling every day: each
+// box started at what the shelf "should" hold — 0 — and was left as it was.
+describe('a box whose figure the record cannot stand behind', () => {
+  const shelf = (counts: Record<string, number>): StockRow[] =>
+    stock().map((s) => ({ ...s, counted: s.skuId in counts, onHand: counts[s.skuId] ?? 0 }))
+
+  it('is known where the store counted it, or confirmed receiving it, and the record adds up', () => {
+    const known = knownLines(shelf({ 'orchid-retail': 20 }), new Map([['man-retail', 12]]), new Map([['orchid-retail', 3]]))
+    expect(known.has('orchid-retail')).toBe(true)
+    expect(known.has('man-retail')).toBe(true)
+    expect(known.has('violet-retail')).toBe(false)
+  })
+
+  it('is not known where more has sold since the last count than it and the deliveries come to', () => {
+    const rows = shelf({ 'orchid-retail': 0, 'man-retail': 2 })
+    const sold = new Map([['orchid-retail', 3], ['man-retail', 5]])
+    const known = knownLines(rows, new Map([['man-retail', 2]]), sold)
+    expect(known.has('orchid-retail')).toBe(false)
+    expect(known.has('man-retail')).toBe(false)
+    // So its box starts empty, to be counted, rather than at 0.
+    const b = startingBoxes(shelfRows(rows), shelfExpected(rows, sold, new Map([['man-retail', 2]])), known)
+    expect(b['orchid-retail']).toBe('')
+    expect(b['man-retail']).toBe('')
+    // Exactly what the record says is fine: it sold out.
+    expect(knownLines(rows, new Map([['man-retail', 3]]), sold).has('man-retail')).toBe(true)
+  })
+
+  it('takes a three’s box as unknown when one of its vials is', () => {
+    const rows = shelf({ 'passion-vial': 10, 'dream-vial': 0, 'life-vial': 12 })
+    const sold = new Map([['dream-vial', 2]])
+    const b = startingBoxes(shelfRows(rows), shelfExpected(rows, sold, new Map()), knownLines(rows, new Map(), sold))
+    expect(b['group:spirit-2-vials']).toBe('')
+  })
+})
+
+describe('a count of nothing', () => {
+  const rows = () => shelfRows(stock())
+  const all = (value: string) => Object.fromEntries(rows().map((r) => [r.key, value]))
+
+  it('is every box typed in, and every one 0', () => {
+    expect(nothingCounted(rows(), all('0'))).toBe(true)
+    expect(nothingCounted(rows(), { ...all('0'), 'orchid-retail': '3' })).toBe(false)
+    // A box still empty is still to count, not a count of 0.
+    expect(nothingCounted(rows(), { ...all('0'), 'orchid-retail': '' })).toBe(false)
+    expect(nothingCounted([], {})).toBe(false)
   })
 })

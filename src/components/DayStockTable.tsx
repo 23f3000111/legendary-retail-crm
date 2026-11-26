@@ -170,7 +170,13 @@ export function DayStockTable({
         open={item !== null}
         onClose={() => setItem(null)}
         title={item?.label ?? ''}
-        subtitle={item && stockRow ? `${item.code} · ${num(stockRow.onHand)} on the shelf at ${store?.shortName ?? ''} now` : undefined}
+        subtitle={
+          item && stockRow
+            ? `${item.code} · ${
+                stockRow.counted ? `${num(stockRow.onHand)} on the shelf at ${store?.shortName ?? ''} now` : `no count at ${store?.shortName ?? ''} to go by yet`
+              }`
+            : undefined
+        }
         width="max-w-lg"
       >
         {item && stockRow && <StockItemDetail locationId={locationId} skuId={item.skuId} row={stockRow} />}

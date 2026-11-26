@@ -17,7 +17,7 @@ import { useCurrentUser } from '../../store/useAuth'
 import { useToasts } from '../../components/ui/Toast'
 import { originSlicesFrom,
   tallyOrigin,
-  type OriginTally, selectClosingOutOfStep } from '../../store/selectors'
+  type OriginTally, selectClosingFor, selectClosingOutOfStep } from '../../store/selectors'
 import { locationById } from '../../data/locations'
 import {
   lineUnitPrice,
@@ -122,6 +122,10 @@ export function Sell() {
   const editingLines = editing ? (sales.find(([id]) => id === editing)?.[1] ?? []) : []
   // Filed already, and the sales have moved on since: the closing needs a look.
   const outOfStep = selectClosingOutOfStep(data, locationId)
+  // Filed already: a sale recorded, changed or deleted goes into the closing
+  // at once (26 November, the client's Revision #10).
+  const closedToday = selectClosingFor(data, locationId, data.today)
+  const andClosing = closedToday ? " · today's closing too" : ''
 
   // By customer: one sale is one customer, however much they bought (1 November).
   const mix = useMemo(() => {
@@ -177,7 +181,7 @@ export function Sell() {
     const where = countryCode
       ? ` · ${countryByCode(countryCode)?.name}${segment ? ` (${MALAYSIA_SEGMENT_LABEL[segment]})` : ''}`
       : ''
-    push(`Sale recorded — ${basketUnits} ${basketUnits === 1 ? 'unit' : 'units'}${where}`, 'good')
+    push(`Sale recorded — ${basketUnits} ${basketUnits === 1 ? 'unit' : 'units'}${where}${andClosing}`, 'good')
     setBasket([])
     setPicker(null)
   }
@@ -211,12 +215,12 @@ export function Sell() {
         needsCountry={needsCountry}
         onSave={(draft) => {
           const result = updateSale({ saleId: editing!, ...draft })
-          if (result.ok) push('Sale changed', 'good')
+          if (result.ok) push(`Sale changed${andClosing}`, 'good')
           return result
         }}
         onDelete={() => {
           removeSale(editing!)
-          push('Sale taken back', 'info')
+          push(`Sale taken back${andClosing}`, 'info')
         }}
       />
 
@@ -269,6 +273,24 @@ export function Sell() {
           </Button>
         </Link>
       </div>
+
+      {closedToday && !outOfStep && (
+        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-surface-2 px-4 py-3">
+          <Icon name="clipboard" className="h-4 w-4 shrink-0 text-primary" />
+          <p className="min-w-[220px] flex-1 text-[13px] text-ink">
+            <b>Today is closed.</b>{' '}
+            <span className="text-ink-2">
+              A sale recorded, changed or deleted now goes into the closing at once, and the card takes up the
+              difference. Paid in cash? Change the cash on the closing.
+            </span>
+          </p>
+          <Link to="/close?edit=1" className="w-full sm:w-auto">
+            <Button size="sm" variant="secondary" icon="pencil" className="w-full">
+              Change the closing
+            </Button>
+          </Link>
+        </div>
+      )}
 
       {outOfStep && (
         <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-warn/40 bg-warn/8 px-4 py-3">
@@ -526,7 +548,9 @@ export function Sell() {
           <PanelHeader
             eyebrow="Today"
             title={`${customers} ${customers === 1 ? 'customer' : 'customers'} · ${lines.length} ${lines.length === 1 ? 'line' : 'lines'}`}
-            meta="Every sale recorded at this store today, by anyone. Keyed something in wrongly? Change it, or delete the whole sale."
+            meta={`Every sale recorded at this store today, by anyone. Keyed something in wrongly? Change it, or delete the whole sale.${
+              closedToday ? ' Today is closed, so the closing changes with it.' : ''
+            }`}
           />
           <Rule />
           <PanelBody className="space-y-2.5">
@@ -576,7 +600,7 @@ export function Sell() {
                       <button
                         onClick={() => {
                           removeSale(saleId)
-                          push('Sale taken back', 'info')
+                          push(`Sale taken back${andClosing}`, 'info')
                         }}
                         className="flex min-h-[32px] items-center gap-1 rounded-lg px-1.5 text-[11.5px] text-critical hover:underline"
                       >

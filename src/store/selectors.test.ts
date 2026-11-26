@@ -5,7 +5,9 @@ import { priceOfId, skuById, skus } from '../data/products'
 import { addDays, dateRange, startOfMonth, startOfWeek } from '../lib/dates'
 import type { Closing, SaleLine } from '../data/types'
 import {
+  countOfNothing,
   deriveAlerts,
+  selectCountOfNothing,
   selectNotFiled,
   countryCoverage,
   emptyFilter,
@@ -379,6 +381,47 @@ describe('a product new to the range', () => {
   it('raises no alert for it at that store', () => {
     const alerts = deriveAlerts(before, new Set())
     expect(alerts.some((a) => a.locationId === 'pavilion-5' && a.skuId === 'love-retail')).toBe(false)
+  })
+})
+
+// ── A count of nothing ──────────────────────────────────────────────────────
+//
+// The client's Revision #10, 26 November: "For KLIA T2, On hand quantity not
+// displaying (Help to make sure ALL stores shows correct on hand quantity)".
+// KLIA T2 filed every product at 0 from 3 October on, selling every day.
+
+describe('a count that put every product at 0', () => {
+  const latest = data.closings
+    .filter((c) => c.locationId === 'pavilion-5')
+    .sort((a, b) => (a.period < b.period ? 1 : -1))[0]
+  const zeroed: Closing = { ...latest, stockCount: latest.stockCount.map((s) => ({ ...s, counted: 0 })) }
+  const nothing = { ...data, closings: [zeroed], purchaseOrders: [] }
+
+  it('is what it is: every product at 0, and only then', () => {
+    expect(countOfNothing(zeroed)).toBe(true)
+    expect(countOfNothing(latest)).toBe(false)
+    expect(countOfNothing({ ...latest, stockCount: [] })).toBe(false)
+  })
+
+  it('is not taken as the shelf’s stock: unknown, not out of everything', () => {
+    const rows = selectStock(nothing, 'pavilion-5')
+    for (const r of rows) {
+      expect(r.counted, r.label).toBe(false)
+      expect(r.status, r.label).toBe('ok')
+      expect(r.suggested, r.label).toBe(0)
+    }
+    expect(deriveAlerts(nothing, new Set()).filter((a) => a.type === 'low_stock' && a.locationId === 'pavilion-5')).toHaveLength(0)
+  })
+
+  it('is named for the next day’s closing, and a real count after it is taken', () => {
+    const next = addDays(zeroed.period, 1)
+    expect(selectCountOfNothing(nothing, 'pavilion-5', next)?.id).toBe(zeroed.id)
+    expect(selectCountOfNothing(nothing, 'pavilion-5', zeroed.period)).toBeUndefined()
+    expect(selectCountOfNothing({ ...data, closings: [latest] }, 'pavilion-5', next)).toBeUndefined()
+
+    const recounted = { ...nothing, closings: [zeroed, { ...latest, id: 'again', period: next }] }
+    expect(selectCountOfNothing(recounted, 'pavilion-5', addDays(next, 1))).toBeUndefined()
+    expect(selectStock(recounted, 'pavilion-5').find((r) => r.skuId === 'orchid-retail')!.counted).toBe(true)
   })
 })
 

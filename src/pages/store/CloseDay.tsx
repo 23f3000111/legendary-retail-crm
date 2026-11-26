@@ -17,8 +17,10 @@ import {
   filedDayRows,
   offTheShelf,
   selectArrivalsForClosing,
+  countOfNothing,
   selectClosingFor,
   selectClosingOutOfStep,
+  selectCountOfNothing,
   selectSoldSinceCount,
   selectStock,
   selectSuggestedPoLines,
@@ -32,7 +34,7 @@ import { formatDate, formatTimestamp } from '../../lib/dates'
 import { moneyInput, num } from '../../lib/format'
 import { newId, newOrderId } from '../../lib/ids'
 import { closingEditMode, CORRECTION_WINDOW_DAYS, type ClosingEditMode } from '../../lib/editing'
-import { countsFromBoxes, isKnown, shelfExpected, shelfRows, startingBoxes } from '../../lib/counting'
+import { countsFromBoxes, knownLines, nothingCounted, shelfExpected, shelfRows, startingBoxes } from '../../lib/counting'
 import { clock, describeLineChanges, describeClosingChanges, figuresOf, money, toSen } from '../../lib/changes'
 import type { Result } from '../../api/backend'
 import type {
@@ -241,6 +243,16 @@ function FiledDay({
             </Notice>
           )}
 
+          {countOfNothing(filed) && (
+            <Notice tone="warn" icon="alert">
+              <b>Every product was filed at 0{units > 0 ? `, though ${num(units)} sold` : ''}.</b> That is not a
+              count, so nothing shows as on hand
+              {atCounter && mode === 'direct' && !waiting
+                ? ' — change the closing and type what is on the shelf.'
+                : '. The next closing asks for every product to be counted.'}
+            </Notice>
+          )}
+
           {correction && (
             <Notice tone={waiting ? 'warn' : correction.status === 'approved' ? 'good' : 'neutral'} icon="clipboard">
               <b>
@@ -422,12 +434,15 @@ function ClosingForm({
     [data, locationId, day],
   )
 
-  /** What the shelf should hold now: the opening count, with what arrived, less what sold since. */
-  const expected = useMemo(() => {
+  /** Everything sold since that count: on the days nobody closed, and on this one. */
+  const soldSince = useMemo(() => {
     const sold = new Map(soldEarlier)
     for (const [skuId, qty] of soldToday) sold.set(skuId, (sold.get(skuId) ?? 0) + qty)
-    return shelfExpected(stock, sold, arrivals)
-  }, [stock, soldToday, soldEarlier, arrivals])
+    return sold
+  }, [soldToday, soldEarlier])
+
+  /** What the shelf should hold now: the opening count, with what arrived, less what sold since. */
+  const expected = useMemo(() => shelfExpected(stock, soldSince, arrivals), [stock, soldSince, arrivals])
   const expectedOf = (skuId: string) => expected.get(skuId) ?? 0
 
   /**
@@ -455,6 +470,24 @@ function ClosingForm({
    */
   const firstCount = stock.length > 0 && stock.every((s) => !s.counted)
 
+  /**
+   * The last count put every product at 0 (26 November, the client's Revision
+   * #10: "For KLIA T2, On hand quantity not displaying"): it was no count, so
+   * tonight every product is counted, from empty boxes — even one that came in
+   * since, as what was on the shelf before it is not known either.
+   */
+  const nothingBefore = useMemo(() => selectCountOfNothing(data, locationId, day), [data, locationId, day])
+
+  /**
+   * The lines whose closing figure is known, so their box can start filled
+   * in: counted before or received since, and the record adds up — a line
+   * that has sold more than was on record was not counted right (26 November).
+   */
+  const known = useMemo(
+    () => (nothingBefore ? new Set<string>() : knownLines(stock, arrivals, soldSince)),
+    [nothingBefore, stock, arrivals, soldSince],
+  )
+
   const countOnRecord = useMemo(
     () => new Map((onRecord?.stockCount ?? []).map((s) => [s.skuId, s.counted])),
     [onRecord],
@@ -465,7 +498,7 @@ function ClosingForm({
   // total.
   const [counted, setCounted] = useState<Record<string, string>>(() => {
     const was = new Map((start?.stockCount ?? []).map((s) => [s.skuId, s.counted]))
-    const fresh = startingBoxes(rows, expected, arrivals)
+    const fresh = startingBoxes(rows, expected, known)
     return Object.fromEntries(
       rows.map((row) => {
         const ids = row.skus.map((s) => s.skuId)
@@ -572,6 +605,14 @@ function ClosingForm({
       problems.push(`${label} cannot be a negative number.`)
       break
     }
+  }
+  // Every product at 0 on a day that sold is no count (26 November): KLIA T2
+  // filed that for weeks. Filing it, or changing the counts to it, is refused.
+  const countsChanged = mode !== 'new' && [...boxCounts.entries()].some(([id, n]) => countOnRecord.get(id) !== n)
+  if (units > 0 && nothingCounted(rows, counted) && (mode === 'new' || countsChanged)) {
+    problems.push(
+      `Every product is at 0, though ${num(units)} ${units === 1 ? 'was' : 'were'} sold ${isToday ? 'today' : 'that day'} — count what is on the shelf and type it in.`,
+    )
   }
   if (mode === 'new' && raisePo) {
     const blank = orderRows.find((skuId) => !orderLines.some((l) => l.skuId === skuId))
@@ -712,8 +753,13 @@ function ClosingForm({
       ? ids.reduce((a, id) => a + countOnRecord.get(id)!, 0)
       : undefined
     const allCounted = row.skus.every((s) => s.counted)
-    // Counted here before, or confirmed received since: what it should be is known.
-    const known = row.skus.every((s) => isKnown(s, arrivals))
+    // Counted here before, or confirmed received since, and the record adds
+    // up: what it should be is known.
+    const rowKnown = row.skus.every((s) => known.has(s.skuId))
+    // It would be, but more has sold since than was on record: the last count
+    // was wrong, so this one starts empty (26 November).
+    const short =
+      !nothingBefore && row.skus.some((s) => (s.counted || (arrivals.get(s.skuId) ?? 0) > 0) && !known.has(s.skuId))
     return {
       key: row.key,
       label: row.group?.label ?? row.skus[0].label,
@@ -725,7 +771,8 @@ function ClosingForm({
       earlier: row.skus.reduce((a, s) => a + (soldEarlier.get(s.skuId) ?? 0), 0),
       // Confirmed received since the last count: already in what it should be.
       received: row.skus.reduce((a, s) => a + (arrivals.get(s.skuId) ?? 0), 0),
-      known,
+      known: rowKnown,
+      short,
       expected,
       value,
       was,
@@ -736,7 +783,7 @@ function ClosingForm({
       changed:
         value !== '' &&
         (mode === 'new'
-          ? known && Number(value) !== expected
+          ? rowKnown && Number(value) !== expected
           : was !== undefined && Number(value) !== was),
     }
   })
@@ -744,6 +791,9 @@ function ClosingForm({
   const stillToCount = shelf.filter((s) => s.value === '').length
   const anyReceived = shelf.some((s) => s.received > 0)
   const anyKnown = shelf.some((s) => s.known)
+  const anyShort = mode === 'new' && shelf.some((s) => s.short)
+  /** What sold on the day whose count put everything at 0. */
+  const soldThen = nothingBefore ? nothingBefore.lines.reduce((a, l) => a + l.qty, 0) : 0
 
   /** What a phone's card says of a line, a dot between each part. */
   const shelfNote = (s: (typeof shelf)[number]): ReactNode[] => [
@@ -766,13 +816,19 @@ function ClosingForm({
         ? s.was === undefined
           ? ['Not counted that day']
           : []
-        : firstCount
-          ? ['Type what is on the shelf']
-          : [
-              <span key="new" className="font-medium text-primary">
-                New — type what is on the shelf
+        : s.short
+          ? [
+              <span key="short" className="font-medium text-warn">
+                More sold than was on record — count it
               </span>,
-            ]),
+            ]
+          : firstCount
+            ? ['Type what is on the shelf']
+            : [
+                <span key="new" className="font-medium text-primary">
+                  New — type what is on the shelf
+                </span>,
+              ]),
     ...(mode !== 'new' && s.changed && s.was !== undefined ? [`filed ${num(s.was)}`] : []),
   ]
   const setCount = (skuId: string, value: string) => setCounted((v) => ({ ...v, [skuId]: value }))
@@ -835,7 +891,8 @@ function ClosingForm({
         onSave={(d) => {
           if (!liveSales) return keepInDraft(editingSale!, d)
           const result = updateSale({ saleId: editingSale!, ...d })
-          if (result.ok) push('Sale changed', 'good')
+          // Today's closing, already filed, takes the change in at once (26 November).
+          if (result.ok) push(filed ? 'Sale changed · the closing too' : 'Sale changed', 'good')
           return result
         }}
         onDelete={
@@ -844,7 +901,7 @@ function ClosingForm({
             : () => {
                 if (liveSales) {
                   removeSale(editingSale!)
-                  push('Sale taken back', 'info')
+                  push(filed ? 'Sale taken back · the closing too' : 'Sale taken back', 'info')
                 } else {
                   setDraft((all) => all.filter((l) => saleKey(l) !== editingSale))
                 }
@@ -1005,22 +1062,32 @@ function ClosingForm({
           title={
             mode !== 'new'
               ? 'Change only a count that was wrong'
-              : firstCount
-                ? 'Count everything, this first time'
-                : 'Change only what is different'
+              : nothingBefore
+                ? 'Count everything tonight'
+                : firstCount
+                  ? 'Count everything, this first time'
+                  : 'Change only what is different'
           }
           meta={
             mode !== 'new'
               ? 'Each box holds the count that was filed.'
-              : firstCount
-                ? `Nothing has been counted at this store yet, so tonight every product is counted.${
-                    anyReceived
-                      ? ' What you confirmed receiving is already in its box, less what has sold: check it, and type the rest.'
-                      : ''
+              : nothingBefore
+                ? `The last count, on ${formatDate(nothingBefore.period)}, put every product at 0${
+                    soldThen > 0 ? `, though ${num(soldThen)} sold that day` : ''
+                  }. That is not a count, so there is nothing to start from: tonight every product is counted.${
+                    anyReceived ? ' What you confirmed receiving since is shown beside it.' : ''
                   } From tomorrow the boxes fill themselves in and you only change what is different.`
-                : anyReceived
-                  ? "Each box already holds what the shelf should have after today's sales, with the stock you confirmed receiving added in. If what you count matches, leave it."
-                  : "Each box already holds what the shelf should have after today's sales. If what you count matches, leave it."
+                : firstCount
+                  ? `Nothing has been counted at this store yet, so tonight every product is counted.${
+                      anyReceived
+                        ? ' What you confirmed receiving is already in its box, less what has sold: check it, and type the rest.'
+                        : ''
+                    } From tomorrow the boxes fill themselves in and you only change what is different.`
+                  : `${
+                      anyReceived
+                        ? "Each box already holds what the shelf should have after today's sales, with the stock you confirmed receiving added in. If what you count matches, leave it."
+                        : "Each box already holds what the shelf should have after today's sales. If what you count matches, leave it."
+                    }${anyShort ? ' Where more has sold than was on record, the box starts empty: count it.' : ''}`
           }
           action={
             mode !== 'new' ? (
@@ -1031,7 +1098,7 @@ function ClosingForm({
                   As filed
                 </Badge>
               )
-            ) : firstCount ? (
+            ) : firstCount || stillToCount > 0 ? (
               <Badge tone={stillToCount > 0 ? 'warn' : 'good'} icon={stillToCount > 0 ? 'alert' : 'check'}>
                 {stillToCount > 0 ? `${stillToCount} still to count` : 'All filled in'}
               </Badge>
@@ -1112,11 +1179,13 @@ function ClosingForm({
                     <td className="py-2">
                       <p className="text-[13px] leading-tight text-ink">
                         {s.label}
-                        {s.fresh && mode === 'new' && (
+                        {mode === 'new' && s.short ? (
+                          <span className="ml-2 text-[11px] font-medium text-warn">More sold than was on record — count it</span>
+                        ) : s.fresh && mode === 'new' ? (
                           <span className="ml-2 text-[11px] font-medium text-primary">
                             {s.known ? 'New to this store' : 'New — count it'}
                           </span>
-                        )}
+                        ) : null}
                       </p>
                       {s.group ? (
                         <p className="text-[11px] text-ink-3">{s.code}, counted together</p>

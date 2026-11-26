@@ -747,6 +747,26 @@ export interface StockRow {
 const VELOCITY_WINDOW = 30
 
 /**
+ * A closing whose count put every product at 0 (26 November, the client's
+ * Revision #10: "For KLIA T2, On hand quantity not displaying"). KLIA T2 filed
+ * every product at 0 from 3 October, selling every day: each box started at
+ * what the shelf "should" hold — 0 — and was left so. A shelf holding nothing
+ * at all is not what a count of a trading store says; it is a count nobody
+ * did. It is not taken as the shelf's stock: the stock is unknown until a
+ * real count, and the next closing asks for every product to be counted.
+ */
+export const countOfNothing = (c: Pick<Closing, 'stockCount'>): boolean =>
+  c.stockCount.length > 0 && c.stockCount.every((s) => s.counted === 0)
+
+/** The store's last count before `day`, where it was a count of nothing. */
+export const selectCountOfNothing = (data: Pick<CrmData, 'closings'>, locationId: string, day: DateStr): Closing | undefined => {
+  const last = data.closings
+    .filter((c) => c.locationId === locationId && c.period < day && c.stockCount.length > 0)
+    .reduce<Closing | undefined>((a, c) => (!a || c.period > a.period ? c : a), undefined)
+  return last && countOfNothing(last) ? last : undefined
+}
+
+/**
  * Stock on hand is the counted balance from the location's most recent closing,
  * plus anything already dispatched and not yet received.
  *
@@ -754,6 +774,8 @@ const VELOCITY_WINDOW = 30
  * closing before it. Closing a day needs that and nothing later: counting from
  * the day's own closing, as editing one used to, took the day's sales off
  * twice and showed every box short.
+ *
+ * A count of nothing is no count (26 November): every line reads as not counted.
  *
  * This is a count for head office visibility only. The client was explicit that
  * once stock leaves the warehouse it is no longer theirs, and that this must
@@ -787,8 +809,9 @@ export const selectStock = (data: CrmData, locationId: string, asOf?: DateStr): 
 
   // Testers and vials are ordered but never counted on a shelf, so they are
   // not part of stock on hand.
+  const counts = latest && !countOfNothing(latest) ? latest.stockCount : []
   return countedSkus.map((s) => {
-    const count = latest?.stockCount.find((m) => m.skuId === s.id)
+    const count = counts.find((m) => m.skuId === s.id)
     const counted = Boolean(count)
     const onHand = count?.counted ?? 0
     const velocity = soldOf(s.id) / periods
@@ -2147,6 +2170,8 @@ export interface StoreDay extends SalesFigure {
   live: boolean
   /** That day's closing, if it was filed. */
   closing?: Closing
+  /** Filed with every product at 0: not a count, so nothing shows as on hand (26 November). */
+  countOfNothing: boolean
   /** How the day was paid, as filed. */
   tender?: Closing['tender']
   /** Every product on the shelf, in the range's order, and anything else sold or counted that day. */
@@ -2166,23 +2191,16 @@ export const selectStoreDay = (data: CrmData, locationId: string, day: DateStr):
   const closing = data.closings.find((c) => c.locationId === locationId && c.period === day && c.periodType === 'day')
   const lines = live ? (data.liveLines[locationId] ?? []) : (closing?.lines ?? [])
   const detail = selectDayDetail(data, day, locationId)
-  const rows = storeDayRows(
-    lines,
-    closing
-      ? offTheShelf(
-          [...closing.lines, ...closing.writeOffs],
-          closing.stockCount,
-          selectArrivalsForClosing(data, locationId, day, closing.submittedAt),
-        )
-      : lines,
-    closing ? new Map(closing.stockCount.map((c) => [c.skuId, c.counted])) : null,
-    basisOf(locationId),
-  )
+  const nothing = Boolean(closing && countOfNothing(closing))
+  const rows = closing
+    ? filedRows(lines, closing, selectArrivalsForClosing(data, locationId, day, closing.submittedAt))
+    : storeDayRows(lines, lines, null, basisOf(locationId))
 
   return {
     day,
     live,
     closing,
+    countOfNothing: nothing,
     tender: closing?.tender,
     revenue: detail.revenue,
     units: detail.units,
@@ -2252,12 +2270,22 @@ export const storeDayRows = (
  * before it was filed, which a vial's count is measured against.
  */
 export const filedDayRows = (closing: Closing, arrived: Map<string, number> = new Map()): StoreDayRow[] =>
-  storeDayRows(
-    closing.lines,
-    offTheShelf([...closing.lines, ...closing.writeOffs], closing.stockCount, arrived),
-    new Map(closing.stockCount.map((c) => [c.skuId, c.counted])),
+  filedRows(closing.lines, closing, arrived)
+
+/**
+ * A filed day's rows, its sales from `lines`: what the day took off the shelf
+ * and the counts are the closing's. A count of nothing is no count, so
+ * nothing shows as on hand (26 November).
+ */
+const filedRows = (lines: SaleLine[], closing: Closing, arrived: Map<string, number>): StoreDayRow[] => {
+  const counts = countOfNothing(closing) ? null : closing.stockCount
+  return storeDayRows(
+    lines,
+    offTheShelf([...closing.lines, ...closing.writeOffs], counts, arrived),
+    counts ? new Map(counts.map((c) => [c.skuId, c.counted])) : null,
     basisOf(closing.locationId),
   )
+}
 
 /**
  * What left the shelf, line by line, for the Deducted column: what was sold

@@ -12,6 +12,7 @@
  * filed; today reads the counter, as everywhere else.
  */
 import {
+  countOfNothing,
   eachLineIn,
   filteredClosings,
   inWindow,
@@ -102,8 +103,8 @@ export interface StockDetailRow {
   code: string
   /** Off the shelf that day: sold, and written off. */
   deducted: number
-  /** Counted at the close. */
-  onHand: number
+  /** Counted at the close; null for a day filed with every product at 0, which is no count (26 November). */
+  onHand: number | null
 }
 
 export interface PartnerMonthLine {
@@ -295,9 +296,10 @@ export function buildDetailReport(data: CrmData, f: Filter): DetailReport {
   for (const c of closings) {
     // As the store's page has it: a vial's from its count, where more went than was rung up (26 November).
     const off = new Map<string, number>()
+    const nothing = countOfNothing(c)
     const shelf = offTheShelf(
       [...c.lines, ...c.writeOffs],
-      c.stockCount,
+      nothing ? null : c.stockCount,
       selectArrivalsForClosing(data, c.locationId, c.period, c.submittedAt),
     )
     for (const l of shelf) off.set(l.skuId, (off.get(l.skuId) ?? 0) + l.qty)
@@ -312,7 +314,7 @@ export function buildDetailReport(data: CrmData, f: Filter): DetailReport {
           label: sku?.label ?? s.skuId,
           code: sku?.code ?? '',
           deducted: off.get(s.skuId) ?? 0,
-          onHand: s.counted,
+          onHand: nothing ? null : s.counted,
         }
       })
       .sort((a, b) => place(a.skuId) - place(b.skuId))
@@ -452,7 +454,7 @@ export function detailCsvBlocks(r: DetailReport, heading: (string | number)[][] 
     blocks.push({
       title: 'CLOSING STOCK (AS COUNTED AT EACH CLOSE)',
       headers: ['Business date', 'Store', 'Store code', 'Product', 'Code', 'Deducted', 'On hand at close'],
-      rows: r.stock.map((s) => [s.day, storeName(s.locationId), code(s.locationId), s.label, s.code, s.deducted, s.onHand]),
+      rows: r.stock.map((s) => [s.day, storeName(s.locationId), code(s.locationId), s.label, s.code, s.deducted, s.onHand ?? '']),
     })
   }
   blocks.push({
@@ -584,13 +586,13 @@ export function detailPrintSpec(r: DetailReport, opts: { title: string; subtitle
         s.label,
         ...(stores ? [locationById(s.locationId)?.shortName ?? s.locationId] : []),
         s.deducted ? `−${num(s.deducted)}` : '0',
-        num(s.onHand),
+        s.onHand === null ? '—' : num(s.onHand),
       ]),
       total: [
         'Total',
         ...(stores ? [''] : []),
         `−${num(r.stock.reduce((a, s) => a + s.deducted, 0))}`,
-        num(r.stock.reduce((a, s) => a + s.onHand, 0)),
+        r.stock.some((s) => s.onHand !== null) ? num(r.stock.reduce((a, s) => a + (s.onHand ?? 0), 0)) : '—',
       ],
     })
   }

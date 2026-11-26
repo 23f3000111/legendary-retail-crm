@@ -59,15 +59,35 @@ export function shelfExpected(
 }
 
 /**
- * Whether what a line should hold is known: this store has counted it, or has
- * confirmed receiving it since. Nothing else can say what is on the shelf.
+ * The lines whose closing figure is known, so their box can start filled in:
+ * this store counted the line, or confirmed receiving it since — and the
+ * record adds up. Nothing else can say what is on the shelf.
+ *
+ * It does not add up where more has sold since the last count than that count
+ * and the deliveries since come to (26 November, the client's Revision #10:
+ * "make sure ALL stores shows correct on hand quantity"). The count was wrong,
+ * so what the shelf should hold is not known either: the box starts empty, to
+ * be counted, instead of at 0. KLIA T2 filed every product at 0 from 3
+ * October, selling every day, because each box started at 0 and was left so.
  */
-export const isKnown = (s: Pick<StockRow, 'skuId' | 'counted'>, arrived: Map<string, number>): boolean =>
-  s.counted || (arrived.get(s.skuId) ?? 0) > 0
+export function knownLines(
+  stock: Pick<StockRow, 'skuId' | 'counted' | 'onHand'>[],
+  arrived: Map<string, number>,
+  sold: Map<string, number>,
+): Set<string> {
+  const out = new Set<string>()
+  for (const s of stock) {
+    const came = arrived.get(s.skuId) ?? 0
+    if (!s.counted && came === 0) continue
+    if (s.onHand + came - (sold.get(s.skuId) ?? 0) < 0) continue
+    out.add(s.skuId)
+  }
+  return out
+}
 
 /**
  * What each box starts at, on a day being closed for the first time: what the
- * shelf should hold, where that is known. A store that has never counted, or a
+ * shelf should hold, where that is `known`. A store that has never counted, or a
  * product new to it, starts at what it confirmed receiving, less what sold
  * (25 November: "the received quantity automatically adds into the closing
  * quantity"); with nothing received either, the box starts empty and is typed.
@@ -76,16 +96,24 @@ export const isKnown = (s: Pick<StockRow, 'skuId' | 'counted'>, arrived: Map<str
 export const startingBoxes = (
   rows: ShelfRow[],
   expected: Map<string, number>,
-  arrived: Map<string, number>,
+  known: Set<string>,
 ): Record<string, string> =>
   Object.fromEntries(
     rows.map((row) => [
       row.key,
-      row.skus.every((s) => isKnown(s, arrived))
+      row.skus.every((s) => known.has(s.skuId))
         ? String(row.skus.reduce((a, s) => a + (expected.get(s.skuId) ?? 0), 0))
         : '',
     ]),
   )
+
+/**
+ * Every box typed in, and every one 0: the shelf counted as holding nothing at
+ * all (26 November). On a day that sold, that is not a count — the closing
+ * says so and asks for one.
+ */
+export const nothingCounted = (rows: ShelfRow[], boxes: Record<string, string>): boolean =>
+  rows.length > 0 && rows.every((r) => (boxes[r.key] ?? '') !== '' && Number(boxes[r.key]) === 0)
 
 /**
  * One count shared across several lines, in proportion to `weights`: when it
