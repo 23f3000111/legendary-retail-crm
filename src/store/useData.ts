@@ -419,6 +419,20 @@ const empty = (): CrmData => ({
  */
 export const useLastSync = create<{ at: string | null }>()(() => ({ at: null }))
 
+/**
+ * Writes sent to the server and not answered yet. A page opening a new version
+ * of the app waits for them, so a sale or a closing on its way is never cut
+ * off (27 November).
+ */
+let inFlight = 0
+export const writesInFlight = (): number => inFlight
+const sending = <T,>(call: Promise<T>): Promise<T> => {
+  inFlight += 1
+  return call.finally(() => {
+    inFlight -= 1
+  })
+}
+
 export const useData = create<DataState>()((set, get) => {
   /** Changes the copy at once and sends the documents on. */
   const write = (put: PutDoc[]) => {
@@ -427,8 +441,7 @@ export const useData = create<DataState>()((set, get) => {
       docs.set(docKey(d.kind, d.id), { ...d, updatedAt: now, updatedBy: getSession()?.personId, deleted: false })
     }
     set(rebuild(get().today))
-    void backend()
-      .put(getSessionToken(), put)
+    void sending(backend().put(getSessionToken(), put))
       .then((r) => {
         if (!r.ok) {
           fail(r.error ?? 'The server refused that change.')
@@ -446,8 +459,7 @@ export const useData = create<DataState>()((set, get) => {
       if (existing) docs.set(docKey(kind, id), { ...existing, deleted: true, updatedAt: now })
     }
     set(rebuild(get().today))
-    void backend()
-      .remove(getSessionToken(), kind, ids)
+    void sending(backend().remove(getSessionToken(), kind, ids))
       .then((r) => {
         if (!r.ok) {
           fail(r.error ?? 'The server refused that change.')

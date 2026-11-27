@@ -16,6 +16,7 @@ import { rm } from '../../lib/format'
 import { emptyFilter, selectKpis, selectNotFiled } from '../../store/selectors'
 import { useToasts } from '../ui/Toast'
 import { CommandPalette, useCommandPaletteHotkey } from './CommandPalette'
+import { NewVersion } from '../NewVersion'
 
 /**
  * The command deck. A gradient bar carries identity and navigation across the
@@ -358,6 +359,7 @@ export function AppShell() {
       </header>
 
       <main className="min-w-0 flex-1 px-4 py-5 sm:px-6 sm:py-7">
+        <NewVersion />
         <Outlet />
       </main>
 

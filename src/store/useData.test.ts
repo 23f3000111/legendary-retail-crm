@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { useData } from './useData'
+import { useData, writesInFlight } from './useData'
 import { settle, signInAs, startFixture } from './testing'
 import type { LocalBackend } from '../api/local'
 import type { Person } from '../data/people'
@@ -256,5 +256,23 @@ describe('closing a day', () => {
     const filed = useData.getState().closings.find((c) => c.id === 'klia-t2-2026-08-21')
     expect(filed?.submittedBy).toBe('Teo Kok Nian')
     expect(filed?.lines).toHaveLength(first)
+  })
+})
+
+// 27 November: a page opens a new version of the app at the next change of
+// page, and must not cut off a sale or a closing still on its way.
+describe('writes on their way to the server', () => {
+  it('are counted until the server has answered them', async () => {
+    signInAs(lb, 'teokoknian', 'klia-t2')
+    await settle()
+    expect(writesInFlight()).toBe(0)
+    useData.getState().recordSale({
+      locationId: 'klia-t2',
+      lines: [{ skuId: 'orchid-retail', qty: 1, priceTier: 'promotion', unitPriceMYR: 188 }],
+      countryCode: 'CN',
+    })
+    expect(writesInFlight()).toBeGreaterThan(0)
+    await settle()
+    expect(writesInFlight()).toBe(0)
   })
 })
