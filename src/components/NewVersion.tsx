@@ -8,13 +8,22 @@ import { writesInFlight } from '../store/useData'
 /** How often an open page asks whether a new version is live. */
 const CHECK_MS = 5 * 60_000
 
-/** Opens the new version once nothing is on its way to the server: a sale or a closing is never cut off. */
+/** The address's own mark that it asked for a fresh copy of the page. */
+const FRESH = 'version'
+
+/**
+ * Opens the new version once nothing is on its way to the server: a sale or a
+ * closing is never cut off. The address carries a mark, so a cache holding the
+ * page from before (GitHub Pages keeps it ten minutes) is passed by.
+ */
 const openNewVersion = (tries = 0) => {
   if (writesInFlight() > 0 && tries < 50) {
     window.setTimeout(() => openNewVersion(tries + 1), 200)
     return
   }
-  window.location.reload()
+  const url = new URL(window.location.href)
+  url.searchParams.set(FRESH, String(Date.now()))
+  window.location.replace(url.toString())
 }
 
 /**
@@ -39,12 +48,18 @@ export function NewVersion() {
   const foundOn = useRef<string | null>(null)
 
   useEffect(() => {
+    // Opened fresh: the mark has done its work, and the address goes back to how it was.
+    const opened = new URL(window.location.href)
+    if (opened.searchParams.has(FRESH)) {
+      opened.searchParams.delete(FRESH)
+      window.history.replaceState(window.history.state, '', opened.toString())
+    }
     const running = runningBundle(Array.from(document.scripts, (s) => s.src))
     if (!running) return
     let stopped = false
     const check = async () => {
       try {
-        const page = `${window.location.origin}${window.location.pathname}?version=${Date.now()}`
+        const page = `${window.location.origin}${window.location.pathname}?${FRESH}=${Date.now()}`
         const res = await fetch(page, { cache: 'no-store' })
         if (!res.ok || stopped) return
         if (newerBundle(running, await res.text()) && !stopped) {
