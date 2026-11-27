@@ -111,3 +111,34 @@ for the rare case another phone changed a sale before reloading this version.
 - **Two phones at once.** Each phone brings the closing up to date from its
   own copy. If two people change the same closing within a few seconds, the
   later write wins, as with any change to a closing.
+
+## 27 November: KLIA T2 still filed 0
+
+The developer reported that KLIA T2 was still not updating. The live server
+showed why: KLIA T2 filed 26 November at 23:01 with every product at 0 and
+22 units sold, six hours after this version went live at 17:00. The new
+closing cannot file that, so the phone was still running the version from
+before. A page left open ran the version it opened with until somebody
+reloaded it.
+
+- **The server refuses it now**, whatever version sends it:
+  `_closing_refusal` in `0001_init.sql`, and its twin `closingWriteRefusal`
+  in `src/lib/editing.ts`. A count of every product at 0, on a day that sold,
+  is refused when it is filed, or when a change turns the counts into it. A
+  day filed that way before can still be changed, as long as its counts stay
+  as they were. Tried first on a copy against every closing on the server:
+  only KLIA T2's 53 such closings would have been refused, and none when
+  written back unchanged. Applied with `scripts/migrate.mjs`;
+  `scripts/verify-server.mjs` passed 76 of 76.
+- **An open page now picks up a new version** (`NewVersion`,
+  `src/lib/appVersion.ts`). It asks every five minutes, and whenever it comes
+  back to the front, which version is live. Once another is, the next tap to
+  another page opens it, after anything on its way to the server has arrived.
+  A line at the top offers *Open it now*. A page that is already open, on
+  today's version or an older one, does not have this yet: it gets it the
+  next time it is reloaded.
+- **The live data, after the release:** no sale was changed after a closing
+  on the same day, so the closing has not had to follow one yet. The vials'
+  Deducted, worked out by the new page on the live data, reads 58, 76 and 64
+  at Pavilion 5th Floor (24 to 26 November) and 14 and 18 at KLCC Isetan (25
+  and 26 November), where nothing was rung up.
