@@ -548,12 +548,30 @@ end $$;
 -- stay as it is, and the request must be pending and inside three days. It may
 -- take back its own pending request, never a decided one. And deciding a
 -- correction is Kelly's or Davy's, whoever sends the document.
+--
+-- Every product counted at 0, on a day that sold, is no count (26 November):
+-- KLIA T2 filed one again from a phone still running the version before the
+-- app refused it. Refused from anyone, filed or changed to; a day filed that
+-- way before can still be changed, as long as its counts stay as they were.
 create or replace function _closing_refusal(p_role text, p_old docs, p_new jsonb) returns text
 language plpgsql stable as $$
 declare
   was text := p_old.doc->'correction'->>'status';
   now_status text := p_new->'correction'->>'status';
+  units numeric;
 begin
+  if jsonb_typeof(p_new->'stockCount') = 'array' and jsonb_array_length(p_new->'stockCount') > 0
+     and not exists (select 1 from jsonb_array_elements(p_new->'stockCount') c
+                      where jsonb_typeof(c->'counted') = 'number' and (c->>'counted')::numeric <> 0) then
+    select coalesce(sum(case when jsonb_typeof(l->'qty') = 'number' then (l->>'qty')::numeric else 0 end), 0)
+      into units
+      from jsonb_array_elements(case when jsonb_typeof(p_new->'lines') = 'array' then p_new->'lines' else '[]'::jsonb end) l;
+    if units > 0 and (p_old.id is null or p_old.deleted
+                      or (p_new->'stockCount') is distinct from (p_old.doc->'stockCount')) then
+      return format('Every product is at 0, though %s %s sold that day — count what is on the shelf and type it in.',
+                    units, case when units = 1 then 'was' else 'were' end);
+    end if;
+  end if;
   if p_old.id is null or p_old.deleted then return null; end if;
   if now_status in ('approved', 'rejected') and now_status is distinct from was
      and p_role not in ('md', 'ops') then

@@ -109,3 +109,42 @@ describe('what the server says to a closing written over one filed', () => {
     expect(closingWriteRefusal('promoter', before(), { ...reordered, correction: ask().correction }, today)).toBeNull()
   })
 })
+
+// 26 November: KLIA T2 filed every product at 0 again six hours after the app
+// stopped allowing it — on a phone still running the version before. The
+// server refuses it too, whatever version sends it.
+describe('what the server says to a count of every product at 0', () => {
+  const zero = {
+    id: 'klia-t2-2026-09-28',
+    period: '2026-09-28',
+    lines: [{ skuId: 'orchid-retail', qty: 3 }, { skuId: 'wish-1-set', qty: 1 }],
+    stockCount: [
+      { skuId: 'orchid-retail', opening: 0, counted: 0 },
+      { skuId: 'violet-retail', opening: 0, counted: 0 },
+    ],
+  }
+  const counted = { ...zero, stockCount: [{ skuId: 'orchid-retail', opening: 0, counted: 9 }, ...zero.stockCount.slice(1)] }
+  const filed = (doc: object) => ({ day: '2026-09-28', doc, deleted: false })
+
+  it('refuses one on a day that sold, filed or changed to, from anyone', () => {
+    expect(closingWriteRefusal('promoter', undefined, zero, '2026-09-28')).toBe(
+      'Every product is at 0, though 4 were sold that day — count what is on the shelf and type it in.',
+    )
+    expect(closingWriteRefusal('promoter', filed(counted), zero, '2026-09-28')).toMatch(/Every product is at 0/)
+    expect(closingWriteRefusal('ops', filed(counted), zero, today)).toMatch(/Every product is at 0/)
+  })
+
+  it('lets through a day that sold nothing, a real count, and a change that leaves the counts as they were', () => {
+    expect(closingWriteRefusal('promoter', undefined, { ...zero, lines: [] }, '2026-09-28')).toBeNull()
+    expect(closingWriteRefusal('promoter', undefined, counted, '2026-09-28')).toBeNull()
+    // A day filed that way before: its cash, or a sale changed after it, can still be put right.
+    expect(closingWriteRefusal('promoter', filed(zero), { ...zero, revenueMYR: 10 }, '2026-09-28')).toBeNull()
+    expect(closingWriteRefusal('promoter', undefined, { ...zero, stockCount: [] }, '2026-09-28')).toBeNull()
+  })
+
+  it('says one unit as one', () => {
+    expect(closingWriteRefusal('promoter', undefined, { ...zero, lines: [{ skuId: 'orchid-retail', qty: 1 }] }, '2026-09-28')).toMatch(
+      /though 1 was sold that day/,
+    )
+  })
+})

@@ -104,6 +104,31 @@ const correctionOf = (doc: unknown): { status?: string } | undefined =>
 
 const statusOf = (doc: unknown): string | undefined => correctionOf(doc)?.status
 
+type Counted = { stockCount?: { counted?: unknown }[] | null; lines?: { qty?: unknown }[] | null } | null
+
+/**
+ * Every product counted at 0, on a day that sold, filed or changed to by
+ * anyone (26 November): no count. KLIA T2 filed one again on a phone still
+ * running the version from before the app refused it, so the server refuses
+ * it as well. A day filed that way before can still be changed, as long as
+ * the change leaves its counts as they were.
+ */
+function countOfNothingRefusal(
+  before: { doc: unknown; deleted?: boolean } | undefined,
+  next: unknown,
+): string | null {
+  const doc = next as Counted
+  const counts = Array.isArray(doc?.stockCount) ? doc.stockCount : []
+  if (counts.length === 0 || counts.some((c) => typeof c?.counted === 'number' && c.counted !== 0)) return null
+  const lines = Array.isArray(doc?.lines) ? doc.lines : []
+  const units = lines.reduce((a, l) => a + (typeof l?.qty === 'number' ? l.qty : 0), 0)
+  if (units <= 0) return null
+  if (before && !before.deleted && sameContent((before.doc as Counted)?.stockCount ?? null, doc?.stockCount ?? null)) {
+    return null
+  }
+  return `Every product is at 0, though ${units} ${units === 1 ? 'was' : 'were'} sold that day — count what is on the shelf and type it in.`
+}
+
 /**
  * What the server says to a closing being written. Mirrors `_closing_refusal`
  * in `0001_init.sql`; keep the two in step.
@@ -120,6 +145,8 @@ export function closingWriteRefusal(
   next: unknown,
   today: DateStr,
 ): string | null {
+  const nothing = countOfNothingRefusal(before, next)
+  if (nothing) return nothing
   if (!before || before.deleted) return null
   const was = statusOf(before.doc)
   const now = statusOf(next)

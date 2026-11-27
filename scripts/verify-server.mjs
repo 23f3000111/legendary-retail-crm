@@ -200,6 +200,47 @@ try {
   const gone = await one('select remove_docs($1, $2, $3::text[]) r', [promoter, 'closing', [todays.id]])
   check('but cannot delete a filed day', gone.r.ok === false, gone.r.error)
 
+  // Every product counted at 0 on a day that sold is no count (26 November),
+  // whichever version of the app sends it: KLIA T2 filed one from a phone
+  // still on the version before the app refused it.
+  const zeroDay = await daysAgo(0)
+  const zeroDoc = {
+    id: 'verify-closing-zero',
+    locationId: 'klia-t2',
+    period: zeroDay,
+    revenueMYR: 188,
+    tender: { cash: 0, ewallet: 0, card: 188 },
+    lines: [{ skuId: 'orchid-retail', qty: 1 }],
+    stockCount: [
+      { skuId: 'orchid-retail', opening: 0, counted: 0 },
+      { skuId: 'violet-retail', opening: 0, counted: 0 },
+    ],
+  }
+  const zero = await closingPut(promoter, zeroDoc)
+  check(
+    'every product at 0 on a day that sold is refused',
+    zero.r.ok === false && /Every product is at 0/.test(zero.r.error ?? ''),
+    zero.r.error,
+  )
+  const quiet = await closingPut(promoter, { ...zeroDoc, id: 'verify-closing-quiet', lines: [], revenueMYR: 0 })
+  check('but not on a day that sold nothing', quiet.r.ok === true, quiet.r.error)
+  const real = await closingPut(promoter, {
+    ...zeroDoc,
+    stockCount: [{ ...zeroDoc.stockCount[0], counted: 4 }, zeroDoc.stockCount[1]],
+  })
+  check('and a real count goes through', real.r.ok === true, real.r.error)
+  await client.query(
+    `insert into docs(kind, id, location_id, day, doc) values ('closing', $1, 'klia-t2', $2, $3::jsonb)`,
+    ['verify-closing-zero-filed', zeroDay, JSON.stringify({ ...zeroDoc, id: 'verify-closing-zero-filed' })],
+  )
+  const followed = await closingPut(promoter, {
+    ...zeroDoc,
+    id: 'verify-closing-zero-filed',
+    revenueMYR: 376,
+    lines: [...zeroDoc.lines, { skuId: 'violet-retail', qty: 1 }],
+  })
+  check('a day filed at 0 before can still be changed, its counts left as they were', followed.r.ok === true, followed.r.error)
+
   // A full load leaves out the sale lines a filed closing already carries
   // (16 November): they were most of what head office was sent at sign-in.
   // Today's lines still come, filed or not, and so does a day not yet filed;
