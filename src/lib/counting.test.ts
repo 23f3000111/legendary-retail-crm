@@ -244,6 +244,22 @@ describe('a box whose figure the record cannot stand behind', () => {
     const b = startingBoxes(shelfRows(rows), shelfExpected(rows, sold, new Map()), knownLines(rows, new Map(), sold))
     expect(b['group:spirit-2-vials']).toBe('')
   })
+
+  // 28 November: KLIA T2's ≈65 Orchid is the 120 delivered on 12 November less
+  // the 55 sold since — after 158 sold from stock the app was never told of.
+  // What is left of that stock is on the shelf too, so the figure is the least
+  // there can be, not a count. Started in its box, it would be filed as one.
+  it('is not known where on hand is only worked out from the record, delivered since or not', () => {
+    const rows = stock().map((s) => ({ ...s, counted: true, workedOut: true, onHand: s.skuId === 'orchid-retail' ? 65 : 0 }))
+    const sold = new Map([['orchid-retail', 2]])
+    const arrived = new Map([['violet-retail', 24]])
+    const known = knownLines(rows, arrived, sold)
+    expect(known.size).toBe(0)
+    const b = startingBoxes(shelfRows(rows), shelfExpected(rows, sold, arrived), known)
+    expect(b['orchid-retail']).toBe('')
+    expect(b['violet-retail']).toBe('')
+    expect(Object.values(b).every((v) => v === '')).toBe(true)
+  })
 })
 
 describe('a count of nothing', () => {

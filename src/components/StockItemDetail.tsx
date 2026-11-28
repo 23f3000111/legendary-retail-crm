@@ -57,6 +57,15 @@ export function StockItemDetail({
         </div>
       </div>
 
+      {/* 28 November: "why is there ≈ on on hand, and is on hand data correct?" */}
+      {row.workedOut && (
+        <p className="text-[12px] leading-snug text-ink-3">
+          <span className="font-medium text-ink-2">≈ Worked out from the record, not counted:</span> what came in, less
+          what went out, never below 0. Stock the app was never told of is not in it, so the shelf may hold more — the
+          store&rsquo;s next count puts it right.
+        </p>
+      )}
+
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-ink-3">
         <span>
           Sells about{' '}

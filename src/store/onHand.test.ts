@@ -260,4 +260,18 @@ describe('the shelf worked out from the record', () => {
     expect(shelf.get('orchid-retail')).toBe(40)
     expect(shelf.get('violet-retail')).toBe(0)
   })
+
+  // 28 November, on the live record: KLIA T2's delivery of 12 November had 24
+  // testers in it, so its store page put ≈1,103 on the shelf against the Stock
+  // page's ≈1,079, with six tester lines no count ever has (Revision 2).
+  it('covers only what the count covers: a tester that came with the delivery is not on the shelf', () => {
+    const d = kliaData(
+      [klia('2026-11-13', '2026-11-13T15:00:00.000Z', zero, { 'orchid-retail': 3 })],
+      [delivered('2026-11-12T12:23:37.014Z', { 'orchid-retail': 120, 'orchid-tester-30ml': 6 })],
+    )
+    const shelf = selectWorkedOut(d, d.closings[0])
+    expect(shelf.get('orchid-retail')).toBe(117)
+    expect(shelf.has('orchid-tester-30ml')).toBe(false)
+    expect([...shelf.keys()].sort()).toEqual(Object.keys(zero).sort())
+  })
 })

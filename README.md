@@ -13,7 +13,7 @@ say what is built and what is still missing.
 ```bash
 npm install
 npm run dev      # http://localhost:5180
-npm test         # 678 tests
+npm test         # 680 tests
 npm run build    # typecheck + production bundle into dist/
 ```
 

@@ -174,3 +174,44 @@ On the live data, worked out read-only: KLIA T2's Stock page shows about
 1,079 units (Orchid ≈65, Violet ≈55), 1,103 at its 26 November close, and
 its next closing starts 32 of its 33 boxes filled in. No other store is
 affected. Nothing on the server was changed.
+
+### 28 November, afternoon: why ≈, and is it right?
+
+The developer sent the same Orchid pop-up, now reading +120 came in, −108
+went out and on hand ≈65: "why is there ≈ on on hand, and is on hand data
+correct?" 120 less 108 is 12, not 65.
+
+Walked by hand from the live record, read-only, apart from the app's code:
+
+- KLIA T2 has never really counted. Its first closing, on 1 October, counted
+  8 units on the whole shelf (2 of them Orchid) on a day that sold 8; on
+  2 October it counted 1 unit and sold 18; from 3 October every product was
+  at 0. It has had one delivery in the app: 1,326 units, 120 of them Orchid,
+  confirmed at 20:23 on 12 November.
+- Before that delivery KLIA T2 sold 158 Orchid, and 747 units across the
+  range, with nothing on record: stock from before the app, never entered.
+- So ≈65 is 120 delivered, less the 55 sold from 13 to 26 November. The
+  pop-up's −108 is 30 days back to 29 October: 53 of it sold before the
+  delivery, from the stock nobody entered. Nothing has sold since 26
+  November. Every product works out the same by hand as in the app, 1,079 in
+  all.
+
+The sum is right; the shelf is not known. The figure is the least there can
+be, since what is left of the stock nobody entered is on the shelf too. Two
+things changed with it:
+
+- **The next closing asks for every product to be counted**, every box empty,
+  titled *Count everything tonight* again. Started at the record's figure, as
+  it was from this morning, a promoter who files what the boxes say — KLIA T2
+  filed what its boxes said for 54 days — would file the floor as a count, the
+  ≈ would go, and the shelf would still be unknown (`knownLines` in
+  `src/lib/counting.ts`: a worked-out line is never known).
+- **The pop-up says what ≈ means**, under its tiles: worked out from the
+  record, not counted; stock the app was never told of is not in it, so the
+  shelf may hold more.
+
+And one fault from this morning, fixed: the delivery had 24 testers in it,
+which no count has (Revision 2), so the store's days put them on the shelf —
+≈1,103 at the 26 November close against the Stock page's ≈1,079, with six
+tester lines. What the record works out now covers only what the count
+covers, and both read ≈1,079.

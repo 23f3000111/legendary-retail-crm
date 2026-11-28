@@ -69,15 +69,21 @@ export function shelfExpected(
  * so what the shelf should hold is not known either: the box starts empty, to
  * be counted, instead of at 0. KLIA T2 filed every product at 0 from 3
  * October, selling every day, because each box started at 0 and was left so.
+ *
+ * Nor is a shelf only worked out from the record (28 November): it is the
+ * least there can be, as stock the app was never told of is not in it. KLIA
+ * T2 sold 158 Orchid before its first delivery; its ≈65 is that delivery less
+ * what sold since. Started in its box, that figure would be filed as a count.
  */
 export function knownLines(
-  stock: Pick<StockRow, 'skuId' | 'counted' | 'onHand'>[],
+  stock: Pick<StockRow, 'skuId' | 'counted' | 'onHand' | 'workedOut'>[],
   arrived: Map<string, number>,
   sold: Map<string, number>,
 ): Set<string> {
   const out = new Set<string>()
   for (const s of stock) {
     const came = arrived.get(s.skuId) ?? 0
+    if (s.workedOut) continue
     if (!s.counted && came === 0) continue
     if (s.onHand + came - (sold.get(s.skuId) ?? 0) < 0) continue
     out.add(s.skuId)

@@ -785,7 +785,6 @@ export const selectWorkedOut = (
     .filter((c) => c.period < closing.period && c.stockCount.length > 0 && !countOfNothing(c))
     .reduce<Closing | undefined>((a, c) => (!a || c.period > a.period ? c : a), undefined)
   const shelf = new Map((base?.stockCount ?? []).map((c) => [c.skuId, c.counted]))
-  for (const c of closing.stockCount) if (!shelf.has(c.skuId)) shelf.set(c.skuId, 0)
 
   const out = new Map<DateStr, Map<string, number>>()
   const into = new Map<DateStr, Map<string, number>>()
@@ -817,7 +816,9 @@ export const selectWorkedOut = (
     for (const [skuId, qty] of out.get(day) ?? []) shelf.set(skuId, Math.max(0, (shelf.get(skuId) ?? 0) - qty))
     for (const [skuId, qty] of into.get(day) ?? []) shelf.set(skuId, (shelf.get(skuId) ?? 0) + qty)
   }
-  return shelf
+  // Only what the count covers: a tester that came with a delivery is never
+  // counted on the shelf (Revision 2), so it is not on it here either.
+  return new Map(closing.stockCount.map((c) => [c.skuId, shelf.get(c.skuId) ?? 0]))
 }
 
 /**

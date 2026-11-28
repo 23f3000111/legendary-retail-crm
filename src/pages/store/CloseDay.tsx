@@ -467,14 +467,18 @@ function ClosingForm({
    * Except what the store has confirmed receiving (25 November: "the received
    * quantity automatically adds into the closing quantity"): that much is
    * known, so its box starts at what arrived, less what sold.
+   *
+   * A shelf only worked out from the record has not been counted either (28
+   * November): the boxes start empty, every one of them.
    */
-  const firstCount = stock.length > 0 && stock.every((s) => !s.counted)
+  const firstCount = stock.length > 0 && stock.every((s) => !s.counted || s.workedOut)
 
   /**
    * The last count put every product at 0 (26 November, the client's Revision
    * #10: "For KLIA T2, On hand quantity not displaying"): it was no count, so
-   * the shelf the day starts from is what the record works out (28 November),
-   * and every box starts there, to be checked against the shelf.
+   * tonight every product is counted, from empty boxes. What the record works
+   * out (28 November) is the least there can be, not a count: started in the
+   * boxes, it would be filed as one.
    */
   const nothingBefore = useMemo(() => selectCountOfNothing(data, locationId, day), [data, locationId, day])
 
@@ -755,9 +759,11 @@ function ClosingForm({
     // up: what it should be is known.
     const rowKnown = row.skus.every((s) => known.has(s.skuId))
     // It would be, but more has sold since than was on record: the last count
-    // was wrong, so this one starts empty (26 November).
-    const short =
-      row.skus.some((s) => (s.counted || (arrivals.get(s.skuId) ?? 0) > 0) && !known.has(s.skuId))
+    // was wrong, so this one starts empty (26 November). A shelf only worked
+    // out was never counted at all: nothing to be short of.
+    const short = row.skus.some(
+      (s) => !s.workedOut && (s.counted || (arrivals.get(s.skuId) ?? 0) > 0) && !known.has(s.skuId),
+    )
     return {
       key: row.key,
       label: row.group?.label ?? row.skus[0].label,
@@ -1061,7 +1067,7 @@ function ClosingForm({
             mode !== 'new'
               ? 'Change only a count that was wrong'
               : nothingBefore
-                ? 'Check every box against the shelf'
+                ? 'Count everything tonight'
                 : firstCount
                   ? 'Count everything, this first time'
                   : 'Change only what is different'
@@ -1072,7 +1078,9 @@ function ClosingForm({
               : nothingBefore
                 ? `The last count, on ${formatDate(nothingBefore.period)}, put every product at 0${
                     soldThen > 0 ? `, though ${num(soldThen)} sold that day` : ''
-                  }. That is not a count, so each box starts at what the record works out — what came in, less what sold — and stock the app never knew of is not in it. Count the shelf and change every box that is different. From tomorrow you only change what is different.`
+                  }. That is not a count, and what the record works out leaves out stock the app never knew of, so tonight every product is counted: type what is on the shelf.${
+                    anyReceived ? ' What you confirmed receiving since is shown beside it.' : ''
+                  } From tomorrow the boxes fill themselves in and you only change what is different.`
                 : firstCount
                   ? `Nothing has been counted at this store yet, so tonight every product is counted.${
                       anyReceived
