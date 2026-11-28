@@ -190,19 +190,19 @@ describe('the rest of the report', () => {
 
   // The client's Revision #10, 26 November: "For KLIA T2, On hand quantity not
   // displaying". A day filed with every product at 0 was not counted.
-  it('gives no on-hand figure for a day filed with every product at 0, in the CSV and the PDF', () => {
+  it('gives what the record works out for a day filed with every product at 0, and says so (28 November)', () => {
     const zeroed = { ...bsas, stockCount: bsas.stockCount.map((c) => ({ ...c, counted: 0 })) }
     const r = buildDetailReport({ ...data, closings: [zeroed] }, oneDay)
-    expect(r.stock.map((s) => [s.skuId, s.deducted, s.onHand])).toEqual([
-      ['orchid-retail', 3, null],
-      ['wish-3-set', 1, null],
-      ['man-retail', 2, null],
+    expect(r.stock.map((s) => [s.skuId, s.deducted, s.onHand, s.workedOut])).toEqual([
+      ['orchid-retail', 3, 0, true],
+      ['wish-3-set', 1, 0, true],
+      ['man-retail', 2, 0, true],
     ])
     const csv = toCsvSections(detailCsvBlocks(r)).split('\r\n')
-    expect(csv).toContain('2026-11-02,BSAS,BSA,Orchid · 30ml,LGD-ORC-R30,3,')
+    expect(csv).toContain('2026-11-02,BSAS,BSA,Orchid · 30ml,LGD-ORC-R30,3,0,Worked out')
     const shelf = detailPrintSpec(r, { title: 'BSAS', subtitle: '', rules: [] }).sections!.find((x) => x.title === 'Closing stock')!
-    expect(shelf.rows[0]).toEqual(['Orchid · 30ml', '−3', '—'])
-    expect(shelf.total).toEqual(['Total', '−6', '—'])
+    expect(shelf.rows[0]).toEqual(['Orchid · 30ml', '−3', '≈0'])
+    expect(shelf.total).toEqual(['Total', '−6', '≈0'])
   })
 
   it('sums the customers by country', () => {

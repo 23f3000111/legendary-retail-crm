@@ -3,7 +3,7 @@ import { buildSeed, DEMO_TODAY } from '../data/seed'
 import { basisOf, locationsInChannel, tradingLocations } from '../data/locations'
 import { priceOfId, skuById, skus } from '../data/products'
 import { addDays, dateRange, startOfMonth, startOfWeek } from '../lib/dates'
-import type { Closing, SaleLine } from '../data/types'
+import type { Closing, PurchaseOrder, SaleLine } from '../data/types'
 import {
   countOfNothing,
   deriveAlerts,
@@ -403,14 +403,27 @@ describe('a count that put every product at 0', () => {
     expect(countOfNothing({ ...latest, stockCount: [] })).toBe(false)
   })
 
-  it('is not taken as the shelf’s stock: unknown, not out of everything', () => {
-    const rows = selectStock(nothing, 'pavilion-5')
-    for (const r of rows) {
-      expect(r.counted, r.label).toBe(false)
-      expect(r.status, r.label).toBe('ok')
-      expect(r.suggested, r.label).toBe(0)
+  // 28 November: "why is data not showing ... On hand is not showing anywhere".
+  it('is not taken as the shelf’s stock: what the record works out is, marked so', () => {
+    const delivered: PurchaseOrder = {
+      id: 'PO-PAV-WORKED-OUT',
+      locationId: 'pavilion-5',
+      createdBy: 'x',
+      createdAt: '2026-08-01T00:00:00.000Z',
+      priority: 'standard',
+      notes: '',
+      status: 'received',
+      lines: [{ skuId: 'orchid-retail', qtyRequested: 24, qtyApproved: 24, qtyShipped: 24 }],
+      // An hour before the day was filed.
+      events: [{ status: 'received', actor: 'x', role: 'promoter', at: new Date(Date.parse(zeroed.submittedAt) - 3600e3).toISOString() }],
     }
-    expect(deriveAlerts(nothing, new Set()).filter((a) => a.type === 'low_stock' && a.locationId === 'pavilion-5')).toHaveLength(0)
+    const rows = selectStock({ ...nothing, purchaseOrders: [delivered] }, 'pavilion-5')
+    expect(rows.every((r) => r.workedOut)).toBe(true)
+    // Whatever sold that day came off nothing; the delivery went on after.
+    expect(rows.find((r) => r.skuId === 'orchid-retail')).toMatchObject({ counted: true, onHand: 24 })
+    expect(rows.find((r) => r.skuId === 'violet-retail')).toMatchObject({ counted: true, onHand: 0, status: 'out' })
+    // A real count is just that.
+    expect(selectStock(data, 'pavilion-5').some((r) => r.workedOut)).toBe(false)
   })
 
   it('is named for the next day’s closing, and a real count after it is taken', () => {

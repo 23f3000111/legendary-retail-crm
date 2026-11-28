@@ -21,10 +21,13 @@ export function DayStockTable({
   locationId,
   rows,
   onHandHeader = 'On hand at close',
+  workedOut = false,
 }: {
   locationId: string
   rows: StoreDayRow[]
   onHandHeader?: string
+  /** On hand is what the record works out, not a count (28 November): shown with "≈". */
+  workedOut?: boolean
 }) {
   const data = useData()
   const store = locationById(locationId)
@@ -35,6 +38,7 @@ export function DayStockTable({
   )
 
   const counted = rows.some((r) => r.onHand !== null)
+  const about = workedOut ? '≈' : ''
   const totals = {
     deducted: rows.reduce((a, r) => a + r.deducted, 0),
     revenue: rows.reduce((a, r) => a + r.revenue, 0),
@@ -98,9 +102,9 @@ export function DayStockTable({
       align: 'right',
       width: '110px',
       render: (r) => (
-        <span className="readout text-[13px] font-semibold text-ink">{r.onHand === null ? '—' : num(r.onHand)}</span>
+        <span className="readout text-[13px] font-semibold text-ink">{r.onHand === null ? '—' : `${about}${num(r.onHand)}`}</span>
       ),
-      total: counted ? num(totals.onHand) : undefined,
+      total: counted ? `${about}${num(totals.onHand)}` : undefined,
     },
     {
       key: 'open',
@@ -141,7 +145,7 @@ export function DayStockTable({
                 </p>
               </div>
               <div className="shrink-0 text-right">
-                <p className="readout text-[15px] font-semibold text-ink">{r.onHand === null ? '—' : num(r.onHand)}</p>
+                <p className="readout text-[15px] font-semibold text-ink">{r.onHand === null ? '—' : `${about}${num(r.onHand)}`}</p>
                 <p className="text-[9.5px] font-semibold uppercase tracking-wide2 text-ink-3">{onHandHeader}</p>
               </div>
             </button>
@@ -151,7 +155,7 @@ export function DayStockTable({
           <span>Total · {num(rows.length)} products</span>
           <span className="readout text-ink">
             {totals.deducted ? `−${num(totals.deducted)}` : '0'} · {rm(totals.revenue)}
-            {counted ? ` · ${num(totals.onHand)}` : ''}
+            {counted ? ` · ${about}${num(totals.onHand)}` : ''}
           </span>
         </li>
       </ul>
@@ -173,7 +177,9 @@ export function DayStockTable({
         subtitle={
           item && stockRow
             ? `${item.code} · ${
-                stockRow.counted ? `${num(stockRow.onHand)} on the shelf at ${store?.shortName ?? ''} now` : `no count at ${store?.shortName ?? ''} to go by yet`
+                stockRow.counted
+                  ? `${stockRow.workedOut ? '≈' : ''}${num(stockRow.onHand)} on the shelf at ${store?.shortName ?? ''} now${stockRow.workedOut ? ', by the record' : ''}`
+                  : `no count at ${store?.shortName ?? ''} to go by yet`
               }`
             : undefined
         }

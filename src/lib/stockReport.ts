@@ -67,7 +67,8 @@ export const STOCK_STATUS_WORD: Record<StockRow['status'], string> = {
   out: 'Out of stock',
 }
 
-const statusWord = (r: StockRow) => (r.counted ? STOCK_STATUS_WORD[r.status] : 'Not counted yet')
+const statusWord = (r: StockRow) =>
+  !r.counted ? 'Not counted yet' : r.workedOut ? `${STOCK_STATUS_WORD[r.status]} · worked out` : STOCK_STATUS_WORD[r.status]
 const lowOrOut = (r: StockRow) => r.counted && r.status !== 'ok'
 
 const sumsOf = (rows: StockRow[]): StockSums => ({
@@ -219,7 +220,7 @@ export function stockPrintSpec(r: StockReport): ReportSpec {
       indents.push(1)
       rows.push([
         row.label,
-        row.counted ? num(row.onHand) : '—',
+        row.counted ? `${row.workedOut ? '≈' : ''}${num(row.onHand)}` : '—',
         row.counted ? row.velocity.toFixed(1) : '',
         cover(row),
         num(row.reorderPoint),

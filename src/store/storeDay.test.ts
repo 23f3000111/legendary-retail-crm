@@ -158,7 +158,7 @@ describe('a dealer’s months', () => {
 // after closing left the two disagreeing.
 describe('a closed day, as it was filed', () => {
   it('reads its sales, what it took off the shelf and its counts from the closing alone', () => {
-    const rows = filedDayRows(closing)
+    const rows = filedDayRows(data, closing)
     const at = (id: string) => rows.find((r) => r.skuId === id)!
     expect(rows.map((r) => r.skuId)).toEqual(countedSkus.map((s) => s.id))
     expect(at('orchid-retail')).toMatchObject({ units: 3, revenue: 574, deducted: 3, onHand: 20 })
@@ -171,8 +171,8 @@ describe('a closed day, as it was filed', () => {
     const d: CrmData = { ...data, closings: [closing, filedToday] }
     // The counter has a Violet and an Orchid rung up since.
     expect(row(selectStoreDay(d, 'bsas', today), 'violet-retail').units).toBe(1)
-    expect(filedDayRows(filedToday).find((r) => r.skuId === 'violet-retail')!.units).toBe(0)
-    expect(filedDayRows(filedToday).reduce((a, r) => a + r.revenue, 0)).toBe(762)
+    expect(filedDayRows(d, filedToday).find((r) => r.skuId === 'violet-retail')!.units).toBe(0)
+    expect(filedDayRows(d, filedToday).reduce((a, r) => a + r.revenue, 0)).toBe(762)
   })
 })
 
@@ -251,7 +251,7 @@ describe('what a vial took off the shelf', () => {
     expect(row(page, 'orchid-vial')).toMatchObject({ units: 2, deducted: 6, onHand: 90 })
     expect(row(page, 'mahsuri-vial')).toMatchObject({ units: 0, deducted: 4, onHand: 30 })
     expect(row(page, 'orchid-retail')).toMatchObject({ deducted: 2, onHand: 15 })
-    expect(filedDayRows(vialDay, new Map([['mahsuri-vial', 24]]))).toEqual(page.rows)
+    expect(filedDayRows(d, vialDay)).toEqual(page.rows)
   })
 
   it('is what was rung up on a day still open, with nothing counted yet', () => {
@@ -264,14 +264,26 @@ describe('what a vial took off the shelf', () => {
 // displaying". It filed every product at 0, so its page said 0 of everything.
 describe('a day filed with every product at 0', () => {
   const zeroed: Closing = { ...closing, stockCount: closing.stockCount.map((s) => ({ ...s, counted: 0 })) }
+  const delivered: PurchaseOrder = {
+    id: 'PO-261102-BSAS',
+    locationId: 'bsas',
+    createdBy: 'x',
+    createdAt: '2026-11-01T03:00:00.000Z',
+    priority: 'standard',
+    notes: '',
+    status: 'received',
+    lines: [{ skuId: 'orchid-retail', qtyRequested: 24, qtyApproved: 24, qtyShipped: 24 }],
+    events: [{ status: 'received', actor: 'x', role: 'promoter', at: '2026-11-02T05:00:00.000Z' }],
+  }
 
-  it('shows nothing counted rather than nothing on the shelf, and says why', () => {
-    const d = selectStoreDay({ ...data, closings: [zeroed] }, 'bsas', filedDay)
-    expect(d.countOfNothing).toBe(true)
-    expect(d.rows.every((r) => r.onHand === null)).toBe(true)
-    // What sold and was written off still left the shelf.
-    expect(row(d, 'orchid-retail')).toMatchObject({ units: 3, deducted: 3 })
-    expect(filedDayRows(zeroed)).toEqual(d.rows)
-    expect(selectStoreDay(data, 'bsas', filedDay).countOfNothing).toBe(false)
+  // 28 November: "why is data not showing ... On hand is not showing anywhere".
+  it('shows what the record works out as on hand, and says that is what it is', () => {
+    const d = selectStoreDay({ ...data, closings: [zeroed], purchaseOrders: [delivered] }, 'bsas', filedDay)
+    expect(d).toMatchObject({ countOfNothing: true, workedOut: true })
+    // 3 sold off nothing, then 24 came in.
+    expect(row(d, 'orchid-retail')).toMatchObject({ units: 3, deducted: 3, onHand: 24 })
+    expect(row(d, 'man-retail')).toMatchObject({ deducted: 2, onHand: 0 })
+    expect(filedDayRows({ ...data, closings: [zeroed], purchaseOrders: [delivered] }, zeroed)).toEqual(d.rows)
+    expect(selectStoreDay(data, 'bsas', filedDay)).toMatchObject({ countOfNothing: false, workedOut: false })
   })
 })

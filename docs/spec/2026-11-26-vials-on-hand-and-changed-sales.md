@@ -142,3 +142,35 @@ reloaded it.
   Deducted, worked out by the new page on the live data, reads 58, 76 and 64
   at Pavilion 5th Floor (24 to 26 November) and 14 and 18 at KLCC Isetan (25
   and 26 November), where nothing was rung up.
+
+## 28 November: on hand worked out from the record
+
+The developer sent KLIA T2's Stock page, every line *Not counted*, and an
+Orchid pop-up showing +120 came in and −108 went out with no on hand: "why
+is data not showing, also On hand is not showing anywhere". KLIA T2 had not
+closed since 26 November, so its last count was still the one at 0.
+
+Where a store's last count put every product at 0, on hand is now what the
+record works out (`selectWorkedOut` in `src/store/selectors.ts`). It starts
+from the last real count before it, or from nothing where there is none, and
+goes day by day: what sold and was written off comes off, then what was
+confirmed received goes on. It never goes below 0, because a sale with
+nothing on record came from stock nobody recorded. That makes it a floor:
+stock the store had before the app knew of it is not in it.
+
+- **Everywhere on hand shows**, the figure carries **≈**, with a note saying
+  why: the Stock page, its tiles, the all-stores grid and the CSV/PDF; a
+  product's pop-up, whose list says *Worked out · 65 on the shelf by the
+  record*; the store's day and the promoter's closed day; and the exports,
+  with *On hand from: Worked out* in the CSV.
+- **The store's next closing** starts every box at that figure, plus what
+  came in since, less what sold, titled *Check every box against the shelf*.
+  Its count then becomes the real one. A line that has sold more than the
+  record says it had still starts empty, to be counted.
+- **Low and out-of-stock** read from the figure, so top-ups are suggested
+  again.
+
+On the live data, worked out read-only: KLIA T2's Stock page shows about
+1,079 units (Orchid ≈65, Violet ≈55), 1,103 at its 26 November close, and
+its next closing starts 32 of its 33 boxes filled in. No other store is
+affected. Nothing on the server was changed.

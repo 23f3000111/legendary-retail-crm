@@ -192,11 +192,10 @@ function FiledDay({
   const href = closeHref(location.id, day, data.today, !atCounter)
   const units = filed.lines.reduce((a, l) => a + l.qty, 0)
   // The day as filed, product by product, to look back on (20 November). A
-  // vial's Deducted is measured on its count, against what had come in.
-  const dayRows = useMemo(
-    () => filedDayRows(filed, selectArrivalsForClosing(data, location.id, day, filed.submittedAt)),
-    [data, filed, location.id, day],
-  )
+  // vial's Deducted is measured on its count, against what had come in; a
+  // day filed at 0 shows what the record works out (28 November).
+  const dayRows = useMemo(() => filedDayRows(data, filed), [data, filed])
+  const workedOut = countOfNothing(filed)
   // Kelly or Davy, looking at a day a store has asked to correct: decide it here.
   const decides = waiting && capability.approveCorrections
 
@@ -243,13 +242,14 @@ function FiledDay({
             </Notice>
           )}
 
-          {countOfNothing(filed) && (
+          {workedOut && (
             <Notice tone="warn" icon="alert">
               <b>Every product was filed at 0{units > 0 ? `, though ${num(units)} sold` : ''}.</b> That is not a
-              count, so nothing shows as on hand
+              count, so on hand (≈) is worked out from the record: what came in, less what sold. Stock the
+              app never knew of is not in it
               {atCounter && mode === 'direct' && !waiting
                 ? ' — change the closing and type what is on the shelf.'
-                : '. The next closing asks for every product to be counted.'}
+                : '. A real count puts it right.'}
             </Notice>
           )}
 
@@ -336,7 +336,7 @@ function FiledDay({
         />
         <Rule />
         <PanelBody>
-          <DayStockTable locationId={location.id} rows={dayRows} />
+          <DayStockTable locationId={location.id} rows={dayRows} workedOut={workedOut} />
         </PanelBody>
       </Panel>
     </div>
@@ -473,8 +473,8 @@ function ClosingForm({
   /**
    * The last count put every product at 0 (26 November, the client's Revision
    * #10: "For KLIA T2, On hand quantity not displaying"): it was no count, so
-   * tonight every product is counted, from empty boxes — even one that came in
-   * since, as what was on the shelf before it is not known either.
+   * the shelf the day starts from is what the record works out (28 November),
+   * and every box starts there, to be checked against the shelf.
    */
   const nothingBefore = useMemo(() => selectCountOfNothing(data, locationId, day), [data, locationId, day])
 
@@ -483,10 +483,7 @@ function ClosingForm({
    * in: counted before or received since, and the record adds up — a line
    * that has sold more than was on record was not counted right (26 November).
    */
-  const known = useMemo(
-    () => (nothingBefore ? new Set<string>() : knownLines(stock, arrivals, soldSince)),
-    [nothingBefore, stock, arrivals, soldSince],
-  )
+  const known = useMemo(() => knownLines(stock, arrivals, soldSince), [stock, arrivals, soldSince])
 
   const countOnRecord = useMemo(
     () => new Map((onRecord?.stockCount ?? []).map((s) => [s.skuId, s.counted])),
@@ -760,7 +757,7 @@ function ClosingForm({
     // It would be, but more has sold since than was on record: the last count
     // was wrong, so this one starts empty (26 November).
     const short =
-      !nothingBefore && row.skus.some((s) => (s.counted || (arrivals.get(s.skuId) ?? 0) > 0) && !known.has(s.skuId))
+      row.skus.some((s) => (s.counted || (arrivals.get(s.skuId) ?? 0) > 0) && !known.has(s.skuId))
     return {
       key: row.key,
       label: row.group?.label ?? row.skus[0].label,
@@ -1064,7 +1061,7 @@ function ClosingForm({
             mode !== 'new'
               ? 'Change only a count that was wrong'
               : nothingBefore
-                ? 'Count everything tonight'
+                ? 'Check every box against the shelf'
                 : firstCount
                   ? 'Count everything, this first time'
                   : 'Change only what is different'
@@ -1075,9 +1072,7 @@ function ClosingForm({
               : nothingBefore
                 ? `The last count, on ${formatDate(nothingBefore.period)}, put every product at 0${
                     soldThen > 0 ? `, though ${num(soldThen)} sold that day` : ''
-                  }. That is not a count, so there is nothing to start from: tonight every product is counted.${
-                    anyReceived ? ' What you confirmed receiving since is shown beside it.' : ''
-                  } From tomorrow the boxes fill themselves in and you only change what is different.`
+                  }. That is not a count, so each box starts at what the record works out — what came in, less what sold — and stock the app never knew of is not in it. Count the shelf and change every box that is different. From tomorrow you only change what is different.`
                 : firstCount
                   ? `Nothing has been counted at this store yet, so tonight every product is counted.${
                       anyReceived

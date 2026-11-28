@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { selectArrivals, selectArrivalsForClosing, selectOnHandAtOrder, selectSoldSinceCount, selectSuggestedPoLines } from './selectors'
+import { selectArrivals, selectArrivalsForClosing, selectOnHandAtOrder, selectSoldSinceCount, selectSuggestedPoLines, selectWorkedOut } from './selectors'
 import { isApproverNote } from '../lib/po-machine'
 import type { Closing, CrmData, PoEvent, PurchaseOrder } from '../data/types'
 
@@ -201,5 +201,63 @@ describe('what is suggested after a delivery', () => {
 
   it('asks only for what is still short when less came', () => {
     expect(suggested(arrived(12))).toBe(36)
+  })
+})
+
+// 28 November: KLIA T2's last count put every product at 0, so every screen
+// said "not counted" while its own movements showed 120 Orchid in and 108
+// out. With no count to go by, the shelf is what the record works out: the
+// last real count, or nothing, plus what came in, less what went out — never
+// below 0, as a sale with nothing on record came from stock nobody recorded.
+describe('the shelf worked out from the record', () => {
+  const klia = (period: string, submittedAt: string, counts: Record<string, number>, sold: Record<string, number> = {}): Closing => ({
+    ...closing(period, submittedAt, counts),
+    id: `klia-t2-${period}`,
+    locationId: 'klia-t2',
+    lines: Object.entries(sold).map(([skuId, qty]) => ({ skuId, qty })),
+  })
+  const delivered = (at: string, lines: Record<string, number>): PurchaseOrder => ({
+    ...order([sent('2026-11-01T03:00:00.000Z')]),
+    id: `PO-${at}`,
+    locationId: 'klia-t2',
+    status: 'received',
+    lines: Object.entries(lines).map(([skuId, qty]) => ({ skuId, qtyRequested: qty, qtyApproved: qty, qtyShipped: qty })),
+    events: [{ status: 'received', actor: 'x', role: 'promoter', at }],
+  })
+  const zero = { 'orchid-retail': 0, 'violet-retail': 0, 'orchid-vial': 0 }
+  const kliaData = (closings: Closing[], pos: PurchaseOrder[]): CrmData => ({ ...data(closings, pos[0] ?? order([])), purchaseOrders: pos })
+
+  it('takes what came in, less what sold after it, from nothing where nothing was ever counted', () => {
+    const d = kliaData(
+      [
+        klia('2026-11-11', '2026-11-11T15:00:00.000Z', zero, { 'orchid-retail': 4 }),
+        // Sold during the day, then the delivery came in at 20:23.
+        klia('2026-11-12', '2026-11-12T15:00:00.000Z', zero, { 'orchid-retail': 5, 'orchid-vial': 2 }),
+        klia('2026-11-13', '2026-11-13T15:00:00.000Z', zero, { 'orchid-retail': 3, 'violet-retail': 1 }),
+      ],
+      [delivered('2026-11-12T12:23:37.014Z', { 'orchid-retail': 120, 'violet-retail': 60 })],
+    )
+    const shelf = selectWorkedOut(d, d.closings[2])
+    expect(shelf.get('orchid-retail')).toBe(117)
+    expect(shelf.get('violet-retail')).toBe(59)
+    // Never delivered, yet sold: from stock nobody recorded. Never below 0.
+    expect(shelf.get('orchid-vial')).toBe(0)
+    expect(selectWorkedOut(d, d.closings[1]).get('orchid-retail')).toBe(120)
+  })
+
+  it('starts from the last real count, and takes in what came after it and the days nobody closed', () => {
+    const d: CrmData = {
+      ...kliaData(
+        [
+          klia('2026-11-08', '2026-11-08T14:00:00.000Z', { 'orchid-retail': 30, 'violet-retail': 6, 'orchid-vial': 0 }),
+          klia('2026-11-10', '2026-11-10T14:00:00.000Z', zero, { 'orchid-retail': 2 }),
+        ],
+        [delivered('2026-11-09T05:00:00.000Z', { 'orchid-retail': 12 })],
+      ),
+      unfiledLines: { 'klia-t2': { '2026-11-09': [{ skuId: 'violet-retail', qty: 10 }] } },
+    }
+    const shelf = selectWorkedOut(d, d.closings[1])
+    expect(shelf.get('orchid-retail')).toBe(40)
+    expect(shelf.get('violet-retail')).toBe(0)
   })
 })

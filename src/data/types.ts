@@ -287,4 +287,9 @@ export interface CrmData {
   users: Person[]
   /** Dealers' and consignment partners' monthly figures, keyed in at head office. */
   partnerSales: PartnerSales[]
+  /**
+   * Sales on earlier days nobody closed, by store and day. The store keeps them;
+   * the shelf worked out from the record takes them off (28 November).
+   */
+  unfiledLines?: Record<string, Record<DateStr, SaleLine[]>>
 }

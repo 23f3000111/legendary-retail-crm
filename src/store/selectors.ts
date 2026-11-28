@@ -737,6 +737,11 @@ export interface StockRow {
    */
   counted: boolean
   onHand: number
+  /**
+   * On hand is what the record works out, not a count: the store's last count
+   * put every product at 0 (28 November). Shown with "≈".
+   */
+  workedOut: boolean
   reorderPoint: number
   velocity: number
   daysCover: number | null
@@ -757,6 +762,77 @@ const VELOCITY_WINDOW = 30
  */
 export const countOfNothing = (c: Pick<Closing, 'stockCount'>): boolean =>
   c.stockCount.length > 0 && c.stockCount.every((s) => s.counted === 0)
+
+/**
+ * The shelf at the close of a day filed with every product at 0, worked out
+ * from the record (28 November): the last real count before it — or nothing,
+ * where there is none — plus what came in, less what went out, day by day.
+ * Never below 0: a sale with nothing on record came from stock nobody
+ * recorded. Within a day what sold comes off before what arrived goes on, as
+ * deliveries are confirmed after the counter has been trading.
+ *
+ * KLIA T2 filed every product at 0 from 3 October while selling every day, so
+ * every screen said "not counted" though its own movements showed 120 Orchid
+ * in and 108 out. What the record works out is a floor, not a count: stock
+ * the store held before the app knew of it is not in it.
+ */
+export const selectWorkedOut = (
+  data: Pick<CrmData, 'closings' | 'purchaseOrders' | 'unfiledLines'>,
+  closing: Closing,
+): Map<string, number> => {
+  const mine = data.closings.filter((c) => c.locationId === closing.locationId && c.periodType === 'day')
+  const base = mine
+    .filter((c) => c.period < closing.period && c.stockCount.length > 0 && !countOfNothing(c))
+    .reduce<Closing | undefined>((a, c) => (!a || c.period > a.period ? c : a), undefined)
+  const shelf = new Map((base?.stockCount ?? []).map((c) => [c.skuId, c.counted]))
+  for (const c of closing.stockCount) if (!shelf.has(c.skuId)) shelf.set(c.skuId, 0)
+
+  const out = new Map<DateStr, Map<string, number>>()
+  const into = new Map<DateStr, Map<string, number>>()
+  const add = (m: Map<DateStr, Map<string, number>>, day: DateStr, skuId: string, qty: number) => {
+    const d = m.get(day) ?? new Map<string, number>()
+    d.set(skuId, (d.get(skuId) ?? 0) + qty)
+    m.set(day, d)
+  }
+  const after = (day: DateStr) => (!base || day > base.period) && day <= closing.period
+  for (const c of mine) {
+    if (!after(c.period)) continue
+    for (const l of [...c.lines, ...c.writeOffs]) add(out, c.period, l.skuId, l.qty)
+  }
+  for (const [day, lines] of Object.entries(data.unfiledLines?.[closing.locationId] ?? {})) {
+    if (!after(day) || mine.some((c) => c.period === day)) continue
+    for (const l of lines) add(out, day, l.skuId, l.qty)
+  }
+  const from = base ? Date.parse(base.submittedAt) : -Infinity
+  const until = Date.parse(closing.submittedAt)
+  for (const po of data.purchaseOrders) {
+    if (po.locationId !== closing.locationId || po.status !== 'received') continue
+    const at = po.events.find((e) => e.status === 'received')?.at
+    const when = at ? Date.parse(at) : NaN
+    if (Number.isNaN(when) || when <= from || when > until) continue
+    for (const l of po.lines) add(into, todayInMalaysia(new Date(when)), l.skuId, effectiveQty(l))
+  }
+
+  for (const day of [...new Set([...out.keys(), ...into.keys()])].sort()) {
+    for (const [skuId, qty] of out.get(day) ?? []) shelf.set(skuId, Math.max(0, (shelf.get(skuId) ?? 0) - qty))
+    for (const [skuId, qty] of into.get(day) ?? []) shelf.set(skuId, (shelf.get(skuId) ?? 0) + qty)
+  }
+  return shelf
+}
+
+/**
+ * What a filed day says is on the shelf at its close: its count — or, for a
+ * count of nothing, what the record works out, marked so (28 November). Null
+ * for a day that counted nothing at all, such as consignment's.
+ */
+export const selectShelfAtClose = (
+  data: Pick<CrmData, 'closings' | 'purchaseOrders' | 'unfiledLines'>,
+  closing: Closing,
+): { counts: Map<string, number>; workedOut: boolean } | null => {
+  if (closing.stockCount.length === 0) return null
+  if (countOfNothing(closing)) return { counts: selectWorkedOut(data, closing), workedOut: true }
+  return { counts: new Map(closing.stockCount.map((c) => [c.skuId, c.counted])), workedOut: false }
+}
 
 /** The store's last count before `day`, where it was a count of nothing. */
 export const selectCountOfNothing = (data: Pick<CrmData, 'closings'>, locationId: string, day: DateStr): Closing | undefined => {
@@ -785,7 +861,7 @@ export const selectStock = (data: CrmData, locationId: string, asOf?: DateStr): 
   const history = data.closings
     .filter((c) => c.locationId === locationId && (!asOf || c.period < asOf))
     .sort((a, b) => (a.period < b.period ? 1 : -1))
-  const latest = history[0]
+  const latest = history.find((c) => c.periodType === 'day' || c.stockCount.length > 0)
   const since = addDays(asOf ?? data.today, -VELOCITY_WINDOW)
   const recent = history.filter((c) => daysBetween(since, c.period) >= 0)
   const periods = recent.length || 1
@@ -809,11 +885,13 @@ export const selectStock = (data: CrmData, locationId: string, asOf?: DateStr): 
 
   // Testers and vials are ordered but never counted on a shelf, so they are
   // not part of stock on hand.
-  const counts = latest && !countOfNothing(latest) ? latest.stockCount : []
+  // A count of nothing is no count: the shelf is what the record works out
+  // since the last real one (28 November), every line of it.
+  const shelf = latest ? selectShelfAtClose(data, latest) : null
+  const workedOut = shelf?.workedOut ?? false
   return countedSkus.map((s) => {
-    const count = counts.find((m) => m.skuId === s.id)
-    const counted = Boolean(count)
-    const onHand = count?.counted ?? 0
+    const counted = workedOut || Boolean(shelf?.counts.has(s.id))
+    const onHand = shelf?.counts.get(s.id) ?? 0
     const velocity = soldOf(s.id) / periods
     const daysCover = velocity > 0 ? onHand / velocity : null
     const status: StockRow['status'] = !counted
@@ -839,6 +917,7 @@ export const selectStock = (data: CrmData, locationId: string, asOf?: DateStr): 
       variant: s.variant,
       counted,
       onHand,
+      workedOut,
       reorderPoint: s.reorderPoint,
       velocity,
       daysCover,
@@ -854,7 +933,7 @@ export interface StockMovement {
   date: DateStr
   /** Positive came in, negative went out. */
   change: number
-  kind: 'sold' | 'received' | 'written off' | 'counted'
+  kind: 'sold' | 'received' | 'written off' | 'counted' | 'worked out'
   note?: string
 }
 
@@ -896,7 +975,15 @@ export const selectSkuMovements = (
     }
 
     const counted = c.stockCount.find((m) => m.skuId === skuId)
-    if (counted) {
+    if (counted && countOfNothing(c)) {
+      // Filed at 0, which is no count: what the record works out (28 November).
+      out.push({
+        date: c.period,
+        change: 0,
+        kind: 'worked out',
+        note: `${selectWorkedOut(data, c).get(skuId) ?? 0} on the shelf by the record`,
+      })
+    } else if (counted) {
       out.push({
         date: c.period,
         change: 0,
@@ -927,6 +1014,7 @@ export const selectSkuMovements = (
     sold: 1,
     'written off': 2,
     counted: 3,
+    'worked out': 3,
   }
   return out.sort((a, b) =>
     a.date === b.date ? order[a.kind] - order[b.kind] : a.date < b.date ? 1 : -1,
@@ -2170,8 +2258,10 @@ export interface StoreDay extends SalesFigure {
   live: boolean
   /** That day's closing, if it was filed. */
   closing?: Closing
-  /** Filed with every product at 0: not a count, so nothing shows as on hand (26 November). */
+  /** Filed with every product at 0: not a count (26 November)… */
   countOfNothing: boolean
+  /** …so on hand is what the record works out, shown with "≈" (28 November). */
+  workedOut: boolean
   /** How the day was paid, as filed. */
   tender?: Closing['tender']
   /** Every product on the shelf, in the range's order, and anything else sold or counted that day. */
@@ -2192,15 +2282,14 @@ export const selectStoreDay = (data: CrmData, locationId: string, day: DateStr):
   const lines = live ? (data.liveLines[locationId] ?? []) : (closing?.lines ?? [])
   const detail = selectDayDetail(data, day, locationId)
   const nothing = Boolean(closing && countOfNothing(closing))
-  const rows = closing
-    ? filedRows(lines, closing, selectArrivalsForClosing(data, locationId, day, closing.submittedAt))
-    : storeDayRows(lines, lines, null, basisOf(locationId))
+  const rows = closing ? filedRows(data, lines, closing) : storeDayRows(lines, lines, null, basisOf(locationId))
 
   return {
     day,
     live,
     closing,
     countOfNothing: nothing,
+    workedOut: nothing,
     tender: closing?.tender,
     revenue: detail.revenue,
     units: detail.units,
@@ -2269,20 +2358,29 @@ export const storeDayRows = (
  * (25 November). `arrived` is what came in since the count before it and
  * before it was filed, which a vial's count is measured against.
  */
-export const filedDayRows = (closing: Closing, arrived: Map<string, number> = new Map()): StoreDayRow[] =>
-  filedRows(closing.lines, closing, arrived)
+export const filedDayRows = (data: Pick<CrmData, 'closings' | 'purchaseOrders' | 'unfiledLines'>, closing: Closing): StoreDayRow[] =>
+  filedRows(data, closing.lines, closing)
 
 /**
  * A filed day's rows, its sales from `lines`: what the day took off the shelf
- * and the counts are the closing's. A count of nothing is no count, so
- * nothing shows as on hand (26 November).
+ * and the counts are the closing's. A count of nothing is no count, so on hand
+ * is what the record works out (28 November), and a vial's Deducted is what
+ * was rung up.
  */
-const filedRows = (lines: SaleLine[], closing: Closing, arrived: Map<string, number>): StoreDayRow[] => {
-  const counts = countOfNothing(closing) ? null : closing.stockCount
+const filedRows = (
+  data: Pick<CrmData, 'closings' | 'purchaseOrders' | 'unfiledLines'>,
+  lines: SaleLine[],
+  closing: Closing,
+): StoreDayRow[] => {
+  const shelf = selectShelfAtClose(data, closing)
   return storeDayRows(
     lines,
-    offTheShelf([...closing.lines, ...closing.writeOffs], counts, arrived),
-    counts ? new Map(counts.map((c) => [c.skuId, c.counted])) : null,
+    offTheShelf(
+      [...closing.lines, ...closing.writeOffs],
+      shelf && !shelf.workedOut ? closing.stockCount : null,
+      selectArrivalsForClosing(data, closing.locationId, closing.period, closing.submittedAt),
+    ),
+    shelf?.counts ?? null,
     basisOf(closing.locationId),
   )
 }

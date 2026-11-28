@@ -22,6 +22,8 @@ import { downloadCsvSections } from '../../lib/exportCsv'
 import { openPrintReport } from '../../lib/printReport'
 import { buildStockReport, stockCsvBlocks, stockFilename, stockPrintSpec } from '../../lib/stockReport'
 import { num } from '../../lib/format'
+import { formatDate } from '../../lib/dates'
+import { Notice } from '../../components/ui/Notice'
 
 const STATUS: Record<StockRow['status'], { label: string; tone: 'good' | 'warn' | 'critical' }> = {
   ok: { label: 'Healthy', tone: 'good' },
@@ -68,6 +70,12 @@ export function StockPage() {
   const [item, setItem] = useState<StockRow | null>(null)
 
   const rows = useMemo(() => selectStock(data, locationId), [data, locationId])
+  /** The day a count of nothing was filed, where on hand is worked out from the record. */
+  const workedOutSince = rows.some((r) => r.workedOut)
+    ? data.closings
+        .filter((c) => c.locationId === locationId && c.periodType === 'day')
+        .reduce<string | undefined>((a, c) => (!a || c.period > a ? c.period : a), undefined)
+    : undefined
   const low = rows.filter((r) => r.status !== 'ok')
   const totalUnits = rows.reduce((a, r) => a + r.onHand, 0)
   const location = locationById(locationId)
@@ -94,7 +102,7 @@ export function StockPage() {
       align: 'right',
       width: '90px',
       render: (r) => (
-        <span className="readout text-[13px] text-ink">{r.counted ? num(r.onHand) : '—'}</span>
+        <span className="readout text-[13px] text-ink">{r.counted ? `${r.workedOut ? '≈' : ''}${num(r.onHand)}` : '—'}</span>
       ),
     },
     {
@@ -282,7 +290,8 @@ export function StockPage() {
         <StatTile
           label="Units on hand"
           value={totalUnits}
-          format={(n) => num(Math.round(n))}
+          format={(n) => `${workedOutSince ? '≈' : ''}${num(Math.round(n))}`}
+          footnote={workedOutSince ? 'worked out from the record' : undefined}
           tone="violet"
           icon="box"
         />
@@ -316,6 +325,16 @@ export function StockPage() {
         />
         <Rule />
         <PanelBody>
+          {/* 28 November: "why is data not showing ... On hand is not showing anywhere". */}
+          {workedOutSince && (
+            <Notice tone="warn" icon="alert" className="mb-3">
+              <b>
+                {location?.shortName ?? 'This store'}'s last count, on {formatDate(workedOutSince)}, put every product at 0.
+              </b>{' '}
+              That is not a count, so on hand (≈) is worked out from the record: what came in, less what sold. Stock the
+              app never knew of is not in it; the store's next real count puts it right.
+            </Notice>
+          )}
           <DataTable
             columns={columns}
             rows={rows}
@@ -330,7 +349,9 @@ export function StockPage() {
             title={item?.label ?? ''}
             subtitle={
               item
-                ? `${item.code} · ${item.onHand} on the shelf at ${location?.shortName ?? ''}`
+                ? `${item.code} · ${item.workedOut ? '≈' : ''}${item.onHand} on the shelf at ${location?.shortName ?? ''}${
+                    item.workedOut ? ', by the record' : ''
+                  }`
                 : undefined
             }
             width="max-w-lg"
@@ -382,10 +403,12 @@ export function StockPage() {
                         return (
                           <td key={l.id} className="px-1 py-2 text-center">
                             <span
-                              title={`${l.name} · ${s.label} · ${cell?.counted ? `${cell.onHand} on hand` : 'no count filed yet'}`}
+                              title={`${l.name} · ${s.label} · ${
+                                cell?.counted ? `${cell.onHand} on hand${cell.workedOut ? ', worked out from the record' : ''}` : 'no count filed yet'
+                              }`}
                               className={`readout mx-auto flex h-7 min-w-[38px] items-center justify-center rounded-lg border text-[12px] ${tone(cell?.status)}`}
                             >
-                              {cell?.counted ? cell.onHand : '—'}
+                              {cell?.counted ? `${cell.workedOut ? '≈' : ''}${cell.onHand}` : '—'}
                             </span>
                           </td>
                         )

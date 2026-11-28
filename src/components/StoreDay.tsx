@@ -118,13 +118,19 @@ export function StoreDay({ locationId, day }: { locationId: string; day: string 
               {store?.shortName ?? 'This store'} filed every product at 0 on {formatDate(day)}
               {filed.lines.length ? `, though ${num(filed.lines.reduce((a, l) => a + l.qty, 0))} sold that day` : ''}.
             </b>{' '}
-            That is not a count, so nothing shows as on hand. Its next closing starts with every box empty, to be counted.
+            That is not a count, so on hand (≈) is worked out from the record: what came in, less what sold. Stock the
+            app never knew of is not in it; a real count puts it right.
           </Notice>
         )}
 
         <section>
           <p className="eyebrow mb-2">Stock</p>
-          <DayStockTable locationId={locationId} rows={d.rows} onHandHeader={d.live ? 'On hand' : 'On hand at close'} />
+          <DayStockTable
+            locationId={locationId}
+            rows={d.rows}
+            onHandHeader={d.live ? 'On hand' : 'On hand at close'}
+            workedOut={d.workedOut}
+          />
         </section>
 
         <section>
